@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PQXDH Full Integration Test - FIBEMATE</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #0f172a;
+      color: #e2e8f0;
+    }
+    h1 { color: #38bdf8; }
+    h2 { color: #7dd3fc; margin-top: 30px; }
+    .test-section {
+      background: #1e293b;
+      border-radius: 8px;
+      padding: 20px;
+      margin: 20px 0;
+      border-left: 4px solid #38bdf8;
+    }
+    .pass { color: #4ade80; }
+    .fail { color: #f87171; }
+    .info { color: #94a3b8; }
+    .warning { color: #fbbf24; }
+    pre {
+      background: #0f172a;
+      padding: 10px;
+      border-radius: 4px;
+      overflow-x: auto;
+      font-size: 12px;
+    }
+    button {
+      background: #38bdf8;
+      color: #0f172a;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+      margin: 5px;
+    }
+    button:hover { background: #7dd3fc; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    #log {
+      max-height: 500px;
+      overflow-y: auto;
+      background: #0f172a;
+      padding: 15px;
+      border-radius: 8px;
+      margin-top: 20px;
+    }
+    .log-entry { margin: 2px 0; font-family: monospace; font-size: 13px; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 10px 0;
+    }
+    th, td {
+      padding: 8px;
+      text-align: left;
+      border-bottom: 1px solid #334155;
+    }
+    th { color: #7dd3fc; }
+  </style>
+</head>
+<body>
+  <h1>🔐 PQXDH Full Integration Test</h1>
+  <p class="info">Testing complete PQXDH flow: Key Generation → Encapsulation → Decapsulation → Shared Secret Verification</p>
+
+  <div class="test-section">
+    <h2>Test Results</h2>
+    <table id="results-table">
+      <thead>
+        <tr><th>Test</th><th>Status</th><th>Details</th></tr>
+      </thead>
+      <tbody id="results-body">
+        <tr><td colspan="3" class="info">Click "Run All Tests" to begin</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="test-section">
+    <button onclick="runAllTests()">Run All Tests</button>
+    <button onclick="clearLog()">Clear Log</button>
+  </div>
+
+  <div id="log">
+    <div class="log-entry info">Ready to test PQXDH integration...</div>
+  </div>
+
+  <!-- Load ML-KEM-768 -->
+  <script src="crypto/crypto/ml-kem-768.js"></script>
+  <script src="crypto/crypto/ml-kem-768-wrapper.js"></script>
+  
+  <script>
+    // Ensure MLKEM768 is properly initialized
+    if (typeof MLKEM768Wrapper !== 'undefined' && !MLKEM768Wrapper.initialized) {
+      MLKEM768Wrapper.init().catch(err => console.warn('Wrapper init failed:', err));
+    }
+    // Also ensure window.MLKEM768 is set
+    if (typeof window !== 'undefined' && !window.MLKEM768) {
+      window.MLKEM768 = MLKEM768Wrapper;
+    }
+  </script>
+
+  <script>
+    const log = (msg, type = 'info') => {
+      const logDiv = document.getElementById('log');
+      const entry = document.createElement('div');
+      entry.className = `log-entry ${type}`;
+      entry.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      logDiv.appendChild(entry);
+      logDiv.scrollTop = logDiv.scrollHeight;
+    };
+
+    function addResult(test, status, details) {
+      const tbody = document.getElementById('results-body');
+      const row = document.createElement('tr');
+      row.innerHTML = `
+        <td>${test}</td>
+        <td class="${status === 'PASS' ? 'pass' : status === 'FAIL' ? 'fail' : 'warning'}">${status}</td>
+        <td>${details}</td>
+      `;
+      tbody.appendChild(row);
+    }
+
+    function clearLog() {
+      document.getElementById('log').innerHTML = '<div class="log-entry info">Log cleared...</div>';
+      document.getElementById('results-body').innerHTML = '';
+    }
+
+    // Get the MLKEM instance (wrapper or direct)
+    function getMLKEM() {
+      if (typeof MLKEM768 !== 'undefined' && MLKEM768.initialized) {
+        return MLKEM768;
+      }
+      if (typeof MLKEM768Wrapper !== 'undefined' && MLKEM768Wrapper.initialized) {
+        return MLKEM768Wrapper;
+      }
+      return null;
+    }
+
+    // ========== Test Suite ==========
+    async function runAllTests() {
+      clearLog();
+      log('Starting PQXDH integration tests...', 'info');
+
+      let passCount = 0;
+      let failCount = 0;
+
+      // Test 1: ML-KEM-768 Availability
+      log('Test 1: Checking ML-KEM-768 availability...');
+      try {
+        // Try to initialize wrapper if needed
+        if (typeof MLKEM768Wrapper !== 'undefined' && !MLKEM768Wrapper.initialized) {
+          await MLKEM768Wrapper.init();
+        }
+        
+        // Also check if pure JS implementation is available
+        if (typeof MLKEM768 === 'undefined' && typeof MLKEM768Wrapper === 'undefined') {
+          throw new Error('MLKEM768 not loaded');
+        }
+        
+        const mlkem = getMLKEM();
+        if (!mlkem) {
+          // Try to use pure JS implementation directly
+          if (typeof MLKEM768 !== 'undefined' && typeof MLKEM768.generateKeypair === 'function') {
+            log('Using pure JS MLKEM768 (not wrapper)', 'info');
+          } else {
+            throw new Error('MLKEM768 not initialized');
+          }
+        }
+        log('✓ ML-KEM-768 available', 'pass');
+        addResult('ML-KEM-768 Available', 'PASS', 'Module loaded and initialized');
+        passCount++;
+      } catch (err) {
+        log(`✗ ${err.message}`, 'fail');
+        addResult('ML-KEM-768 Available', 'FAIL', err.message);
+        failCount++;
+        return; // Can't continue without ML-KEM
+      }
+
+      // Helper to call generateKeypair on whichever is available
+      async function generateKEMKeypair() {
+        const mlkem = getMLKEM();
+        if (mlkem) {
+          const kp = await mlkem.keygen();
+          return { publicKey: kp.public_key, secretKey: kp.secret_key };
+        }
+        // Fallback to pure JS
+        return await MLKEM768.generateKeypair();
+      }
+
+      async function encapsulateKEM(publicKey) {
+        const mlkem = getMLKEM();
+        if (mlkem) {
+          const result = await mlkem.encaps(publicKey);
+          return { ciphertext: result.ciphertext, sharedSecret: result.shared_secret };
+        }
+        // Fallback to pure JS
+        return await MLKEM768.encapsulate(publicKey);
+      }
+
+      async function decapsulateKEM(secretKey, ciphertext) {
+        const mlkem = getMLKEM();
+        if (mlkem) {
+          return await mlkem.decaps(secretKey, ciphertext);
+        }
+        // Fallback to pure JS
+        return await MLKEM768.decapsulate(secretKey, ciphertext);
+      }
+
+      // Test 2: Key Generation
+      log('Test 2: Testing key generation...');
+      let aliceKemKeys, bobKemKeys;
+      try {
+        const start = performance.now();
+        aliceKemKeys = await generateKEMKeypair();
+        const genTime = (performance.now() - start).toFixed(1);
+        
+        if (!aliceKemKeys.publicKey || !aliceKemKeys.secretKey) {
+          throw new Error('Invalid keypair structure');
+        }
+        if (aliceKemKeys.publicKey.length !== 1184) {
+          throw new Error(`Public key size ${aliceKemKeys.publicKey.length} != 1184`);
+        }
+        if (aliceKemKeys.secretKey.length !== 2400) {
+          throw new Error(`Secret key size ${aliceKemKeys.secretKey.length} != 2400`);
+        }
+        
+        bobKemKeys = await generateKEMKeypair();
+        log(`✓ Key generation: ${genTime}ms (pk=${aliceKemKeys.publicKey.length}B, sk=${aliceKemKeys.secretKey.length}B)`, 'pass');
+        addResult('Key Generation', 'PASS', `${genTime}ms, correct key sizes`);
+        passCount++;
+      } catch (err) {
+        log(`✗ ${err.message}`, 'fail');
+        addResult('Key Generation', 'FAIL', err.message);
+        failCount++;
+      }
+
+      // Test 3: Encapsulation
+      log('Test 3: Testing encapsulation...');
+      let encResult;
+      try {
+        const start = performance.now();
+        encResult = await encapsulateKEM(bobKemKeys.publicKey);
+        const encTime = (performance.now() - start).toFixed(1);
+        
+        if (!encResult.ciphertext || !encResult.sharedSecret) {
+          throw new Error('Invalid encapsulation result structure');
+        }
+        if (encResult.ciphertext.length !== 1088) {
+          throw new Error(`Ciphertext size ${encResult.ciphertext.length} != 1088`);
+        }
+        if (encResult.sharedSecret.length !== 32) {
+          throw new Error(`Shared secret size ${encResult.sharedSecret.length} != 32`);
+        }
+        
+        log(`✓ Encapsulation: ${encTime}ms (ct=${encResult.ciphertext.length}B, ss=${encResult.sharedSecret.length}B)`, 'pass');
+        addResult('Encapsulation', 'PASS', `${encTime}ms, correct output sizes`);
+        passCount++;
+      } catch (err) {
+        log(`✗ ${err.message}`, 'fail');
+        addResult('Encapsulation', 'FAIL', err.message);
+        failCount++;
+      }
+
+      // Test 4: Decapsulation
+      log('Test 4: Testing decapsulation...');
+      let decResult;
+      try {
+        const start = performance.now();
+        decResult = await decapsulateKEM(bobKemKeys.secretKey, encResult.ciphertext);
+        const decTime = (performance.now() - start).toFixed(1);
+        
+        if (!decResult || decResult.length !== 32) {
+          throw new Error(`Invalid decapsulation result: ${decResult?.length}`);
+        }
+        
+        log(`✓ Decapsulation: ${decTime}ms (ss=${decResult.length}B)`, 'pass');
+        addResult('Decapsulation', 'PASS', `${decTime}ms, 32B shared secret`);
+        passCount++;
+      } catch (err) {
+        log(`✗ ${err.message}`, 'fail');
+        addResult('Decapsulation', 'FAIL', err.message);
+        failCount++;
+      }
+
+      // Test 5: Shared Secret Match
+      log('Test 5: Verifying shared secret match...');
+      try {
+        const match = encResult.sharedSecret.every((b, i) => b === decResult[i]);
+        if (!match) {
+          // Find first mismatch
+          let firstMismatch = -1;
+          for (let i = 0; i < 32; i++) {
+            if (encResult.sharedSecret[i] !== decResult[i]) {
+              firstMismatch = i;
+              break;
+            }
+          }
+          throw new Error(`Shared secrets mismatch at byte ${firstMismatch}`);
+        }
+        
+        log('✓ Shared secrets match perfectly', 'pass');
+        addResult('Shared Secret Match', 'PASS', '32/32 bytes identical');
+        passCount++;
+      } catch (err) {
+        log(`✗ ${err.message}`, 'fail');
+        addResult('Shared Secret Match', 'FAIL', err.message);
+        failCount++;
+      }
+
+      // Test 6: Wrong Key Rejection
+      log('Test 6: Testing wrong key rejection...');
+      try {
+        const wrongKeys = await generateKEMKeypair();
+        const wrongDec = await decapsulateKEM(wrongKeys.secretKey, encResult.ciphertext);
+        
+        const match = encResult.sharedSecret.every((b, i) => b === wrongDec[i]);
+        if (match) {
+          throw new Error('Wrong key produced same shared secret (CRITICAL!)');
+        }
+        
+        log('✓ Wrong key produces different shared secret', 'pass');
+        addResult('Wrong Key Rejection', 'PASS', 'Different shared secret with wrong key');
+        passCount++;
+      } catch (err) {
+        log(`✗ ${err.message}`, 'fail');
+        addResult('Wrong Key Rejection', 'FAIL', err.message);
+        failCount++;
+      }
+
+      // Test 7: PQXDH Hybrid Exchange Simulation
+      log('Test 7: Simulating PQXDH hybrid exchange...');
+      try {
+        // Generate ECDH keys for both parties
+        const aliceEcdh = await crypto.subtle.generateKey(
+          { name: 'ECDH', namedCurve: 'P-256' },
+          true,
+          ['deriveBits']
+        );
+        const bobEcdh = await crypto.subtle.generateKey(
+          { name: 'ECDH', namedCurve: 'P-256' },
+          true,
+          ['deriveBits']
+        );
+        
+        // Alice's ECDH shared secret
+        const aliceEcdhShared = await crypto.subtle.deriveBits(
+          {
+            name: 'ECDH',
+            public: bobEcdh.publicKey
+          },
+          aliceEcdh.privateKey,
+          256
+        );
+        
+        // Bob's ECDH shared secret
+        const bobEcdhShared = await crypto.subtle.deriveBits(
+          {
+            name: 'ECDH',
+            public: aliceEcdh.publicKey
+          },
+          bobEcdh.privateKey,
+          256
+        );
+        
+        // Verify ECDH match
+        const ecdhMatch = new Uint8Array(aliceEcdhShared).every((b, i) => b === new Uint8Array(bobEcdhShared)[i]);
+        if (!ecdhMatch) {
+          throw new Error('ECDH shared secrets do not match');
+        }
+        
+        // Combine with KEM (PQXDH)
+        const aliceCombined = new Uint8Array(64); // 32 ECDH + 32 KEM
+        aliceCombined.set(new Uint8Array(aliceEcdhShared), 0);
+        aliceCombined.set(encResult.sharedSecret, 32);
+        
+        const bobCombined = new Uint8Array(64);
+        bobCombined.set(new Uint8Array(bobEcdhShared), 0);
+        bobCombined.set(decResult, 32);
+        
+        const combinedMatch = aliceCombined.every((b, i) => b === bobCombined[i]);
+        if (!combinedMatch) {
+          throw new Error('Combined PQXDH secrets do not match');
+        }
+        
+        log('✓ PQXDH hybrid exchange successful', 'pass');
+        addResult('PQXDH Hybrid Exchange', 'PASS', 'ECDH + ML-KEM secrets match');
+        passCount++;
+      } catch (err) {
+        log(`✗ ${err.message}`, 'fail');
+        addResult('PQXDH Hybrid Exchange', 'FAIL', err.message);
+        failCount++;
+      }
+
+      // Test 8: Performance Benchmark
+      log('Test 8: Running performance benchmark...');
+      try {
+        const iterations = 5;
+        let totalEnc = 0;
+        let totalDec = 0;
+        
+        for (let i = 0; i < iterations; i++) {
+          const testKeys = await generateKEMKeypair();
+          
+          const encStart = performance.now();
+          const testEnc = await encapsulateKEM(testKeys.publicKey);
+          totalEnc += performance.now() - encStart;
+          
+          const decStart = performance.now();
+          await decapsulateKEM(testKeys.secretKey, testEnc.ciphertext);
+          totalDec += performance.now() - decStart;
+        }
+        
+        const avgEnc = (totalEnc / iterations).toFixed(1);
+        const avgDec = (totalDec / iterations).toFixed(1);
+        
+        log(`✓ Performance: encapsulation=${avgEnc}ms, decapsulation=${avgDec}ms (avg of ${iterations})`, 'pass');
+        addResult('Performance', 'PASS', `Enc ${avgEnc}ms / Dec ${avgDec}ms`);
+        passCount++;
+      } catch (err) {
+        log(`✗ ${err.message}`, 'fail');
+        addResult('Performance', 'FAIL', err.message);
+        failCount++;
+      }
+
+      // Summary
+      log(`\n========== TEST SUMMARY ==========`, 'info');
+      log(`Passed: ${passCount}`, 'pass');
+      log(`Failed: ${failCount}`, failCount > 0 ? 'fail' : 'info');
+      log(`Total: ${passCount + failCount}`, 'info');
+      
+      if (failCount === 0) {
+        log('🎉 All PQXDH integration tests passed!', 'pass');
+      } else {
+        log(`⚠️ ${failCount} test(s) failed`, 'warning');
+      }
+    }
+
+    // Auto-run on load
+    window.addEventListener('load', () => {
+      setTimeout(runAllTests, 1000);
+    });
+  </script>
+</body>
+</html>

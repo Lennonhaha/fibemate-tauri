@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FIBEMATE - 隐私增强即时通讯</title>
+  <link rel="stylesheet" href="main.css">
+  <!-- Tauri Bridge: polyfills window.electronAPI for native desktop features -->
+  <script src="tauri-bridge.js"></script>
+  <!-- double-ratchet.js + message-crypto-v2.js removed in v3: all DR crypto in Rust -->
+  <!--
+    P0 FIX 2026-05-29: The Rust/WASM pq-wasm/lib.rs contains a PLACEHOLDER
+    implementation (random bytes + SHA-256, NOT real Kyber). Do NOT register
+    window.MLKEM768 from WASM — instead, the real JS time-domain implementation
+    (ml-kem-768.js + ml-kem-768-wrapper.js) must take priority.
+    When pq-wasm is rebuilt with real pqc_kyber, restore the WASM registration.
+  -->
+  <!-- Real ML-KEM-768: Pure JS time-domain implementation (NTT-free Kyber) -->
+  <script src="crypto/crypto/ml-kem-768.js"></script>
+  <script src="crypto/crypto/ml-kem-768-wrapper.js"></script>
+  <!-- PQ Integration Module -->
+  <script src="crypto/crypto/pq-integration.js"></script>
+  <!-- Tauri Crypto Bridge: replaces WASM ML-KEM with Rust backend (auto-detects Tauri) -->
+  <script src="tauri-crypto-bridge.js"></script>
+<script src="tauri-ratchet-bridge.js"></script>
+<script src="tauri-message-crypto-adapter.js"></script>
+  <script src="api/privacy-api-client.js" type="module"></script>
+  <script src="privacy-layers/index.js" type="module"></script>
+  <script src="privacy-integration.js" type="module"></script>
+  <!-- PQ-WASM Test Suite (development only) -->
+  <script src="crypto/pq-test-electron.js" defer></script>
+  <!-- FIBEMATE Modular Architecture (refactored from main-v3.js) -->
+  <script src="modules/app-state.js"></script>
+  <script src="modules/utils.js"></script>
+  <script src="modules/navigation.js"></script>
+  <script src="modules/websocket.js"></script>
+  <script src="modules/conversations.js"></script>
+  <!-- GM National Crypto Module (SM2+SM4+SM3) -->
+  <script src="modules/gm/sm2-browser.bundle.js"></script>
+  <script src="modules/gm/sm3_implementation.js"></script>
+  <script src="modules/gm/message-gm.js"></script>
+  <script src="modules/gm/encrypt-with-gm.js"></script>
+  <!-- P2P Network (AES-GCM + GM dual encryption) -->
+  <script src="p2p-core.js"></script>
+  <script src="modules/chat.js"></script>
+  <script src="modules/contacts.js"></script>
+  <script src="modules/vault.js"></script>
+  <script src="modules/notifications.js"></script>
+  <script src="modules/keys.js"></script>
+  <script src="modules/settings.js"></script>
+  <script src="modules/calls.js"></script>
+  <script src="modules/privacy.js"></script>
+  <script src="modules/backend.js"></script>
+  <!-- Phone Verification (must load before main.js) -->
+  <script src="phone-verify.js" defer></script>
+  <script src="main.js" defer></script>
+  <script src="features-enhancement.js" defer></script>
+  <script src="performance-optimization.js" defer></script>
+  <script src="webrtc-module.js" defer></script>
+  <script src="video-call-ui.js" defer></script>
+  <!-- ZK Modules -->
+  <script src="zk/zk-browser.js" defer></script>
+  <!-- v1 disabled, using v2 (correct EC point operations) -->
+  <!-- <script src="zk/schnorr-prover.js" defer></script> -->
+  <script src="zk/schnorr-prover-v2.js" defer></script>
+  <!-- <script src="zk/schnorr-verifier.js" defer></script> -->
+  <script src="zk/bulletproofs.js" defer></script>
+  <script src="zk/zk-auth.js" defer></script>
+  <script src="zk/zk-integration.js" defer></script>
+  <script src="zk-ui-integration.js" defer></script>
+  <script src="user-levels.js" defer></script>
+  <!-- Voice Message -->
+  <script src="modules/voice-message.js" defer></script>
+  <!-- E2EE Status Display -->
+  <script src="modules/e2ee-display.js" defer></script>
+  <!-- Mobile Adaptation -->
+  <script src="modules/mobile-adapt.js" defer></script>
+  <!-- Two-Factor Auth -->
+  <script src="modules/two-factor-auth.js" defer></script>
+  <!-- Message Recall -->
+  <script src="modules/message-recall.js" defer></script>
+  <!-- Read Receipts -->
+  <script src="modules/read-receipts.js" defer></script>
+  <!-- Satellite Network Adaptation -->
+  <script src="modules/satellite/network-detector.js" defer></script>
+  <script src="modules/satellite/satellite-mode.js" defer></script>
+  <script src="modules/satellite/fec.js" defer></script>
+  <script src="modules/satellite/rapid-reconnect.js" defer></script>
+  <script src="modules/satellite/satellite-integration.js" defer></script>
+  
+  <!-- Quantum City Network -->
+  <script src="modules/quantum/quantum-adapter.js" defer></script>
+  <script src="modules/quantum/quantum-crypto.js" defer></script>
+  <script src="modules/quantum/quantum-integration.js" defer></script>
+  
+  <!-- 5G-A Network -->
+  <script src="modules/5g-a/5g-a-adapter.js" defer></script>
+  <script src="modules/5g-a/5g-a-optimization.js" defer></script>
+  <script src="modules/5g-a/5g-a-integration.js" defer></script>
+  <!-- 简洁背景 -->
+  <style>
+    /* 纯色背景 */
+    body {
+      background: var(--bg-primary);
+    }
+    /* 内容层 */
+    .app-container {
+      position: relative;
+      z-index: 1;
+    }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+
+    <!-- ============================================ -->
+    <!-- 侧边栏 -->
+    <!-- ============================================ -->
+    <aside class="sidebar" id="sidebar">
+
+      <!-- 品牌头部 -->
+      <div class="sidebar-header">
+        <div class="shield-icon">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M12 2L20 6V11C20 16 16 20 12 22C8 20 4 16 4 11V6L12 2Z"
+                  stroke="currentColor" stroke-width="1.5" fill="none"/>
+          </svg>
+        </div>
+        <h2 class="sidebar-title">FIBEMATE</h2>
+      </div>
+
+      <!-- 导航标签页 -->
+      <nav class="sidebar-nav">
+        <button class="nav-tab active" data-tab="messages" title="Messages">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+          </svg>
+          <span>Messages</span>
+        </button>
+        <button class="nav-tab" data-tab="contacts" title="Contacts">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+          </svg>
+          <span>Contacts</span>
+        </button>
+        <button class="nav-tab" data-tab="vault" title="Vault">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+          </svg>
+          <span>Vault</span>
+        </button>
+        <button class="nav-tab" data-tab="keys" title="Keys">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"/>
+          </svg>
+          <span>Keys</span>
+        </button>
+        <button class="nav-tab" data-tab="settings" title="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+          <span>Settings</span>
+        </button>
+      </nav>
+
+      <!-- 搜索栏 -->
+      <div class="search-bar">
+        <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+        </svg>
+        <input type="text" id="searchInput" placeholder="Search...">
+      </div>
+
+      <!-- ===== 消息列表面板 ===== -->
+      <div class="tab-panel active" id="panelMessages">
+        <div class="panel-header">
+          <span class="panel-title">Messages</span>
+          <button class="icon-btn" id="btnNewChat" title="New chat">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 5v14M5 12h14"/>
+            </svg>
+          </button>
+        </div>
+        <div class="conversation-list" id="conversationList">
+          <div class="empty-state" id="emptyState">
+            <svg viewBox="0 0 64 64" fill="none">
+              <path d="M32 8L56 18V36C56 50 44 58 32 62C20 58 8 50 8 36V18L32 8Z"
+                    stroke="currentColor" stroke-width="1.5" fill="none"/>
+            </svg>
+            <p>No conversations yet</p>
+            <button class="btn-primary-sm" id="btnStartChat">Start a conversation</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 联系人面板 ===== -->
+      <div class="tab-panel" id="panelContacts">
+        <div class="panel-header">
+          <span class="panel-title">Contacts</span>
+          <button class="icon-btn" id="btnAddContact" title="Add contact">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 5v14M5 12h14"/>
+            </svg>
+          </button>
+        </div>
+        <div class="contact-list" id="contactList">
+          <div class="empty-state" id="emptyContacts">
+            <svg viewBox="0 0 64 64" fill="none">
+              <circle cx="32" cy="24" r="10" stroke="currentColor" stroke-width="1.5" fill="none"/>
+              <path d="M16 52c0-9 7-16 16-16s16 7 16 16" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            </svg>
+            <p>No contacts yet</p>
+            <button class="btn-primary-sm" id="btnAddContactEmpty">Add a contact</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 保险库面板 ===== -->
+      <div class="tab-panel" id="panelVault">
+        <div class="panel-header">
+          <span class="panel-title">Vault</span>
+          <button class="icon-btn" id="btnUploadVault" title="Upload file">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+            </svg>
+          </button>
+        </div>
+        <div class="vault-list" id="vaultList">
+          <div class="empty-state" id="emptyVault">
+            <svg viewBox="0 0 64 64" fill="none">
+              <rect x="12" y="24" width="40" height="32" rx="4" stroke="currentColor" stroke-width="1.5" fill="none"/>
+              <path d="M12 32h40" stroke="currentColor" stroke-width="1.5"/>
+              <circle cx="32" cy="42" r="4" stroke="currentColor" stroke-width="1.5" fill="none"/>
+            </svg>
+            <p>Vault is empty</p>
+            <button class="btn-primary-sm" id="btnUploadVaultEmpty">Upload a file</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== 密钥管理面板 ===== -->
+      <div class="tab-panel" id="panelKeys">
+        <div class="panel-header">
+          <span class="panel-title">Key Management</span>
+        </div>
+        <div class="key-list" id="keyList">
+          <!-- 密钥信息卡片 -->
+        </div>
+      </div>
+
+      <!-- ===== 设置面板 ===== -->
+      <div class="tab-panel" id="panelSettings">
+        <div class="panel-header">
+          <span class="panel-title">Settings</span>
+        </div>
+        <div class="settings-list" id="settingsList">
+          <!-- 设置项 -->
+        </div>
+      </div>
+
+      <!-- 用户信息栏 -->
+      <div class="user-bar" id="userBar">
+        <div class="user-avatar" id="userAvatar">U</div>
+        <div class="user-info">
+          <div class="user-name" id="userName">User</div>
+          <div class="user-status">
+            <span class="status-dot online"></span>
+            <span>Online</span>
+          </div>
+        </div>
+        <button class="btn-exit" id="btnLogout" onclick="if(confirm('退出登录？')){localStorage.removeItem('fk_token');localStorage.removeItem('fk_uname');localStorage.removeItem('fk_uid');localStorage.removeItem('fk_displayName');window.location.href='index.html';}">退出登录</button>
+      </div>
+    </aside>
+
+    <!-- ============================================ -->
+    <!-- 主内容区 -->
+    <!-- ============================================ -->
+    <main class="chat-area" id="chatArea">
+
+      <!-- ===== 聊天视图 ===== -->
+      <div class="chat-empty" id="chatEmpty">
+        <div class="hex-glow">
+          <svg viewBox="0 0 64 72" fill="none">
+            <path d="M32 4L58 14V36C58 50 48 60 32 66C16 60 6 50 6 36V14L32 4Z"
+                  stroke="currentColor" stroke-width="1.5" fill="none"/>
+          </svg>
+        </div>
+        <h3>Select a conversation</h3>
+        <p>Choose from your existing conversations or start a new one</p>
+      </div>
+
+      <div class="chat-window" id="chatWindow" style="display:none">
+        <div class="chat-header">
+          <button class="icon-btn" id="btnBack" title="Back">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M19 12H5M12 5l-7 7 7 7"/>
+            </svg>
+          </button>
+          <div class="chat-peer-info" id="chatPeerInfo">
+            <div class="chat-peer-avatar" id="chatPeerAvatar">?</div>
+            <div class="chat-peer-details">
+              <div class="chat-peer-name" id="chatPeerName">Peer</div>
+              <div class="chat-peer-status" id="chatPeerStatus">Encrypted</div>
+              <!-- 加密状态指示器 -->
+              <div class="e2ee-status-bar" id="e2eeStatusBar" style="display:none">
+                <span class="e2ee-status-icon" id="e2eeStatusIcon">🔒</span>
+                <span class="e2ee-status-text" id="e2eeStatusText">E2EE</span>
+                <span class="e2ee-status-detail" id="e2eeStatusDetail"></span>
+              </div>
+              <!-- 加密模式切换 -->
+              <div class="encryption-mode-selector" id="encryptionModeSelector">
+                <button class="mode-btn active" data-mode="aes-gcm" title="AES-GCM (Double Ratchet)">AES-GCM</button>
+                <button class="mode-btn" data-mode="sm2-sm4-sm3" title="SM2+SM4+SM3 国密">SM4-GM</button>
+              </div>
+            </div>
+          </div>
+          <div class="chat-header-actions">
+            <button class="icon-btn" id="btnVoiceCall" title="Voice call">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/>
+              </svg>
+            </button>
+            <button class="icon-btn" id="btnVideoCall" title="Video call">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polygon points="23 7 16 12 23 17 23 7"/>
+                <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+              </svg>
+            </button>
+            <button class="icon-btn" id="btnVerify" title="Verify keys">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="messages-list" id="messagesList"></div>
+
+        <div class="chat-input-bar">
+          <button class="icon-btn" id="btnAttach" title="Attach file">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+            </svg>
+          </button>
+          <button class="icon-btn" id="btnBurn" title="Burn after read">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z"/>
+            </svg>
+          </button>
+          <input type="text" id="messageInput" placeholder="Type a message..." autocomplete="off" spellcheck="false">
+          <button class="icon-btn send-btn" id="btnSend" title="Send">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- ===== 语音通话视图 ===== -->
+      <div class="call-view" id="callView" style="display:none">
+        <div class="call-avatar" id="callAvatar">?</div>
+        <div class="call-name" id="callName">Unknown</div>
+        <div class="call-status" id="callStatus">Calling...</div>
+        <div class="call-timer" id="callTimer">00:00</div>
+        <div class="call-actions">
+          <button class="call-btn" id="btnMute" title="Mute">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v4M8 23h8"/>
+            </svg>
+          </button>
+          <button class="call-btn hangup" id="btnHangup" title="Hang up">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11l-1.27 1.27"/>
+            </svg>
+          </button>
+          <button class="call-btn" id="btnSpeaker" title="Speaker">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+              <path d="M15.54 8.46a5 5 0 0 1 0 7.07M19.07 4.93a10 10 0 0 1 0 14.14"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- ===== 密钥详情视图 ===== -->
+      <div class="key-detail-view" id="keyDetailView" style="display:none">
+        <div class="key-detail-header">
+          <h3>Key Management</h3>
+          <p>Manage your encryption keys and security settings</p>
+        </div>
+        <div class="key-cards" id="keyCards"></div>
+        <div class="key-actions">
+          <button class="btn-primary" id="btnRotateKeys">Rotate All Keys</button>
+          <button class="btn-secondary" id="btnExportKeys">Export Public Keys</button>
+        </div>
+      </div>
+
+      <!-- ===== 设置详情视图 ===== -->
+      <div class="settings-detail-view" id="settingsDetailView" style="display:none">
+        <div class="settings-detail-header">
+          <h3>Settings</h3>
+          <p>Customize your FIBEMATE experience</p>
+        </div>
+        <div class="settings-sections" id="settingsSections"></div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- ===== 模态框 ===== -->
+
+  <!-- 添加联系人 -->
+  <div class="modal-overlay" id="modalAddContact" style="display:none">
+    <div class="modal">
+      <div class="modal-header">
+        <h4>Add Contact</h4>
+        <button class="modal-close" data-modal="modalAddContact">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="input-group">
+          <label>Username</label>
+          <input type="text" id="contactUsername" placeholder="Enter username" autocomplete="off">
+        </div>
+        <div class="input-group">
+          <label>Display Name (optional)</label>
+          <input type="text" id="contactDisplayName" placeholder="Enter display name" autocomplete="off">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary modal-close" data-modal="modalAddContact">Cancel</button>
+        <button class="btn-primary" id="btnConfirmAddContact">Add Contact</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 上传文件到保险库 -->
+  <div class="modal-overlay" id="modalUploadVault" style="display:none">
+    <div class="modal">
+      <div class="modal-header">
+        <h4>Upload to Vault</h4>
+        <button class="modal-close" data-modal="modalUploadVault">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="vault-dropzone" id="vaultDropzone">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+          </svg>
+          <p>Drag files here or click to browse</p>
+          <input type="file" id="vaultFileInput" multiple style="display:none">
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-secondary modal-close" data-modal="modalUploadVault">Cancel</button>
+        <button class="btn-primary" id="btnConfirmUpload">Upload</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div class="toast" id="toast" style="display:none"></div>
+
+  <!-- 退出按钮逻辑（已移除Matrix动画） -->
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const logoutBtn = document.getElementById('btnLogout');
+      if (logoutBtn) {
+        logoutBtn.addEventListener('click', (e) => {
+          e.preventDefault();
+          localStorage.clear();
+          window.location.href = 'index.html';
+        });
+      }
+    });
+  </script>
+</body>
+</html>

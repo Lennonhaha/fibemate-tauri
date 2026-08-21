@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Login Test</title>
+</head>
+<body>
+  <h1>Login Debug Test</h1>
+  <div id="status">Checking...</div>
+  <div id="errors" style="color:red"></div>
+  
+  <script>
+    const status = document.getElementById('status');
+    const errors = document.getElementById('errors');
+    
+    try {
+      // Check if FIBEMATE_ZK is loaded
+      if (typeof FIBEMATE_ZK === 'undefined') {
+        errors.innerHTML += 'ERROR: FIBEMATE_ZK is not defined<br>';
+      } else {
+        status.innerHTML += '<br>FIBEMATE_ZK loaded: YES';
+        status.innerHTML += '<br>Methods: ' + Object.keys(FIBEMATE_ZK).join(', ');
+      }
+      
+      // Check localStorage
+      status.innerHTML += '<br>localStorage available: ' + (typeof localStorage !== 'undefined');
+      
+      // Check fetch
+      status.innerHTML += '<br>fetch available: ' + (typeof fetch !== 'undefined');
+      
+      // Check crypto
+      status.innerHTML += '<br>crypto available: ' + (typeof crypto !== 'undefined');
+      
+    } catch(e) {
+      errors.innerHTML += 'Exception: ' + e.message + '<br>';
+    }
+  </script>
+</body>
+</html>

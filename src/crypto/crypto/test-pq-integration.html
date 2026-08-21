@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>PQ Integration Test</title></head>
+<body style="font-family:monospace;white-space:pre;padding:20px;background:#1a1a2e;color:#0f0;">
+<h2>PQXDH Integration Test</h2>
+<div id="out">Loading...</div>
+
+<!-- Load ML-KEM -->
+<script src="ml-kem-768.js"></script>
+<script src="ml-kem-768-wrapper.js"></script>
+
+<script>
+const out = document.getElementById('out');
+function log(m) { out.textContent += m + '\n'; }
+out.textContent = '';
+
+function eq(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
+log('=== PQXDH Integration Test ===\n');
+
+// Test 1: Wrapper initialization
+log('Test 1: Wrapper init');
+try {
+  if (window.MLKEM768 && window.MLKEM768.initialized) {
+    log('  MLKEM768 wrapper initialized: OK');
+  } else {
+    log('  MLKEM768 not initialized, calling init...');
+    window.MLKEM768.init().then(() => {
+      log('  MLKEM768 initialized after init(): OK');
+    });
+  }
+} catch (e) {
+  log('  ERROR: ' + e.message);
+}
+
+// Test 2: Keygen (WASM format)
+log('\nTest 2: Keygen (WASM format)');
+try {
+  const kp = window.MLKEM768.keygen();
+  log('  public_key: ' + kp.public_key.length + ' bytes (exp 1184) ' + (kp.public_key.length === 1184 ? 'OK' : 'FAIL'));
+  log('  secret_key: ' + kp.secret_key.length + ' bytes (exp 2400) ' + (kp.secret_key.length === 2400 ? 'OK' : 'FAIL'));
+} catch (e) {
+  log('  ERROR: ' + e.message);
+}
+
+// Test 3: Encaps/Decaps (WASM format)
+log('\nTest 3: Encaps/Decaps (WASM format)');
+try {
+  const kp = window.MLKEM768.keygen();
+  const enc = window.MLKEM768.encaps(kp.public_key);
+  log('  ciphertext: ' + enc.ciphertext.length + ' bytes (exp 1088) ' + (enc.ciphertext.length === 1088 ? 'OK' : 'FAIL'));
+  log('  shared_secret: ' + enc.shared_secret.length + ' bytes (exp 32) ' + (enc.shared_secret.length === 32 ? 'OK' : 'FAIL'));
+  
+  const ss2 = window.MLKEM768.decaps(kp.secret_key, enc.ciphertext);
+  const match = eq(enc.shared_secret, ss2);
+  log('  match: ' + (match ? 'OK' : 'FAIL'));
+} catch (e) {
+  log('  ERROR: ' + e.message);
+  console.error(e);
+}
+
+// Test 4: Multiple iterations
+log('\nTest 4: 3 Iterations');
+let pass = 0;
+for (let i = 0; i < 3; i++) {
+  try {
+    const kp = window.MLKEM768.keygen();
+    const enc = window.MLKEM768.encaps(kp.public_key);
+    const ss2 = window.MLKEM768.decaps(kp.secret_key, enc.ciphertext);
+    if (eq(enc.shared_secret, ss2)) pass++;
+  } catch (e) {
+    log('  iter ' + i + ': ERROR');
+  }
+}
+log('  passed: ' + pass + '/3 ' + (pass === 3 ? 'OK' : 'FAIL'));
+
+log('\n=== Done ===');
+</script>
+</body>
+</html>

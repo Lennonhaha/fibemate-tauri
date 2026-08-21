@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>ZK Auth Test</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #1a1a2e; color: #eee; }
+        .pass { color: #4f4; }
+        .fail { color: #f44; }
+        .info { color: #88f; }
+        button { padding: 10px 20px; margin: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <h1>ZK Authentication Test</h1>
+    <div>
+        <button onclick="runSchnorrTest()">Test Schnorr</button>
+        <button onclick="runBulletproofsTest()">Test Bulletproofs</button>
+        <button onclick="runZKAuthTest()">Test ZK Auth</button>
+    </div>
+    <div id="output"></div>
+    
+    <script src="schnorr-prover.js"></script>
+    <script src="schnorr-verifier.js"></script>
+    <script src="bulletproofs.js"></script>
+    <script src="zk-auth.js"></script>
+    <script>
+        const out = document.getElementById('output');
+        function log(msg, cls='') {
+            out.innerHTML += `<div class="${cls}">${msg}</div>`;
+        }
+        function clear() {
+            out.innerHTML = '';
+        }
+
+        async function runSchnorrTest() {
+            clear();
+            log('=== Schnorr ZK Proof Test ===', 'info');
+            
+            const p = BigInt('0xFFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245');
+            const g = BigInt(2);
+            const x = BigInt('1234567890123456789012345678901234567890123456789012345678901234');
+            const y = g ** x % p;
+            
+            try {
+                const prover = new SchnorrProver();
+                await prover.init();
+                const proof = await prover.prove(x, { g, p, y });
+                
+                const verifier = new SchnorrVerifier();
+                const valid = await verifier.verify(
+                    { t: proof.t.toString(16), s: proof.s.toString(16), c: proof.c.toString(16) },
+                    { g: g.toString(16), p: p.toString(16), y: y.toString(16) }
+                );
+                
+                log(`Schnorr Proof: ${valid ? 'PASSED' : 'FAILED'}`, valid ? 'pass' : 'fail');
+            } catch(e) {
+                log(`ERROR: ${e.message}`, 'fail');
+            }
+        }
+
+        async function runBulletproofsTest() {
+            clear();
+            log('=== Bulletproofs Range Proof Test ===', 'info');
+            
+            try {
+                const bp = new Bulletproofs(32);
+                await bp.init();
+                
+                const v = BigInt(1000000); // Value in range
+                const gamma = bp._randomScalar();
+                
+                const commitment = bp.commit(v, gamma);
+                log(`Commitment: ${commitment.toString(16).slice(0, 16)}...`);
+                
+                const proof = await bp.proveRange(v, gamma);
+                log(`Proof generated with ${proof.bitCommitments.length} bit commitments`);
+                
+                const valid = await bp.verifyRange(proof, commitment);
+                log(`Range Proof: ${valid ? 'PASSED' : 'FAILED'}`, valid ? 'pass' : 'fail');
+            } catch(e) {
+                log(`ERROR: ${e.message}`, 'fail');
+            }
+        }
+
+        async function runZKAuthTest() {
+            clear();
+            log('=== ZK Auth Integration Test ===', 'info');
+            
+            try {
+                const zk = new ZKAuth();
+                await zk.init();
+                
+                log('Generating ZK login proof...');
+                const proof = await zk.generateLoginProof('testuser', 'testpass123');
+                
+                log(`Proof type: ${proof.type}`);
+                log(`Public key: ${proof.publicKey.slice(0, 16)}...`);
+                log(`Timestamp: ${new Date(proof.timestamp).toISOString()}`);
+                
+                log('Verifying proof...');
+                const valid = await zk.verifyLoginProof(proof);
+                log(`ZK Auth: ${valid ? 'PASSED' : 'FAILED'}`, valid ? 'pass' : 'fail');
+            } catch(e) {
+                log(`ERROR: ${e.message}`, 'fail');
+                console.error(e);
+            }
+        }
+    </script>
+</body>
+</html>

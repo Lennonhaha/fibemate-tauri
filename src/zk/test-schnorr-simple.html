@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Schnorr Simple Test</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #1a1a2e; color: #eee; }
+    .pass { color: #4e4; }
+    .fail { color: #e44; }
+    .info { color: #48f; }
+  </style>
+</head>
+<body>
+  <h1>Schnorr 简化测试</h1>
+  <div id="output"></div>
+
+  <script src="schnorr-prover-v2.js"></script>
+  <script>
+    const output = document.getElementById('output');
+    function log(msg, cls = 'info') {
+      output.innerHTML += `<div class="${cls}">${msg}</div>`;
+    }
+
+    async function runTest() {
+      const prover = new SchnorrProverV2();
+      await prover.init();
+      
+      // Use fixed values for reproducibility
+      const privateKey = 123456789n;
+      const publicKey = prover._scalarMult(privateKey, prover.curve.G);
+      
+      log(`私钥: ${privateKey}`);
+      log(`公钥: (${publicKey.x.toString(16).substring(0,16)}..., ${publicKey.y.toString(16).substring(0,16)}...)`);
+      
+      // Generate proof
+      const proof = await prover.prove(privateKey, publicKey);
+      log(`R: (${proof.R.x.toString(16).substring(0,16)}..., ${proof.R.y.toString(16).substring(0,16)}...)`);
+      log(`s: ${proof.s.toString(16).substring(0,16)}...`);
+      
+      // Verify
+      const valid = await prover.verify(proof, publicKey);
+      log(`验证: ${valid ? 'PASS' : 'FAIL'}`, valid ? 'pass' : 'fail');
+      
+      // Manual verification
+      const c = await prover._hashChallenge(proof.R.x, publicKey.x);
+      log(`c: ${c.toString(16).substring(0,16)}...`);
+      
+      const sG = prover._scalarMult(proof.s, prover.curve.G);
+      const cP = prover._scalarMult(c, publicKey);
+      const RHS = prover._pointAdd(proof.R, cP);
+      
+      log(`s*G: (${sG.x.toString(16).substring(0,16)}..., ${sG.y.toString(16).substring(0,16)}...)`);
+      log(`c*P: (${cP?.x?.toString(16)?.substring(0,16) || 'null'}..., ${cP?.y?.toString(16)?.substring(0,16) || 'null'}...)`);
+      log(`R+c*P: (${RHS?.x?.toString(16)?.substring(0,16) || 'null'}..., ${RHS?.y?.toString(16)?.substring(0,16) || 'null'}...)`);
+      
+      if (sG && RHS) {
+        const match = sG.x === RHS.x && sG.y === RHS.y;
+        log(`手动验证: ${match ? 'PASS' : 'FAIL'}`, match ? 'pass' : 'fail');
+        if (!match) {
+          log(`s*G.x = ${sG.x.toString(16)}`);
+          log(`RHS.x = ${RHS.x.toString(16)}`);
+        }
+      }
+    }
+
+    runTest().catch(e => {
+      log(`ERROR: ${e.message}`, 'fail');
+      console.error(e);
+    });
+  </script>
+</body>
+</html>

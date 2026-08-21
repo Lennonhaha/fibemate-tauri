@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>ML-KEM-TD Test</title></head>
+<body style="font-family:monospace;white-space:pre;padding:20px;background:#1a1a2e;color:#0f0;">
+<h2>ML-KEM-768 Time-Domain Test</h2>
+<div id="out">Loading...</div>
+<script>
+// === ML-KEM-768 Pure Time-Domain Implementation ===
+const KYBER_N=256, KYBER_Q=3329, KYBER_K=3;
+const KYBER_PUBLICKEYBYTES=1184, KYBER_SECRETKEYBYTES=2400;
+const KYBER_CIPHERTEXTBYTES=1088, KYBER_SSBYTES=32;
+
+// Keccak
+const KF={Rho:[0,1,62,28,27,36,44,6,55,20,3,10,43,25,39,41,45,15,21,8,18,2,61,56,14],Pi:[0,10,20,5,15,16,1,11,21,6,7,17,2,12,22,23,8,18,3,13,14,24,9,19,4],RC:[0x1n,0x8082n,0x800000000000808an,0x8000000080008000n,0x808bn,0x80000001n,0x8000000080008081n,0x8000000000008009n,0x8an,0x88n,0x80008009n,0x8000000an,0x8000808bn,0x800000000000008bn,0x8000000000008089n,0x8000000000008003n,0x8000000000008002n,0x8000000000000080n,0x800an,0x8000000an,0x80008081n,0x8000000000008080n,0x80000001n,0x80008008n]};
+function ROL(a,n){return n?((a<<BigInt(n))|(a>>BigInt(64-n)))&0xFFFFFFFFFFFFFFFFn:a;}
+function KF1600(s){const C=new BigInt64Array(5),D=new BigInt64Array(5),B=new BigInt64Array(25);for(let r=0;r<24;r++){for(let x=0;x<5;x++)C[x]=s[x]^s[x+5]^s[x+10]^s[x+15]^s[x+20];for(let x=0;x<5;x++)D[x]=C[(x+4)%5]^ROL(C[(x+1)%5],1);for(let i=0;i<25;i++)s[i]^=D[i%5];for(let i=0;i<25;i++)B[KF.Pi[i]]=ROL(s[i],KF.Rho[i]);for(let x=0;x<5;x++)for(let y=0;y<5;y++)s[x+5*y]=B[x+5*y]^((~B[(x+1)%5+5*y]&0xFFFFFFFFFFFFFFFFn)&B[(x+2)%5+5*y]);s[0]^=KF.RC[r];}}
+function L64(b,i){let r=0n;for(let j=0;j<8;j++)r|=BigInt(b[i+j])<<BigInt(8*j);return r;}
+function S64(b,i,v){for(let j=0;j<8;j++){b[i+j]=Number(v&0xFFn);v>>=8n;}}
+class Xof{constructor(rt,sf){this.s=new BigInt64Array(25);this.rt=rt;this.sf=sf;this.bb=new Uint8Array(200);this.p=0;this.f=false;}absorb(d){if(this.f)throw new Error('finalized');for(let i=0;i<d.length;i++){this.bb[this.p++]^=d[i];if(this.p===this.rt){this._bl();KF1600(this.s);this._lb();this.p=0;}}}finalize(){if(this.f)return;this.bb[this.p]^=this.sf;this.bb[this.rt-1]^=0x80;this._bl();KF1600(this.s);this._lb();this.p=0;this.f=true;}squeeze(n){if(!this.f)this.finalize();const o=new Uint8Array(n);for(let i=0;i<n;i++){o[i]=this.bb[this.p++];if(this.p===this.rt){this._bl();KF1600(this.s);this._lb();this.p=0;}}return o;}_bl(){for(let i=0;i<25;i++)this.s[i]=L64(this.bb,i*8);}_lb(){for(let i=0;i<25;i++)S64(this.bb,i*8,this.s[i]);}}
+function sh128(d,n){const s=new Xof(168,0x1f);s.absorb(d);return s.squeeze(n);}
+function sh256(d,n){const s=new Xof(136,0x1f);s.absorb(d);return s.squeeze(n);}
+function sh3_256(d){const s=new Xof(136,0x06);s.absorb(d);return s.squeeze(32);}
+function sh3_512(d){const s=new Xof(72,0x06);s.absorb(d);return s.squeeze(64);}
+
+// Modular arithmetic
+function mAdd(a,b){const r=a+b;return r>=KYBER_Q?r-KYBER_Q:r<0?r+KYBER_Q:r;}
+function mSub(a,b){const r=a-b;return r<0?r+KYBER_Q:r;}
+function mMul(a,b){let r=Number((BigInt(a)*BigInt(b))%BigInt(KYBER_Q));return r<0?r+KYBER_Q:r;}
+
+// Negacyclic convolution
+function polyMul(f,g){const r=new Int16Array(KYBER_N);for(let i=0;i<KYBER_N;i++){if(f[i]===0)continue;for(let j=0;j<KYBER_N;j++){if(g[j]===0)continue;const k=i+j,p=mMul(f[i],g[j]);if(k<KYBER_N)r[k]=mAdd(r[k],p);else r[k-KYBER_N]=mSub(r[k-KYBER_N],p);}}return r;}
+
+// Matrix/Vector ops
+function mvMul(A,s,k){const r=[];for(let i=0;i<k;i++){let sum=new Int16Array(KYBER_N);for(let j=0;j<k;j++){const p=polyMul(A[i][j],s[j]);for(let l=0;l<KYBER_N;l++)sum[l]=mAdd(sum[l],p[l]);}r[i]=sum;}return r;}
+function vDot(a,b,k){let r=new Int16Array(KYBER_N);for(let i=0;i<k;i++){const p=polyMul(a[i],b[i]);for(let j=0;j<KYBER_N;j++)r[j]=mAdd(r[j],p[j]);}return r;}
+function vAdd(a,b,k){const r=[];for(let i=0;i<k;i++){r[i]=new Int16Array(KYBER_N);for(let j=0;j<KYBER_N;j++)r[i][j]=mAdd(a[i][j],b[i][j]);}return r;}
+
+// Serialization
+function bEnc(f,d){const o=new Uint8Array(256*d/8);for(let i=0;i<256;i++){let t=((f[i]%KYBER_Q)+KYBER_Q)%KYBER_Q;for(let j=0;j<d;j++){const bi=i*d+j;o[bi>>3]|=((t>>j)&1)<<(bi&7);}}return o;}
+function bDec(da,d){const f=new Int16Array(256);for(let i=0;i<256;i++){let t=0;for(let j=0;j<d;j++){const bi=i*d+j;t|=((da[bi>>3]>>(bi&7))&1)<<j;}f[i]=t;}return f;}
+function cmp(f,d){const g=new Int16Array(256);for(let i=0;i<256;i++){let x=((f[i]%KYBER_Q)+KYBER_Q)%KYBER_Q;g[i]=Number((BigInt(x)*BigInt(1<<d)+BigInt(KYBER_Q>>1))/BigInt(KYBER_Q))&((1<<d)-1);}return g;}
+function dcmp(g,d){const f=new Int16Array(256);for(let i=0;i<256;i++)f[i]=Number((BigInt(g[i])*BigInt(KYBER_Q)+BigInt(1<<(d-1)))>>BigInt(d));return f;}
+function cbd2(b){const r=new Int16Array(256);for(let i=0;i<128;i++){r[2*i]=(b[i]&1)+((b[i]>>1)&1)-((b[i]>>2)&1)-((b[i]>>3)&1);r[2*i+1]=((b[i]>>4)&1)+((b[i]>>5)&1)-((b[i]>>6)&1)-((b[i]>>7)&1);}return r;}
+function sampleP(s,n){const st=sh128(new Uint8Array([...s,n]),504);const a=new Int16Array(256);let j=0,idx=0;while(j<256&&idx<503){const d1=st[idx]|((st[idx+1]&0x0F)<<8);const d2=(st[idx+1]>>4)|(st[idx+2]<<4);idx+=3;if(d1<KYBER_Q)a[j++]=d1;if(j<256&&d2<KYBER_Q)a[j++]=d2;}return a;}
+
+// KeyGen
+function genKp(){const d=crypto.getRandomValues(new Uint8Array(32)),z=crypto.getRandomValues(new Uint8Array(32));const sd=sh3_512(d),rho=sd.slice(0,32),sigma=sd.slice(32,64);const A=[];for(let i=0;i<KYBER_K;i++){A[i]=[];for(let j=0;j<KYBER_K;j++)A[i][j]=sampleP(rho,(i<<8)|j);}const s=[],e=[];for(let i=0;i<KYBER_K;i++){s[i]=cbd2(sh256(new Uint8Array([...sigma,i]),128));e[i]=cbd2(sh256(new Uint8Array([...sigma,i+KYBER_K]),128));}const As=mvMul(A,s,KYBER_K);const t=vAdd(As,e,KYBER_K);const pk=new Uint8Array(KYBER_PUBLICKEYBYTES);let off=0;for(let i=0;i<KYBER_K;i++){pk.set(bEnc(t[i],12),off);off+=384;}pk.set(rho,off);const sk=new Uint8Array(KYBER_SECRETKEYBYTES);off=0;for(let i=0;i<KYBER_K;i++){sk.set(bEnc(s[i],12),off);off+=384;}sk.set(pk,off);off+=KYBER_PUBLICKEYBYTES;sk.set(sh3_256(pk),off);off+=32;sk.set(z,off);return{publicKey:pk,secretKey:sk};}
+
+// Encaps
+function encaps(pk){const m=crypto.getRandomValues(new Uint8Array(32));const t=[],rho=pk.slice(KYBER_K*384,KYBER_K*384+32);let off=0;for(let i=0;i<KYBER_K;i++){t[i]=bDec(pk.slice(off,off+384),12);off+=384;}const h=sh3_256(pk),Kb=sh3_256(new Uint8Array([...m,...h]));const AT=[];for(let i=0;i<KYBER_K;i++){AT[i]=[];for(let j=0;j<KYBER_K;j++)AT[i][j]=sampleP(rho,(j<<8)|i);}const r=[],e1=[];for(let i=0;i<KYBER_K;i++){r[i]=cbd2(sh256(new Uint8Array([...m,i]),128));e1[i]=cbd2(sh256(new Uint8Array([...m,i+KYBER_K]),128));}const e2=cbd2(sh256(new Uint8Array([...m,2*KYBER_K]),128));const ATr=mvMul(AT,r,KYBER_K);const u=vAdd(ATr,e1,KYBER_K);const tTr=vDot(t,r,KYBER_K);const mP=new Int16Array(256);for(let i=0;i<256;i++)mP[i]=((m[i>>3]>>(i&7))&1)*Math.floor(KYBER_Q/2);const v=new Int16Array(256);for(let i=0;i<256;i++)v[i]=mAdd(mAdd(tTr[i],e2[i]),mP[i]);const ct=new Uint8Array(KYBER_CIPHERTEXTBYTES);off=0;for(let i=0;i<KYBER_K;i++){ct.set(bEnc(cmp(u[i],10),10),off);off+=320;}ct.set(bEnc(cmp(v,4),4),off);return{ciphertext:ct,sharedSecret:sh3_256(new Uint8Array([...Kb,...sh3_256(ct)]))};}
+
+// Decaps
+function decaps(sk,ct){const n=KYBER_K;const s=[];let off=0;for(let i=0;i<n;i++){s[i]=bDec(sk.slice(off,off+384),12);off+=384;}const pk=sk.slice(off,off+KYBER_PUBLICKEYBYTES);off+=KYBER_PUBLICKEYBYTES;const h=sk.slice(off,off+32);off+=32;const z=sk.slice(off,off+32);const u=[];off=0;for(let i=0;i<n;i++){u[i]=dcmp(bDec(ct.slice(off,off+320),10),10);off+=320;}const v=dcmp(bDec(ct.slice(off,off+128),4),4);const sTu=vDot(s,u,n);const mp=new Int16Array(256);for(let i=0;i<256;i++)mp[i]=((mSub(v[i],sTu[i])%KYBER_Q)+KYBER_Q)%KYBER_Q;const mP=new Uint8Array(32);const mpc=cmp(mp,1);for(let i=0;i<256;i++)mP[i>>3]|=mpc[i]<<(i&7);const Kbp=sh3_256(new Uint8Array([...mP,...h]));const rho=pk.slice(n*384,n*384+32);const AT=[];for(let i=0;i<n;i++){AT[i]=[];for(let j=0;j<n;j++)AT[i][j]=sampleP(rho,(j<<8)|i);}const r=[],e1=[];for(let i=0;i<n;i++){r[i]=cbd2(sh256(new Uint8Array([...mP,i]),128));e1[i]=cbd2(sh256(new Uint8Array([...mP,i+n]),128));}const e2=cbd2(sh256(new Uint8Array([...mP,2*n]),128));const ATr=mvMul(AT,r,n);const u2=vAdd(ATr,e1,n);const t=[];let tOff=0;for(let i=0;i<n;i++){t[i]=bDec(pk.slice(tOff,tOff+384),12);tOff+=384;}const tTr=vDot(t,r,n);const mP2=new Int16Array(256);for(let i=0;i<256;i++)mP2[i]=((mP[i>>3]>>(i&7))&1)*Math.floor(KYBER_Q/2);const v2=new Int16Array(256);for(let i=0;i<256;i++)v2[i]=mAdd(mAdd(tTr[i],e2[i]),mP2[i]);const ct2=new Uint8Array(KYBER_CIPHERTEXTBYTES);off=0;for(let i=0;i<n;i++){ct2.set(bEnc(cmp(u2[i],10),10),off);off+=320;}ct2.set(bEnc(cmp(v2,4),4),off);let fail=0;for(let i=0;i<KYBER_CIPHERTEXTBYTES;i++)fail|=ct[i]^ct2[i];return fail?sh3_256(new Uint8Array([...z,...sh3_256(ct)])):sh3_256(new Uint8Array([...Kbp,...sh3_256(ct)]));}
+
+// === Test Code ===
+const out=document.getElementById('out');
+function log(m){out.textContent+=m+'\n';}
+out.textContent='';
+function eq(a,b){if(a.length!==b.length)return false;for(let i=0;i<a.length;i++)if(a[i]!==b[i])return false;return true;}
+
+log('=== ML-KEM-768 Time-Domain ===\n');
+
+log('Test 1: Key Generation');
+try{const kp=genKp();log(`  pk: ${kp.publicKey.length} bytes (exp ${KYBER_PUBLICKEYBYTES}) ${kp.publicKey.length===KYBER_PUBLICKEYBYTES?'OK':'FAIL'}`);log(`  sk: ${kp.secretKey.length} bytes (exp ${KYBER_SECRETKEYBYTES}) ${kp.secretKey.length===KYBER_SECRETKEYBYTES?'OK':'FAIL'}`);}catch(e){log(`  ERROR: ${e.message}`);console.error(e);}
+
+log('\nTest 2: Encaps/Decaps');
+try{const kp=genKp();const enc=encaps(kp.publicKey);log(`  ct: ${enc.ciphertext.length} bytes (exp ${KYBER_CIPHERTEXTBYTES}) ${enc.ciphertext.length===KYBER_CIPHERTEXTBYTES?'OK':'FAIL'}`);log(`  ss: ${enc.sharedSecret.length} bytes (exp ${KYBER_SSBYTES}) ${enc.sharedSecret.length===KYBER_SSBYTES?'OK':'FAIL'}`);const t0=performance.now();const ss2=decaps(kp.secretKey,enc.ciphertext);const t1=performance.now();const match=eq(enc.sharedSecret,ss2);log(`  match: ${match?'OK':'FAIL'} (${(t1-t0).toFixed(1)}ms)`);if(!match){log('  expected: '+Array.from(enc.sharedSecret).map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,32)+'...');log('  got:      '+Array.from(ss2).map(b=>b.toString(16).padStart(2,'0')).join('').slice(0,32)+'...');}}catch(e){log(`  ERROR: ${e.message}`);console.error(e);}
+
+log('\nTest 3: 5 Iterations');
+let pass=0;for(let i=0;i<5;i++){try{const kp=genKp();const enc=encaps(kp.publicKey);const ss2=decaps(kp.secretKey,enc.ciphertext);if(eq(enc.sharedSecret,ss2))pass++;}catch(e){log(`  iter ${i}: ERROR`);}}log(`  passed: ${pass}/5 ${pass===5?'OK':'FAIL'}`);
+
+log('\nTest 4: Wrong ciphertext');
+try{const kp=genKp();const enc=encaps(kp.publicKey);const w=new Uint8Array(enc.ciphertext);w[0]^=0xFF;const sW=decaps(kp.secretKey,w);log(`  different: ${!eq(enc.sharedSecret,sW)?'OK':'FAIL'}`);}catch(e){log(`  ERROR: ${e.message}`);}
+
+log('\n=== Done ===');
+</script>
+</body>
+</html>

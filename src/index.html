@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FIBEMATE - 隐私即时通讯</title>
+  <link rel="stylesheet" href="styles.css">
+  <!-- Tauri Bridge: polyfills window.electronAPI for native desktop features -->
+  <script src="tauri-bridge.js"></script>
+  <!-- FIBEMATE_ZK polyfill: doLogin/doRegister bridge -->
+  <script src="fibemate-zk-polyfill.js"></script>
+  <script src="secure-key-storage.js"></script>
+  <script src="key-storage-migration.js"></script>
+  <script src="key-manager.js"></script>
+  <script src="double-ratchet.js"></script>
+  <script src="message-crypto.js"></script>
+  <script src="crypto/crypto/ml-kem-768.js"></script>
+  <script src="crypto/crypto/ml-kem-768-wrapper.js"></script>
+  <script src="crypto/crypto/pq-integration.js"></script>
+  <!-- Tauri Crypto Bridge: replaces WASM ML-KEM with Rust backend -->
+  <script src="tauri-crypto-bridge.js"></script>
+  <script src="zk/zk-browser.js"></script>
+  <script src="zk/schnorr-prover-v2.js"></script>
+  <script src="zk/bulletproofs.js"></script>
+  <script src="zk/zk-auth.js"></script>
+  <script src="zk/zk-integration.js"></script>
+  <script src="zk-ui-integration.js"></script>
+</head>
+<body>
+  <div class="login-wrapper">
+    <div class="bg-grid"></div>
+    <div class="bg-glow"></div>
+
+    <div class="login-card">
+      <!-- Logo 区域 -->
+      <div class="logo-area">
+        <div class="logo-bg-circle"></div>
+        <div class="shield-logo">
+          <svg viewBox="0 0 64 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="shieldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#5CFFE3"/>
+                <stop offset="100%" style="stop-color:#00E5C3"/>
+              </linearGradient>
+              <filter id="shieldGlow" x="-50%" y="-50%" width="200%" height="200%">
+                <feGaussianBlur stdDeviation="0.8" result="coloredBlur"/>
+                <feMerge>
+                  <feMergeNode in="coloredBlur"/>
+                  <feMergeNode in="SourceGraphic"/>
+                </feMerge>
+              </filter>
+            </defs>
+            <g filter="url(#shieldGlow)">
+              <path d="M32 4L58 14V36C58 50 48 60 32 66C16 60 6 50 6 36V14L32 4Z"
+                    stroke="url(#shieldGrad)" stroke-width="2.5" fill="none"/>
+              <path d="M32 12L50 20V36C50 46 42 54 32 58C22 54 14 46 14 36V20L32 12Z"
+                    stroke="url(#shieldGrad)" stroke-width="1.5" fill="none" opacity="0.6"/>
+              <circle cx="32" cy="32" r="6" stroke="url(#shieldGrad)" stroke-width="2" fill="none"/>
+              <path d="M32 38V48" stroke="url(#shieldGrad)" stroke-width="2.5" stroke-linecap="round"/>
+              <path d="M32 8L52 17V22" stroke="url(#shieldGrad)" stroke-width="0.8" opacity="0.5"/>
+            </g>
+          </svg>
+        </div>
+        <h1 class="brand-name">FIBEMATE</h1>
+        <p class="brand-sub">Security-First Messaging · End-to-End Encryption</p>
+      </div>
+
+      <!-- 安全徽章 -->
+      <div class="security-badge">
+        <svg width="10" height="12" viewBox="0 0 10 12" fill="none">
+          <path d="M5 1L9 2.5V6C9 8.5 7 10.5 5 11.5C3 10.5 1 8.5 1 6V2.5L5 1Z"
+                stroke="currentColor" stroke-width="1" fill="none"/>
+        </svg>
+        <span>End-to-End Encryption · Zero-Knowledge Proof</span>
+      </div>
+
+      <!-- 登录方式切换 -->
+      <div class="login-tabs">
+        <button type="button" class="tab-btn active" data-tab="password">&#x5BC6;&#x7801;&#x767B;&#x5F55;</button>
+        <button type="button" class="tab-btn" data-tab="phone">&#x624B;&#x673A;&#x53F7;&#x767B;&#x5F55;</button>
+      </div>
+
+      <!-- 密码登录表单 -->
+      <form class="login-form" id="loginForm" autocomplete="off">
+        <div class="input-group">
+          <input type="text" id="username" name="fm_un" placeholder="&#x7528;&#x6237;&#x540D;"
+            spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off" required>
+        </div>
+        <div class="input-group">
+          <input type="password" id="password" name="fm_pw" placeholder="&#x5BC6;&#x7801;"
+            autocomplete="off" required>
+        </div>
+
+        <button type="submit" class="btn-primary" id="loginBtn">
+          <svg width="14" height="16" viewBox="0 0 14 16" fill="none" style="margin-right:6px">
+            <rect x="2" y="7" width="10" height="8" rx="1.5" stroke="currentColor" stroke-width="1.3" fill="none"/>
+            <path d="M4 7V5C4 3.34 5.34 2 7 2C8.66 2 10 3.34 10 5V7" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+            <circle cx="7" cy="11" r="1" fill="currentColor"/>
+          </svg>
+          <span id="loginBtnText">&#x767B;&#x5F55; · &#x6CE8;&#x518C;</span>
+        </button>
+
+        <div id="loginError" class="error-msg" style="display:none"></div>
+      </form>
+
+      <!-- 手机号登录表单（默认隐藏，由 JS 控制显示） -->
+      <form class="login-form" id="phoneLoginForm" style="display:none" autocomplete="off">
+        <div class="input-group">
+          <input type="tel" id="phoneNumber" name="fm_ph" placeholder="&#x624B;&#x673A;&#x53F7;"
+            maxlength="11" pattern="1[3-9]\d{9}" autocomplete="off" autocorrect="off" required>
+        </div>
+        <div class="input-group captcha-group">
+          <input type="text" id="phoneCaptcha" name="fm_cp" placeholder="&#x9A8C;&#x8BC1;&#x7801;"
+            maxlength="6" autocomplete="off" autocorrect="off" required>
+          <button type="button" class="btn-captcha" id="sendCaptchaBtn">&#x83B7;&#x53D6;&#x9A8C;&#x8BC1;&#x7801;</button>
+        </div>
+
+        <button type="submit" class="btn-primary" id="phoneLoginBtn">
+          <span id="phoneLoginBtnText">&#x767B;&#x5F55; / &#x6CE8;&#x518C;</span>
+        </button>
+
+        <div id="phoneLoginError" class="error-msg" style="display:none"></div>
+      </form>
+
+      <!-- 分隔线 -->
+      <div class="divider">
+        <span></span>
+        <span class="divider-text">&#x6216;</span>
+        <span></span>
+      </div>
+
+      <!-- 注册入口 -->
+      <p class="register-link">
+        &#x8FD8;&#x6CA1;&#x6709;&#x8D26;&#x53F7;&#xFF1F; <a href="#" id="goRegister">&#x7ACB;&#x5373;&#x6CE8;&#x518C; &#x2192;</a>
+      </p>
+
+      <!-- 用户协议 -->
+      <div class="agreement-links">
+        &#x767B;&#x5F55;&#x5373;&#x8868;&#x793A;&#x540C;&#x610F; <a href="agreement.html" target="_blank">&#x7528;&#x6237;&#x534F;&#x8BAE;</a>
+        &#x548C; <a href="privacy.html" target="_blank">&#x9690;&#x79C1;&#x653F;&#x7B56;</a>
+      </div>
+
+      <!-- 底部安全标识 -->
+      <div class="footer-badge">
+        <svg width="8" height="10" viewBox="0 0 8 10" fill="none">
+          <path d="M4 1L7 2V5C7 7 5.5 8.5 4 9.5C2.5 8.5 1 7 1 5V2L4 1Z"
+                stroke="currentColor" stroke-width="0.8" fill="none" opacity="0.5"/>
+        </svg>
+        <span>Zero-Knowledge · Privacy First</span>
+      </div>
+    </div>
+
+    <!-- Toast 通知 -->
+    <div class="toast" id="toast" style="display:none"></div>
+  </div>
+
+  <!-- 注册页面（隐藏） -->
+  <div class="register-wrapper" id="registerView" style="display:none">
+    <div class="bg-glow"></div>
+    <div class="bg-grid"></div>
+    <div class="login-card">
+      <div class="logo-area">
+        <div class="shield-logo">
+          <svg viewBox="0 0 64 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <defs>
+              <linearGradient id="shieldGrad2" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#5CFFE3"/>
+                <stop offset="100%" style="stop-color:#00E5C3"/>
+              </linearGradient>
+            </defs>
+            <g>
+              <path d="M32 4L58 14V36C58 50 48 60 32 66C16 60 6 50 6 36V14L32 4Z"
+                    stroke="url(#shieldGrad2)" stroke-width="2.5" fill="none"/>
+              <path d="M32 12L50 20V36C50 46 42 54 32 58C22 54 14 46 14 36V20L32 12Z"
+                    stroke="url(#shieldGrad2)" stroke-width="1.5" fill="none" opacity="0.6"/>
+              <circle cx="32" cy="32" r="6" stroke="url(#shieldGrad2)" stroke-width="2" fill="none"/>
+              <path d="M32 38V48" stroke="url(#shieldGrad2)" stroke-width="2.5" stroke-linecap="round"/>
+            </g>
+          </svg>
+        </div>
+        <h1 class="brand-name">FIBEMATE</h1>
+        <p class="brand-sub">&#x521B;&#x5EFA;&#x8D26;&#x53F7;</p>
+      </div>
+
+      <!-- 注册表单 -->
+      <form class="login-form" id="registerForm" autocomplete="off">
+        <div class="input-group">
+          <input type="text" id="regUsername" name="fm_ru" placeholder="&#x7528;&#x6237;&#x540D;"
+            autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" required>
+        </div>
+        <div class="input-group">
+          <input type="password" id="regPassword" name="fm_rp" placeholder="&#x5BC6;&#x7801;&#xFF08;&#x81F3;&#x5C11;8&#x4F4D;&#xFF09;"
+            autocomplete="off" required>
+        </div>
+        <div class="input-group">
+          <input type="password" id="regPasswordConfirm" name="fm_rc" placeholder="&#x786E;&#x8BA4;&#x5BC6;&#x7801;"
+            autocomplete="off" required>
+        </div>
+
+        <button type="submit" class="btn-primary" id="registerBtn">
+          <span id="registerBtnText">&#x521B;&#x5EFA;&#x8D26;&#x53F7;</span>
+        </button>
+        <div id="registerError" class="error-msg" style="display:none"></div>
+        <button type="button" class="btn-text" id="goLogin">&#x5DF2;&#x6709;&#x8D26;&#x53F7;&#xFF1F;&#x7ACB;&#x5373;&#x767B;&#x5F55; &#x2192;</button>
+      </form>
+    </div>
+  </div>
+
+  <script>
+  // ============================================================
+  // 重放保护中间件（手写 Map，零新依赖）
+  // ============================================================
+  (function () {
+    const REPLAY_TTL_MS = 5 * 60 * 1000; // 5 分钟
+    const seenNonces = new Map(); // nonce → timestamp
+    let cleanupTimer = null;
+
+    function isNonceReplayed(nonce) {
+      if (!nonce || typeof nonce !== 'string' || nonce.length === 0) return false;
+      const now = Date.now();
+      const entry = seenNonces.get(nonce);
+      if (entry !== undefined) {
+        if (now - entry.ts < REPLAY_TTL_MS) return true; // 还在 TTL 内 = 重放
+        seenNonces.delete(nonce); // 已过期，删除并放行
+      }
+      seenNonces.set(nonce, { ts: now });
+      // 定期清理过期项
+      if (seenNonces.size > 10000) scheduleCleanup();
+      return false;
+    }
+
+    function scheduleCleanup() {
+      if (cleanupTimer) return;
+      cleanupTimer = setTimeout(() => {
+        cleanupTimer = null;
+        const now = Date.now();
+        for (const [k, v] of seenNonces) {
+          if (now - v.ts >= REPLAY_TTL_MS) seenNonces.delete(k);
+        }
+      }, 60000);
+    }
+
+    // 暴露到全局，供 fetch 拦截使用
+    window.__replayProtect = { isNonceReplayed, REPLAY_TTL_MS };
+  })();
+
+  // ============================================================
+  // 带重放保护的 fetch 包装
+  // ============================================================
+  (function () {
+    const _fetch = window.fetch.bind(window);
+    window.fetch = async function (url, options = {}) {
+      const method = (options.method || 'GET').toUpperCase();
+      // 只保护写操作
+      if (!['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) return _fetch(url, options);
+
+      // 注入 replayProtect nonce
+      let headers = options.headers || {};
+      let nonce = headers['X-Request-Id'] || headers['x-request-id'];
+      if (!nonce) {
+        nonce = crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2);
+        headers = { ...headers, 'X-Request-Id': nonce };
+      }
+
+      // 重放检查
+      if (window.__replayProtect && window.__replayProtect.isNonceReplayed(nonce)) {
+        throw new Error('\u8BF7\u6C42\u5DF2\u88AB\u91CD\u653E\uFF0C\u8BF7\u7A0D\u540E\u91CD\u8BDD');
+      }
+
+      return _fetch(url, { ...options, headers });
+    };
+  })();
+
+  // ============================================================
+  // 登录 / 注册逻辑
+  // ============================================================
+  document.addEventListener('DOMContentLoaded', () => {
+    if (FIBEMATE_ZK && FIBEMATE_ZK.isLoggedIn()) {
+      window.location.href = 'main.html';
+      return;
+    }
+    initLoginForm();
+    initPhoneLogin();
+    initRegisterForm();
+  });
+
+  // ----------------------------------------------------------
+  // 密码登录
+  // ----------------------------------------------------------
+  function initLoginForm() {
+    const form = document.getElementById('loginForm');
+    const errorEl = document.getElementById('loginError');
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      if (!username || !password) return;
+
+      setLoading('loginBtn', 'loginBtnText', true);
+      errorEl.style.display = 'none';
+
+      try {
+        const data = await FIBEMATE_ZK.doLogin(username, password);
+        if (data.token) {
+          localStorage.setItem('fk_token', data.token);
+          localStorage.setItem('fk_uid', data.userId);
+        }
+        if (data.publicKey) localStorage.setItem('fk_public_key', data.publicKey);
+        if (data.displayName) {
+          localStorage.setItem('fk_displayName', data.displayName);
+          localStorage.setItem('fk_uname', data.displayName);
+        } else {
+          localStorage.setItem('fk_uname', username);
+        }
+        showToast('\u767B\u5F55\u6210\u529F\uFF0C\u6B63\u5728\u8DF3\u8F6C...', 'success');
+        setTimeout(() => { window.location.href = 'main.html'; }, 500);
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.style.display = 'block';
+      } finally {
+        setLoading('loginBtn', 'loginBtnText', false);
+      }
+    });
+
+    document.getElementById('goRegister').addEventListener('click', (e) => {
+      e.preventDefault();
+      document.querySelector('.login-wrapper').style.display = 'none';
+      document.getElementById('registerView').style.display = 'flex';
+    });
+  }
+
+  // ----------------------------------------------------------
+  // 手机号登录
+  // ----------------------------------------------------------
+  function initPhoneLogin() {
+    const tabBtns = document.querySelectorAll('.tab-btn');
+    const loginForm = document.getElementById('loginForm');
+    const phoneForm = document.getElementById('phoneLoginForm');
+    const sendBtn = document.getElementById('sendCaptchaBtn');
+    const phoneFormEl = document.getElementById('phoneLoginForm');
+    const errorEl = document.getElementById('phoneLoginError');
+
+    // 标签切换
+    tabBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        tabBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const tab = btn.dataset.tab;
+        if (tab === 'password') {
+          loginForm.style.display = 'flex';
+          phoneForm.style.display = 'none';
+        } else {
+          loginForm.style.display = 'none';
+          phoneForm.style.display = 'flex';
+        }
+      });
+    });
+
+    // 发送验证码
+    sendBtn.addEventListener('click', async () => {
+      const phone = document.getElementById('phoneNumber').value.trim();
+      if (!/^1[3-9]\d{9}$/.test(phone)) {
+        errorEl.textContent = '\u8BF7\u8F93\u5165\u6B63\u786E\u7684\u624B\u673A\u53F7';
+        errorEl.style.display = 'block';
+        return;
+      }
+      sendBtn.disabled = true;
+      errorEl.style.display = 'none';
+      try {
+        const apiUrl = localStorage.getItem('fk_api_url') || 'https://fibemate.net/api';
+        const res = await fetch(`${apiUrl}/auth/send-captcha`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone })
+        });
+        const data = await res.json();
+        if (data.success) {
+          startCountdown(sendBtn);
+          showToast('\u9A8C\u8BC1\u7801\u5DF2\u53D1\u9001', 'success');
+        } else {
+          errorEl.textContent = data.message || '\u53D1\u9001\u5931\u8D25';
+          errorEl.style.display = 'block';
+          sendBtn.disabled = false;
+        }
+      } catch {
+        errorEl.textContent = '\u53D1\u9001\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5';
+        errorEl.style.display = 'block';
+        sendBtn.disabled = false;
+      }
+    });
+
+    // 手机号登录
+    phoneFormEl.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const phone = document.getElementById('phoneNumber').value.trim();
+      const code = document.getElementById('phoneCaptcha').value.trim();
+      if (!phone || !code) return;
+
+      setLoading('phoneLoginBtn', 'phoneLoginBtnText', true);
+      errorEl.style.display = 'none';
+
+      try {
+        const apiUrl = localStorage.getItem('fk_api_url') || 'https://fibemate.net/api';
+        const verifyRes = await fetch(`${apiUrl}/auth/verify-captcha`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ phone, code })
+        });
+        const verifyData = await verifyRes.json();
+        if (!verifyData.success) {
+          errorEl.textContent = verifyData.message || '\u9A8C\u8BC1\u7801\u9519\u8BEF';
+          errorEl.style.display = 'block';
+          setLoading('phoneLoginBtn', 'phoneLoginBtnText', false);
+          return;
+        }
+        const loginRes = await fetch(`${apiUrl}/auth/phone-login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tempToken: verifyData.tempToken, phone })
+        });
+        const loginData = await loginRes.json();
+        if (loginData.success) {
+          localStorage.setItem('fk_token', loginData.token);
+          localStorage.setItem('fk_uid', loginData.userId);
+          localStorage.setItem('fk_user_level', loginData.userLevel || '1');
+          localStorage.setItem('fk_phone', phone);
+          localStorage.setItem('fk_uname', phone);
+          showToast('\u767B\u5F55\u6210\u529F\uFF0C\u6B63\u5728\u8DF3\u8F6C...', 'success');
+          setTimeout(() => { window.location.href = 'main.html'; }, 500);
+        } else {
+          errorEl.textContent = loginData.message || '\u767B\u5F55\u5931\u8D25';
+          errorEl.style.display = 'block';
+        }
+      } catch {
+        errorEl.textContent = '\u767B\u5F55\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5';
+        errorEl.style.display = 'block';
+      } finally {
+        setLoading('phoneLoginBtn', 'phoneLoginBtnText', false);
+      }
+    });
+  }
+
+  // ----------------------------------------------------------
+  // 注册
+  // ----------------------------------------------------------
+  function initRegisterForm() {
+    const form = document.getElementById('registerForm');
+    const errorEl = document.getElementById('registerError');
+
+    document.getElementById('goLogin').addEventListener('click', () => {
+      document.getElementById('registerView').style.display = 'none';
+      document.querySelector('.login-wrapper').style.display = 'flex';
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const username = document.getElementById('regUsername').value.trim();
+      const password = document.getElementById('regPassword').value;
+      const passwordConfirm = document.getElementById('regPasswordConfirm').value;
+
+      errorEl.style.display = 'none';
+      if (!username || !password) {
+        errorEl.textContent = '\u8BF7\u586B\u5199\u6240\u6709\u5B57\u6BB5';
+        errorEl.style.display = 'block';
+        return;
+      }
+      if (password.length < 8) {
+        errorEl.textContent = '\u5BC6\u7801\u81F3\u5C11 8 \u4F4D';
+        errorEl.style.display = 'block';
+        return;
+      }
+      if (password !== passwordConfirm) {
+        errorEl.textContent = '\u4E24\u6B21\u5BC6\u7801\u4E0D\u4E00\u81F4';
+        errorEl.style.display = 'block';
+        return;
+      }
+
+      setLoading('registerBtn', 'registerBtnText', true);
+      try {
+        const data = await FIBEMATE_ZK.doRegister(username, password);
+        // 保存会话凭证（修复：注册成功后未存 token/uid 会被 main.js 弹回登录页）
+        if (data.token) {
+          localStorage.setItem('fk_token', data.token);
+          localStorage.setItem('fk_uid', data.userId);
+        }
+        if (data.publicKey) localStorage.setItem('fk_public_key', data.publicKey);
+        if (data.displayName) {
+          localStorage.setItem('fk_displayName', data.displayName);
+          localStorage.setItem('fk_uname', data.displayName);
+        } else {
+          localStorage.setItem('fk_uname', username);
+        }
+        showToast('\u6B22\u8FCE ' + (data.displayName || username) + '\uFF0C\u6CE8\u518C\u6210\u529F\uFF01', 'success');
+        setTimeout(() => { window.location.href = 'main.html'; }, 500);
+      } catch (err) {
+        errorEl.textContent = err.message;
+        errorEl.style.display = 'block';
+      } finally {
+        setLoading('registerBtn', 'registerBtnText', false);
+      }
+    });
+  }
+
+  // ----------------------------------------------------------
+  // 工具函数
+  // ----------------------------------------------------------
+  function startCountdown(btn) {
+    let count = 60;
+    btn.textContent = count + 's';
+    const timer = setInterval(() => {
+      btn.textContent = (--count) + 's';
+      if (count <= 0) {
+        clearInterval(timer);
+        btn.textContent = '\u83B7\u53D6\u9A8C\u8BC1\u7801';
+        btn.disabled = false;
+      }
+    }, 1000);
+  }
+
+  function setLoading(btnId, textId, loading) {
+    const btn = document.getElementById(btnId);
+    if (!btn) return;
+    btn.disabled = loading;
+    if (textId) {
+      const textEl = document.getElementById(textId);
+      if (textEl) {
+        if (btnId === 'loginBtn') textEl.textContent = loading ? '\u5904\u7406\u4E2D...' : '\u767B\u5F55; \u00B7 \u6CE8\u518C';
+        else if (btnId === 'registerBtn') textEl.textContent = loading ? '\u5904\u7406\u4E2D...' : '\u521B\u5EFA\u8D26\u53F7';
+        else textEl.textContent = loading ? '\u5904\u7406\u4E2D...' : textEl.textContent;
+      }
+    }
+  }
+
+  function showToast(message, type) {
+    type = type || 'info';
+    let toast = document.getElementById('toast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'toast';
+      document.body.appendChild(toast);
+    }
+    toast.textContent = message;
+    toast.className = 'toast ' + type;
+    toast.style.display = 'block';
+    setTimeout(function () { toast.style.display = 'none'; }, 4000);
+  }
+  </script>
+</body>
+</html>

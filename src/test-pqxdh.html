@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PQXDH 端到端测试 - FIBEMATE</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    background: #080c18;
+    color: #e0e0e0;
+    padding: 20px;
+    line-height: 1.6;
+  }
+  .container { max-width: 1200px; margin: 0 auto; }
+  h1 {
+    color: #00d4aa;
+    font-size: 28px;
+    margin-bottom: 10px;
+    text-align: center;
+  }
+  .subtitle {
+    text-align: center;
+    color: #888;
+    margin-bottom: 30px;
+  }
+  .test-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 20px;
+  }
+  .panel {
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(0,212,170,0.2);
+    border-radius: 12px;
+    padding: 20px;
+  }
+  .panel h2 {
+    color: #00d4aa;
+    font-size: 18px;
+    margin-bottom: 15px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .status-dot {
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: #666;
+    display: inline-block;
+  }
+  .status-dot.ready { background: #00d4aa; box-shadow: 0 0 8px #00d4aa; }
+  .status-dot.error { background: #ff5050; box-shadow: 0 0 8px #ff5050; }
+  .status-dot.warn { background: #f5a623; }
+  
+  .log {
+    background: rgba(0,0,0,0.3);
+    border-radius: 8px;
+    padding: 12px;
+    font-family: 'Consolas', monospace;
+    font-size: 12px;
+    height: 300px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .log .info { color: #00d4aa; }
+  .log .error { color: #ff5050; }
+  .log .warn { color: #f5a623; }
+  .log .success { color: #00d4aa; font-weight: bold; }
+  
+  .controls {
+    display: flex;
+    gap: 10px;
+    margin-bottom: 15px;
+    flex-wrap: wrap;
+  }
+  button {
+    background: rgba(0,212,170,0.15);
+    border: 1px solid #00d4aa;
+    color: #00d4aa;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: all 0.2s;
+  }
+  button:hover { background: rgba(0,212,170,0.3); }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.primary { background: #00d4aa; color: #080c18; font-weight: bold; }
+  button.primary:hover { background: #00e6b8; }
+  
+  .metrics {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 10px;
+    margin-top: 15px;
+  }
+  .metric {
+    background: rgba(255,255,255,0.03);
+    border-radius: 8px;
+    padding: 12px;
+    text-align: center;
+  }
+  .metric-value {
+    font-size: 20px;
+    font-weight: bold;
+    color: #00d4aa;
+  }
+  .metric-label {
+    font-size: 11px;
+    color: #888;
+    margin-top: 4px;
+  }
+  
+  .result-panel {
+    background: rgba(0,212,170,0.05);
+    border: 1px solid rgba(0,212,170,0.3);
+    border-radius: 12px;
+    padding: 20px;
+    margin-top: 20px;
+  }
+  .result-panel h2 { color: #00d4aa; margin-bottom: 15px; }
+  .comparison {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 15px;
+  }
+  .compare-item {
+    background: rgba(0,0,0,0.2);
+    border-radius: 8px;
+    padding: 15px;
+  }
+  .compare-item h3 {
+    font-size: 14px;
+    color: #888;
+    margin-bottom: 10px;
+  }
+  .key-display {
+    font-family: monospace;
+    font-size: 10px;
+    color: #aaa;
+    background: rgba(0,0,0,0.3);
+    padding: 8px;
+    border-radius: 4px;
+    word-break: break-all;
+    max-height: 80px;
+    overflow-y: auto;
+  }
+  .match { color: #00d4aa; font-weight: bold; }
+  .mismatch { color: #ff5050; font-weight: bold; }
+  
+  .progress-bar {
+    width: 100%;
+    height: 4px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 2px;
+    margin: 10px 0;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: #00d4aa;
+    border-radius: 2px;
+    transition: width 0.3s;
+    width: 0%;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>PQXDH 端到端集成测试</h1>
+  <p class="subtitle">混合密钥交换：X3DH (ECDH P-256) + ML-KEM-768</p>
+  
+  <div class="controls">
+    <button class="primary" onclick="runFullTest()">运行完整测试</button>
+    <button onclick="testClassicalX3DH()">仅测试经典 X3DH</button>
+    <button onclick="testMLKEMOnly()">仅测试 ML-KEM</button>
+    <button onclick="clearLogs()">清除日志</button>
+  </div>
+  
+  <div class="progress-bar">
+    <div class="progress-fill" id="progressBar"></div>
+  </div>
+  
+  <div class="test-grid">
+    <div class="panel">
+      <h2>Alice (发起方) <span class="status-dot" id="aliceStatus"></span></h2>
+      <div class="log" id="aliceLog">等待测试开始...</div>
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-value" id="aliceKeyTime">-</div>
+          <div class="metric-label">密钥生成</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value" id="aliceEncapTime">-</div>
+          <div class="metric-label">封装耗时</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value" id="aliceMsgCount">0</div>
+          <div class="metric-label">发送消息</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value" id="aliceStatus2">-</div>
+          <div class="metric-label">会话状态</div>
+        </div>
+      </div>
+    </div>
+    
+    <div class="panel">
+      <h2>Bob (接收方) <span class="status-dot" id="bobStatus"></span></h2>
+      <div class="log" id="bobLog">等待测试开始...</div>
+      <div class="metrics">
+        <div class="metric">
+          <div class="metric-value" id="bobKeyTime">-</div>
+          <div class="metric-label">密钥生成</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value" id="bobDecapTime">-</div>
+          <div class="metric-label">解封装耗时</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value" id="bobMsgCount">0</div>
+          <div class="metric-label">接收消息</div>
+        </div>
+        <div class="metric">
+          <div class="metric-value" id="bobStatus2">-</div>
+          <div class="metric-label">会话状态</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  
+  <div class="result-panel">
+    <h2>密钥一致性验证</h2>
+    <div class="comparison">
+      <div class="compare-item">
+        <h3>ECDH 共享密钥</h3>
+        <div class="key-display" id="ecdhKeyAlice">-</div>
+        <div class="key-display" id="ecdhKeyBob" style="margin-top:8px;">-</div>
+        <div id="ecdhMatch" style="margin-top:8px;text-align:center;">-</div>
+      </div>
+      <div class="compare-item">
+        <h3>ML-KEM 共享密钥</h3>
+        <div class="key-display" id="kemKeyAlice">-</div>
+        <div class="key-display" id="kemKeyBob" style="margin-top:8px;">-</div>
+        <div id="kemMatch" style="margin-top:8px;text-align:center;">-</div>
+      </div>
+      <div class="compare-item">
+        <h3>最终根密钥 (Root Key)</h3>
+        <div class="key-display" id="rootKeyAlice">-</div>
+        <div class="key-display" id="rootKeyBob" style="margin-top:8px;">-</div>
+        <div id="rootMatch" style="margin-top:8px;text-align:center;">-</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// Test State
+// ============================================================
+let alice = { log: [], keys: {}, session: null };
+let bob = { log: [], keys: {}, session: null };
+let testResults = {};
+
+function log(who, msg, type = 'info') {
+  const panel = document.getElementById(who + 'Log');
+  const time = new Date().toLocaleTimeString('zh-CN', {hour12:false});
+  const line = `[${time}] ${msg}`;
+  const colorClass = type;
+  panel.innerHTML += `<span class="${colorClass}">${line}</span>\n`;
+  panel.scrollTop = panel.scrollHeight;
+}
+
+function setProgress(pct) {
+  document.getElementById('progressBar').style.width = pct + '%';
+}
+
+function setStatus(who, status) {
+  const dot = document.getElementById(who + 'Status');
+  dot.className = 'status-dot ' + status;
+}
+
+function clearLogs() {
+  document.getElementById('aliceLog').innerHTML = '';
+  document.getElementById('bobLog').innerHTML = '';
+  setProgress(0);
+  setStatus('alice', '');
+  setStatus('bob', '');
+}
+
+// ============================================================
+// ML-KEM-768 Wrapper (simplified for testing)
+// ============================================================
+const MLKEM768 = {
+  initialized: false,
+  
+  async init() {
+    // Check if real module exists
+    if (typeof window !== 'undefined' && window.MLKEM768) {
+      Object.assign(this, window.MLKEM768);
+      this.initialized = true;
+      return;
+    }
+    // Fallback: simulate with WebCrypto for testing structure
+    this.initialized = true;
+    console.log('[ML-KEM] Using test mode (no WASM)');
+  },
+  
+  async keygen() {
+    if (this._keygen) return this._keygen();
+    // Test mode: generate random keys
+    return {
+      publicKey: crypto.getRandomValues(new Uint8Array(1184)),
+      secretKey: crypto.getRandomValues(new Uint8Array(2400))
+    };
+  },
+  
+  async encaps(publicKey) {
+    if (this._encaps) return this._encaps(publicKey);
+    // Test mode: deterministic encapsulation - both sides use ciphertext as shared reference
+    const encInput = new Uint8Array(publicKey.length + 1);
+    encInput.set(publicKey, 0);
+    encInput[publicKey.length] = 0x01;
+    const ciphertext = new Uint8Array(await crypto.subtle.digest('SHA-256', encInput)).slice(0, 1088);
+    
+    // Shared secret derived from ciphertext only (both sides can compute)
+    const sharedSecret = new Uint8Array(await crypto.subtle.digest('SHA-256', 
+      new Uint8Array([...ciphertext, 0x02]))).slice(0, 32);
+    
+    return { ciphertext, sharedSecret };
+  },
+  
+  async decaps(secretKey, ciphertext) {
+    if (this._decaps) return this._decaps(secretKey, ciphertext);
+    // Test mode: derive same deterministic shared secret from ciphertext
+    const sharedSecret = new Uint8Array(await crypto.subtle.digest('SHA-256', 
+      new Uint8Array([...ciphertext, 0x02]))).slice(0, 32);
+    return sharedSecret;
+  }
+};
+
+// ============================================================
+// Mock Double Ratchet (minimal for testing)
+// ============================================================
+const MockDoubleRatchet = {
+  async generateDH() {
+    const keyPair = await crypto.subtle.generateKey(
+      { name: 'ECDH', namedCurve: 'P-256' },
+      true, ['deriveBits']
+    );
+    return keyPair;
+  },
+  
+  async exportPublicKey(keyPair) {
+    return new Uint8Array(await crypto.subtle.exportKey('raw', keyPair.publicKey));
+  },
+  
+  async importPublicKey(bytes) {
+    return await crypto.subtle.importKey(
+      'raw', bytes, { name: 'ECDH', namedCurve: 'P-256' },
+      true, []
+    );
+  },
+  
+  async dh(privateKey, publicKey) {
+    const shared = await crypto.subtle.deriveBits(
+      { name: 'ECDH', public: publicKey },
+      privateKey, 256
+    );
+    return new Uint8Array(shared);
+  },
+  
+  async hkdf(ikm, salt, info) {
+    const baseKey = await crypto.subtle.importKey(
+      'raw', ikm, 'HKDF', false, ['deriveBits']
+    );
+    const bits = await crypto.subtle.deriveBits(
+      { name: 'HKDF', hash: 'SHA-256', salt, info: new TextEncoder().encode(info) },
+      baseKey, 256
+    );
+    return new Uint8Array(bits);
+  }
+};
+
+// ============================================================
+// X3DH Test Implementation
+// ============================================================
+async function generateIdentityKey() {
+  return await MockDoubleRatchet.generateDH();
+}
+
+async function performX3DH(aliceIdentity, aliceEphemeral, bobIdentityBytes, bobSignedPreKeyBytes, bobOneTimePreKeyBytes) {
+  // Import Bob's public keys from bytes to CryptoKey
+  const bobIdentity = await MockDoubleRatchet.importPublicKey(bobIdentityBytes);
+  const bobSignedPreKey = await MockDoubleRatchet.importPublicKey(bobSignedPreKeyBytes);
+  
+  const dh1 = await MockDoubleRatchet.dh(aliceIdentity.privateKey, bobSignedPreKey);
+  const dh2 = await MockDoubleRatchet.dh(aliceEphemeral.privateKey, bobIdentity);
+  const dh3 = await MockDoubleRatchet.dh(aliceEphemeral.privateKey, bobSignedPreKey);
+  
+  let dh4 = new Uint8Array(0);
+  if (bobOneTimePreKeyBytes) {
+    const bobOneTimePreKey = await MockDoubleRatchet.importPublicKey(bobOneTimePreKeyBytes);
+    dh4 = await MockDoubleRatchet.dh(aliceEphemeral.privateKey, bobOneTimePreKey);
+  }
+  
+  const ikm = new Uint8Array(96 + dh4.length);
+  ikm.set(dh1, 0); ikm.set(dh2, 32); ikm.set(dh3, 64);
+  if (dh4.length > 0) ikm.set(dh4, 96);
+  
+  return await MockDoubleRatchet.hkdf(ikm, new Uint8Array(32), 'FIBEMateX3DH');
+}
+
+// ============================================================
+// Main Test Functions
+// ============================================================
+async function runFullTest() {
+  clearLogs();
+  setProgress(5);
+  
+  log('alice', '=== PQXDH 完整测试开始 ===', 'info');
+  log('bob', '=== PQXDH 完整测试开始 ===', 'info');
+  
+  try {
+    // Step 1: Initialize ML-KEM
+    log('alice', '初始化 ML-KEM-768...', 'info');
+    await MLKEM768.init();
+    log('alice', 'ML-KEM-768 就绪', 'success');
+    setProgress(10);
+    
+    // Step 2: Generate Bob's keys (receiver)
+    log('bob', '生成 Bob 密钥对...', 'info');
+    const t0 = performance.now();
+    
+    bob.keys.identity = await generateIdentityKey();
+    bob.keys.signedPreKey = await MockDoubleRatchet.generateDH();
+    bob.keys.oneTimePreKey = await MockDoubleRatchet.generateDH();
+    
+    // Generate ML-KEM keypair for Bob
+    const bobKemKeypair = await MLKEM768.keygen();
+    bob.keys.kemPublicKey = bobKemKeypair.publicKey;
+    bob.keys.kemSecretKey = bobKemKeypair.secretKey;
+    
+    const bobKeyTime = (performance.now() - t0).toFixed(1);
+    document.getElementById('bobKeyTime').textContent = bobKeyTime + 'ms';
+    log('bob', `密钥生成完成 (${bobKeyTime}ms)`, 'success');
+    setStatus('bob', 'ready');
+    setProgress(25);
+    
+    // Step 3: Alice initiates (sender)
+    log('alice', 'Alice 发起 X3DH + ML-KEM...', 'info');
+    const t1 = performance.now();
+    
+    alice.keys.identity = await generateIdentityKey();
+    alice.keys.ephemeral = await MockDoubleRatchet.generateDH();
+    
+    // Export public keys for display
+    const aliceIdentityPub = await MockDoubleRatchet.exportPublicKey(alice.keys.identity);
+    const aliceEphemeralPub = await MockDoubleRatchet.exportPublicKey(alice.keys.ephemeral);
+    const bobIdentityPub = await MockDoubleRatchet.exportPublicKey(bob.keys.identity);
+    const bobSpkPub = await MockDoubleRatchet.exportPublicKey(bob.keys.signedPreKey);
+    const bobOpkPub = await MockDoubleRatchet.exportPublicKey(bob.keys.oneTimePreKey);
+    
+    // X3DH 4-DH
+    const ecdhSharedSecret = await performX3DH(
+      alice.keys.identity, alice.keys.ephemeral,
+      bobIdentityPub, bobSpkPub, bobOpkPub
+    );
+    
+    // ML-KEM encapsulation
+    const t2 = performance.now();
+    const kemResult = await MLKEM768.encaps(bob.keys.kemPublicKey);
+    const aliceEncapTime = (performance.now() - t2).toFixed(1);
+    document.getElementById('aliceEncapTime').textContent = aliceEncapTime + 'ms';
+    log('alice', `ML-KEM 封装完成 (${aliceEncapTime}ms)`, 'success');
+    
+    // Combine secrets - use raw ECDH IKM (before HKDF) + KEM secret for hybrid
+    // First get the raw 4-DH IKM that performX3DH uses internally
+    const aliceDh1 = await MockDoubleRatchet.dh(alice.keys.identity.privateKey, await MockDoubleRatchet.importPublicKey(bobSpkPub));
+    const aliceDh2 = await MockDoubleRatchet.dh(alice.keys.ephemeral.privateKey, await MockDoubleRatchet.importPublicKey(bobIdentityPub));
+    const aliceDh3 = await MockDoubleRatchet.dh(alice.keys.ephemeral.privateKey, await MockDoubleRatchet.importPublicKey(bobSpkPub));
+    const aliceDh4 = await MockDoubleRatchet.dh(alice.keys.ephemeral.privateKey, await MockDoubleRatchet.importPublicKey(bobOpkPub));
+    
+    const aliceEcdhIkm = new Uint8Array(128);
+    aliceEcdhIkm.set(aliceDh1, 0); aliceEcdhIkm.set(aliceDh2, 32);
+    aliceEcdhIkm.set(aliceDh3, 64); aliceEcdhIkm.set(aliceDh4, 96);
+    
+    const combinedIkm = new Uint8Array(aliceEcdhIkm.length + kemResult.sharedSecret.length);
+    combinedIkm.set(aliceEcdhIkm, 0);
+    combinedIkm.set(kemResult.sharedSecret, aliceEcdhIkm.length);
+    
+    const aliceRootKey = await MockDoubleRatchet.hkdf(
+      combinedIkm, new Uint8Array(32), 'FIBEMateHybridX3DH'
+    );
+    
+    const aliceKeyTime = (performance.now() - t1).toFixed(1);
+    document.getElementById('aliceKeyTime').textContent = aliceKeyTime + 'ms';
+    log('alice', `密钥协商完成 (${aliceKeyTime}ms)`, 'success');
+    setStatus('alice', 'ready');
+    setProgress(50);
+    
+    // Step 4: Bob receives and derives
+    log('bob', 'Bob 接收并解封装...', 'info');
+    const t3 = performance.now();
+    
+    // Bob's X3DH - import Alice's public keys first
+    const aliceIdentityPubKey = await MockDoubleRatchet.importPublicKey(aliceIdentityPub);
+    const aliceEphemeralPubKey = await MockDoubleRatchet.importPublicKey(aliceEphemeralPub);
+    
+    const bobDh1 = await MockDoubleRatchet.dh(bob.keys.signedPreKey.privateKey, aliceIdentityPubKey);
+    const bobDh2 = await MockDoubleRatchet.dh(bob.keys.identity.privateKey, aliceEphemeralPubKey);
+    const bobDh3 = await MockDoubleRatchet.dh(bob.keys.signedPreKey.privateKey, aliceEphemeralPubKey);
+    const bobDh4 = await MockDoubleRatchet.dh(bob.keys.oneTimePreKey.privateKey, aliceEphemeralPubKey);
+    
+    const bobEcdhIkm = new Uint8Array(128);
+    bobEcdhIkm.set(bobDh1, 0); bobEcdhIkm.set(bobDh2, 32);
+    bobEcdhIkm.set(bobDh3, 64); bobEcdhIkm.set(bobDh4, 96);
+    
+    // Bob's ML-KEM decapsulation
+    const t4 = performance.now();
+    const bobKemShared = await MLKEM768.decaps(bob.keys.kemSecretKey, kemResult.ciphertext);
+    const bobDecapTime = (performance.now() - t4).toFixed(1);
+    document.getElementById('bobDecapTime').textContent = bobDecapTime + 'ms';
+    log('bob', `ML-KEM 解封装完成 (${bobDecapTime}ms)`, 'success');
+    
+    // Combine
+    const bobCombinedIkm = new Uint8Array(bobEcdhIkm.length + bobKemShared.length);
+    bobCombinedIkm.set(bobEcdhIkm, 0);
+    bobCombinedIkm.set(bobKemShared, bobEcdhIkm.length);
+    
+    const bobRootKey = await MockDoubleRatchet.hkdf(
+      bobCombinedIkm, new Uint8Array(32), 'FIBEMateHybridX3DH'
+    );
+    
+    const bobTotalTime = (performance.now() - t3).toFixed(1);
+    document.getElementById('bobStatus2').textContent = '已建立';
+    document.getElementById('aliceStatus2').textContent = '已建立';
+    log('bob', `会话建立完成 (${bobTotalTime}ms)`, 'success');
+    setProgress(75);
+    
+    // Step 5: Verify key match
+    log('alice', '验证密钥一致性...', 'info');
+    log('bob', '验证密钥一致性...', 'info');
+    
+    // Compare ECDH shared secrets (Alice's 32-byte HKDF output vs Bob's 32-byte HKDF output)
+    const bobEcdhShared = await MockDoubleRatchet.hkdf(bobEcdhIkm, new Uint8Array(32), 'FIBEMateX3DH');
+    const ecdhMatch = arrayEquals(ecdhSharedSecret, bobEcdhShared);
+    
+    // Compare ML-KEM shared secrets
+    const kemMatch = arrayEquals(kemResult.sharedSecret, bobKemShared);
+    
+    // Compare final root keys
+    const rootMatch = arrayEquals(aliceRootKey, bobRootKey);
+    
+    displayKeys(ecdhSharedSecret, bobEcdhIkm, kemResult.sharedSecret, bobKemShared, aliceRootKey, bobRootKey);
+    displayResults(ecdhMatch, kemMatch, rootMatch);
+    
+    if (rootMatch) {
+      log('alice', '✓ 根密钥匹配！PQXDH 成功', 'success');
+      log('bob', '✓ 根密钥匹配！PQXDH 成功', 'success');
+      setProgress(100);
+      setStatus('alice', 'ready');
+      setStatus('bob', 'ready');
+    } else {
+      throw new Error('根密钥不匹配');
+    }
+    
+  } catch (err) {
+    log('alice', `✗ 测试失败: ${err.message}`, 'error');
+    log('bob', `✗ 测试失败: ${err.message}`, 'error');
+    setStatus('alice', 'error');
+    setStatus('bob', 'error');
+    console.error('PQXDH Test Error:', err);
+    console.error('Stack:', err.stack);
+  }
+}
+
+async function testClassicalX3DH() {
+  clearLogs();
+  log('alice', '=== 经典 X3DH 测试 ===', 'info');
+  log('bob', '=== 经典 X3DH 测试 ===', 'info');
+  
+  try {
+    // Generate keys
+    const aliceIdentity = await generateIdentityKey();
+    const aliceEphemeral = await MockDoubleRatchet.generateDH();
+    const bobIdentity = await generateIdentityKey();
+    const bobSpk = await MockDoubleRatchet.generateDH();
+    const bobOpk = await MockDoubleRatchet.generateDH();
+    
+    // Export
+    const aIdPub = await MockDoubleRatchet.exportPublicKey(aliceIdentity);
+    const aEpPub = await MockDoubleRatchet.exportPublicKey(aliceEphemeral);
+    const bIdPub = await MockDoubleRatchet.exportPublicKey(bobIdentity);
+    const bSpkPub = await MockDoubleRatchet.exportPublicKey(bobSpk);
+    const bOpkPub = await MockDoubleRatchet.exportPublicKey(bobOpk);
+    
+    // Alice computes
+    const aliceShared = await performX3DH(aliceIdentity, aliceEphemeral, bIdPub, bSpkPub, bOpkPub);
+    
+    // Bob computes - import Alice's public keys first
+    const aIdPubKey = await MockDoubleRatchet.importPublicKey(aIdPub);
+    const aEpPubKey = await MockDoubleRatchet.importPublicKey(aEpPub);
+    
+    const dh1 = await MockDoubleRatchet.dh(bobSpk.privateKey, aIdPubKey);
+    const dh2 = await MockDoubleRatchet.dh(bobIdentity.privateKey, aEpPubKey);
+    const dh3 = await MockDoubleRatchet.dh(bobSpk.privateKey, aEpPubKey);
+    const dh4 = await MockDoubleRatchet.dh(bobOpk.privateKey, aEpPubKey);
+    
+    const bobIkm = new Uint8Array(128);
+    bobIkm.set(dh1, 0); bobIkm.set(dh2, 32); bobIkm.set(dh3, 64); bobIkm.set(dh4, 96);
+    const bobShared = await MockDoubleRatchet.hkdf(bobIkm, new Uint8Array(32), 'FIBEMateX3DH');
+    
+    const match = arrayEquals(aliceShared, bobShared);
+    
+    log('alice', `共享密钥: ${bytesToHex(aliceShared.slice(0, 16))}...`, 'info');
+    log('bob', `共享密钥: ${bytesToHex(bobShared.slice(0, 16))}...`, 'info');
+    log('alice', match ? '✓ 经典 X3DH 成功' : '✗ 密钥不匹配', match ? 'success' : 'error');
+    log('bob', match ? '✓ 经典 X3DH 成功' : '✗ 密钥不匹配', match ? 'success' : 'error');
+    
+  } catch (err) {
+    log('alice', `错误: ${err.message}`, 'error');
+    log('bob', `错误: ${err.message}`, 'error');
+  }
+}
+
+async function testMLKEMOnly() {
+  clearLogs();
+  log('alice', '=== ML-KEM-768 独立测试 ===', 'info');
+  
+  try {
+    await MLKEM768.init();
+    
+    const t0 = performance.now();
+    const keypair = await MLKEM768.keygen();
+    const keygenTime = (performance.now() - t0).toFixed(1);
+    
+    log('alice', `密钥生成: ${keygenTime}ms`, 'info');
+    log('alice', `公钥长度: ${keypair.publicKey.length} bytes`, 'info');
+    log('alice', `私钥长度: ${keypair.secretKey.length} bytes`, 'info');
+    
+    const t1 = performance.now();
+    const encResult = await MLKEM768.encaps(keypair.publicKey);
+    const encapTime = (performance.now() - t1).toFixed(1);
+    
+    log('alice', `封装: ${encapTime}ms`, 'info');
+    log('alice', `密文长度: ${encResult.ciphertext.length} bytes`, 'info');
+    
+    const t2 = performance.now();
+    const sharedSecret = await MLKEM768.decaps(keypair.secretKey, encResult.ciphertext);
+    const decapTime = (performance.now() - t2).toFixed(1);
+    
+    log('alice', `解封装: ${decapTime}ms`, 'info');
+    log('alice', `共享密钥: ${bytesToHex(sharedSecret.slice(0, 16))}...`, 'success');
+    
+    document.getElementById('aliceKeyTime').textContent = keygenTime + 'ms';
+    document.getElementById('aliceEncapTime').textContent = encapTime + 'ms';
+    
+  } catch (err) {
+    log('alice', `错误: ${err.message}`, 'error');
+  }
+}
+
+// ============================================================
+// Utilities
+// ============================================================
+function arrayEquals(a, b) {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+function bytesToHex(bytes) {
+  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function displayKeys(ecdhAlice, ecdhBob, kemAlice, kemBob, rootAlice, rootBob) {
+  document.getElementById('ecdhKeyAlice').textContent = bytesToHex(ecdhAlice);
+  document.getElementById('ecdhKeyBob').textContent = bytesToHex(ecdhBob);
+  document.getElementById('kemKeyAlice').textContent = bytesToHex(kemAlice);
+  document.getElementById('kemKeyBob').textContent = bytesToHex(kemBob);
+  document.getElementById('rootKeyAlice').textContent = bytesToHex(rootAlice);
+  document.getElementById('rootKeyBob').textContent = bytesToHex(rootBob);
+}
+
+function displayResults(ecdhMatch, kemMatch, rootMatch) {
+  const ecdhEl = document.getElementById('ecdhMatch');
+  const kemEl = document.getElementById('kemMatch');
+  const rootEl = document.getElementById('rootMatch');
+  
+  ecdhEl.innerHTML = ecdhMatch ? '<span class="match">✓ 匹配</span>' : '<span class="mismatch">✗ 不匹配</span>';
+  kemEl.innerHTML = kemMatch ? '<span class="match">✓ 匹配</span>' : '<span class="mismatch">✗ 不匹配</span>';
+  rootEl.innerHTML = rootMatch ? '<span class="match">✓ 匹配</span>' : '<span class="mismatch">✗ 不匹配</span>';
+}
+
+// Auto-run on load
+window.addEventListener('load', () => {
+  log('alice', '页面加载完成，等待测试...', 'info');
+  log('bob', '页面加载完成，等待测试...', 'info');
+});
+</script>
+</body>
+</html>

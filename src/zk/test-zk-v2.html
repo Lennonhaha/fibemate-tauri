@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ZK Schnorr v2 Test</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #1a1a2e; color: #eee; }
+    .pass { color: #4e4; }
+    .fail { color: #e44; }
+    .info { color: #48f; }
+    button { padding: 10px 20px; margin: 5px; cursor: pointer; background: #0f3460; color: #fff; border: none; border-radius: 5px; }
+    button:hover { background: #16213e; }
+  </style>
+</head>
+<body>
+  <h1>ZK Schnorr v2 - 椭圆曲线实现验证</h1>
+  <p>修复：使用 P-256 椭圆曲线点运算替代模幂运算</p>
+  <button onclick="runSchnorrTest()">运行 Schnorr 测试</button>
+  <button onclick="runBulletproofsTest()">运行 Bulletproofs 测试</button>
+  <div id="output"></div>
+
+  <script src="schnorr-prover-v2.js"></script>
+  <script src="bulletproofs.js"></script>
+  <script>
+    const output = document.getElementById('output');
+    function log(msg, cls = 'info') {
+      output.innerHTML += `<div class="${cls}">${msg}</div>`;
+    }
+
+    async function runSchnorrTest() {
+      output.innerHTML = '';
+      log('=== Schnorr v2 测试 ===');
+      try {
+        const prover = new SchnorrProverV2();
+        await prover.init();
+        log('初始化完成', 'pass');
+
+        // Generate test keypair
+        const privateKey = prover._randomScalar();
+        const publicKey = prover._scalarMult(privateKey, prover.curve.G);
+        log(`私钥: ${privateKey.toString(16).substring(0, 16)}...`);
+        log(`公钥 X: ${publicKey.x.toString(16).substring(0, 16)}...`);
+
+        // Generate proof
+        const start = performance.now();
+        const proof = await prover.prove(privateKey, publicKey);
+        log(`证明生成: ${(performance.now() - start).toFixed(1)}ms`, 'pass');
+        log(`R.x: ${proof.R.x.toString(16).substring(0, 16)}...`);
+        log(`s: ${proof.s.toString(16).substring(0, 16)}...`);
+
+        // Verify proof
+        const verifyStart = performance.now();
+        const valid = await prover.verify(proof, publicKey);
+        log(`验证: ${valid ? 'PASS' : 'FAIL'} (${(performance.now() - verifyStart).toFixed(1)}ms)`, valid ? 'pass' : 'fail');
+        
+        if (!valid) {
+          // Debug: show what verify recomputed
+          const cRecomputed = await prover._hashChallenge(proof.R.x, publicKey.x);
+          log(`调试: c(证明时)=${proof.c?.toString(16)?.substring(0,16) || 'N/A'}..., c(验证时)=${cRecomputed.toString(16).substring(0,16)}...`, 'info');
+        }
+
+        // Wrong key test
+        const wrongKey = prover._randomScalar();
+        const wrongPublic = prover._scalarMult(wrongKey, prover.curve.G);
+        const wrongValid = await prover.verify(proof, wrongPublic);
+        log(`错误密钥验证: ${wrongValid ? 'FAIL (accepted)' : 'PASS (rejected)'}`, wrongValid ? 'fail' : 'pass');
+
+        // Tampered proof test
+        const tamperedProof = { ...proof, s: proof.s + 1n };
+        const tamperValid = await prover.verify(tamperedProof, publicKey);
+        log(`篡改证明验证: ${tamperValid ? 'FAIL (accepted)' : 'PASS (rejected)'}`, tamperValid ? 'fail' : 'pass');
+
+      } catch (e) {
+        log(`ERROR: ${e.message}`, 'fail');
+        console.error(e);
+      }
+    }
+
+    async function runBulletproofsTest() {
+      output.innerHTML = '';
+      log('=== Bulletproofs 测试 ===');
+      try {
+        const bp = new Bulletproofs(32);
+        await bp.init();
+        log('初始化完成', 'pass');
+
+        const value = 42n;
+        const gamma = bp._randomScalar();
+        const commitment = bp.commit(value, gamma);
+        log(`承诺: ${commitment.toString(16).substring(0, 16)}...`);
+
+        const proof = await bp.proveRange(value, gamma);
+        log(`范围证明生成完成`, 'pass');
+
+        const valid = await bp.verifyRange(proof, commitment);
+        log(`验证: ${valid ? 'PASS' : 'FAIL'}`, valid ? 'pass' : 'fail');
+
+      } catch (e) {
+        log(`ERROR: ${e.message}`, 'fail');
+        console.error(e);
+      }
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,540 @@
+/**
+ * Tauri MessageCrypto Adapter — Drop-in MessageCryptoV2 replacement
+ * ──────────────────────────────────────────────────────────────────
+ * Same public API as MessageCryptoV2.js, backed by Rust Double Ratchet.
+ *
+ * Protocol versions:
+ *   v1 — Legacy ECDH (MessageCrypto.js)
+ *   v2 — JS Double Ratchet P-256 (MessageCryptoV2.js)
+ *   v3 — Rust Double Ratchet X25519 (this adapter → RatchetBridge)
+ *
+ * 🔒 v3 (X25519 Rust DR): encrypt/decrypt via Tauri invoke() — zero key material in JS.
+ * 🚫 v1/v2 (P-256 JS DR): hard-rejected — no JS fallback loaded.
+ *
+ * ⚠️ This file REPLACES MessageCryptoV2.js. Main-v3.js needs NO changes:
+ *    `window.MessageCryptoV2` is set to this adapter.
+ *    double-ratchet.js + message-crypto-v2.js are no longer loaded in main.html.
+ */
+
+(function () {
+  'use strict';
+
+  // Internal state
+  let _initialized = false;
+  let _identityBundles = {};               // identityId → { identityId, publicKeyHex, fingerprint }
+  let _sessionMap = new Map();             // peerId → { sessionId, identityId, version }
+  let _opkUploadCallback = null;
+
+  // Session persistence key
+  const STORAGE_KEY = 'fibemate_rust_sessions';
+  const DR_PROTOCOL = 'double-ratchet-x25519';
+  const DR_VERSION = 3;
+
+  // ── Persistence ──────────────────────────────────────────────
+
+  function _saveSessionMap() {
+    try {
+      const data = {};
+      for (const [peerId, info] of _sessionMap) {
+        data[peerId] = info;
+      }
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    } catch (e) {
+      console.warn('[DR Adapter] Failed to persist session map:', e.message);
+    }
+  }
+
+  function _loadSessionMap() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) {
+        const data = JSON.parse(raw);
+        for (const [peerId, info] of Object.entries(data)) {
+          _sessionMap.set(peerId, info);
+        }
+        console.log(`[DR Adapter] Loaded ${_sessionMap.size} Rust DR sessions`);
+      }
+    } catch (e) {
+      console.warn('[DR Adapter] Failed to load session map:', e.message);
+    }
+  }
+
+  // ── Helpers ──────────────────────────────────────────────────
+
+  function _getRatchetBridge() {
+    return window.RatchetBridge || window.FIBEMATE_DR;
+  }
+
+  /**
+   * Detect protocol version from envelope.
+   * v3: { version: 3, protocol: 'double-ratchet-x25519', messageJson: "..." }
+   * v2: { version: 2, protocol: 'double-ratchet', envelope: { h, c, iv } }
+   * v1: { ciphertext: "...", nonce: "...", ephemeralPublicKey: "..." }
+   */
+  function _detectVersion(envelope) {
+    if (!envelope || typeof envelope !== 'object') return 0;
+    if (envelope.version === 3 && envelope.messageJson) return 3;
+    if (envelope.version === 2 && envelope.envelope) return 2;
+    if (envelope.ciphertext && envelope.nonce) return 1;
+    return 0;
+  }
+
+  // ── Adapter Public API ───────────────────────────────────────
+
+  const Adapter = {
+    version: DR_VERSION,
+    protocol: DR_PROTOCOL,
+
+    // ════════════════════════════════════════════════════════════
+    // Init
+    // ════════════════════════════════════════════════════════════
+
+    async init() {
+      if (_initialized) return;
+      const bridge = _getRatchetBridge();
+      if (!bridge) {
+        throw new Error('[DR Adapter] Rust DR backend not available — Tauri required');
+      }
+      bridge.init();
+      _loadSessionMap();
+      _initialized = true;
+      console.log(`[DR Adapter] ✅ Ready (curve=X25519, sessions=${_sessionMap.size})`);
+    },
+
+    /** Get current status for debugging. */
+    getStatus() {
+      return {
+        adapter: 'tauri-rust-dr',
+        version: DR_VERSION,
+        curve: 'X25519',
+        protocol: DR_PROTOCOL,
+        initialized: _initialized,
+        identityBundles: Object.keys(_identityBundles).length,
+        rustSessions: _sessionMap.size,
+        engine: 'rust-double-ratchet'
+      };
+    },
+
+    // ════════════════════════════════════════════════════════════
+    // Identity & Pre-Key Bundle (for server upload)
+    // ════════════════════════════════════════════════════════════
+
+    async getMyPreKeyBundle() {
+      if (!_initialized) await this.init();
+      const bridge = _getRatchetBridge();
+      if (!bridge) {
+        throw new Error('[DR Adapter] Rust DR backend not available');
+      }
+
+      // Ensure we have an identity
+      let identityId = localStorage.getItem('fibemate_rust_identity_id');
+      let identity;
+      if (identityId) {
+        try {
+          identity = await bridge.getIdentityPublic(identityId);
+        } catch (e) {
+          console.warn('[DR Adapter] Identity not found, generating new...');
+          identityId = null;
+        }
+      }
+      if (!identityId) {
+        identity = await bridge.generateIdentity();
+        identityId = identity.identityId;
+        localStorage.setItem('fibemate_rust_identity_id', identityId);
+      }
+      _identityBundles[identityId] = identity;
+
+      // Build bundle compatible with server's pre-key format
+      // The server expects: { identityKey, identitySigningKey?, signedPreKey, signedPreKeyId, signedPreKeySignature?, oneTimePreKeys? }
+      // For Rust (X25519), we simplify: no signing key, no signature verification
+      return {
+        identityKey: identity.publicKeyHex,             // X25519 32-byte hex (64 chars)
+        identitySigningKey: null,                        // No ECDSA signing in Rust DR
+        signedPreKey: identity.publicKeyHex,             // Reuse identity key as pre-key for simplicity
+        signedPreKeyId: Date.now(),
+        signedPreKeySignature: null,
+        oneTimePreKeys: [],
+        // Rust-specific metadata
+        _rustIdentityId: identityId,
+        _rustProtocol: DR_PROTOCOL,
+        _rustVersion: DR_VERSION,
+        // Also include PQ key if available
+        _pqAvailable: false
+      };
+    },
+
+    /** Generate and upload pre-keys (compat stub). */
+    async generateAndUploadPreKeys() {
+      return await this.getMyPreKeyBundle();
+    },
+
+    // ════════════════════════════════════════════════════════════
+    // OPK management stubs (Rust generates keys on demand)
+    // ════════════════════════════════════════════════════════════
+
+    setOPKUploadCallback(cb) {
+      _opkUploadCallback = cb;
+    },
+
+    async checkAndReplenishOPKs() {
+      return { replenished: false, uploaded: 0, remaining: '∞ (Rust generates on demand)' };
+    },
+
+    startOPKAutoReplenish() {
+      console.log('[DR Adapter] OPK auto-replenish: not needed (Rust KeyStore persistence)');
+    },
+
+    stopOPKAutoReplenish() {
+      // no-op
+    },
+
+    getLocalOPKCount() {
+      return Infinity; // Rust generates keys on demand, no pre-key pool needed
+    },
+
+    async generateOneTimePreKeys(count) {
+      // Rust doesn't need pre-key pools — return empty
+      return [];
+    },
+
+    // ════════════════════════════════════════════════════════════
+    // X3DH Key Exchange
+    // ════════════════════════════════════════════════════════════
+
+    /**
+     * Initiate X3DH session (Alice side).
+     *
+     * @param {string} peerId — peer's user ID
+     * @param {object} bundle — peer's pre-key bundle from server
+     * @returns {Promise<{initialMessage, sessionEstablished}>}
+     */
+    async initiateSession(peerId, bundle) {
+      if (!_initialized) await this.init();
+      const bridge = _getRatchetBridge();
+      if (!bridge) {
+        throw new Error('[DR Adapter] Rust DR backend not available — Tauri required');
+      }
+
+      // Get our identity
+      let myId = localStorage.getItem('fibemate_rust_identity_id');
+      if (!myId) throw new Error('No identity generated — call getMyPreKeyBundle() first');
+
+      // Extract peer's identity key from bundle
+      let peerIdentityPkHex;
+      if (typeof bundle.identityKey === 'string') {
+        // Hex string (X25519, 64 chars)
+        peerIdentityPkHex = bundle.identityKey;
+      } else if (Array.isArray(bundle.identityKey)) {
+        // byte array (P-256 from legacy bundle)
+        peerIdentityPkHex = Array.from(bundle.identityKey)
+          .map(b => b.toString(16).padStart(2, '0')).join('');
+      } else {
+        throw new Error('Invalid peer identity key format');
+      }
+
+      // Get peer signed pre-key
+      let peerSpkHex;
+      if (typeof bundle.signedPreKey === 'string') {
+        peerSpkHex = bundle.signedPreKey;
+      } else if (Array.isArray(bundle.signedPreKey)) {
+        peerSpkHex = Array.from(bundle.signedPreKey)
+          .map(b => b.toString(16).padStart(2, '0')).join('');
+      } else {
+        // Fallback: use identity key as pre-key
+        peerSpkHex = peerIdentityPkHex;
+      }
+
+      console.log(`[DR Adapter] X3DH initiate with ${peerId} (X25519)`);
+
+      // X3DH handshake
+      const x3dh = await bridge.x3dhInitiate(myId, peerIdentityPkHex, peerSpkHex);
+
+      // Init DR session
+      const dr = await bridge.initSession(x3dh.ssId, peerId, true);
+
+      // Store mapping
+      _sessionMap.set(peerId, {
+        sessionId: dr.sessionId,
+        identityId: myId,
+        version: DR_VERSION,
+        createdAt: Date.now()
+      });
+      _saveSessionMap();
+
+      // The peer must also call setPeerKey with our DR public key.
+      // For now, we include our DR pk in the init message.
+      return {
+        initialMessage: {
+          type: 'x3dh_init_rust',
+          version: DR_VERSION,
+          protocol: DR_PROTOCOL,
+          identityKey: x3dh.ourIdentityPkHex,         // X25519 identity (hex)
+          ephemeralKey: x3dh.ourEphemeralPkHex,        // X25519 ephemeral (hex)
+          drPublicKey: dr.ourPublicKeyHex,              // DR ratchet public key (hex)
+          signedPreKeyId: bundle.signedPreKeyId || 0
+        },
+        sessionEstablished: true,
+        rustSession: true
+      };
+    },
+
+    /**
+     * Receive X3DH session (Bob side).
+     *
+     * @param {string} peerId — initiator's user ID
+     * @param {object} initMessage — Alice's initial message
+     * @returns {Promise<{responseMessage, sessionEstablished, sessionReady}>}
+     */
+    async receiveSession(peerId, initMessage) {
+      if (!_initialized) await this.init();
+
+      // Detect protocol version
+      if (initMessage.type === 'x3dh_init_rust' || initMessage.version === 3) {
+        return this._receiveRustSession(peerId, initMessage);
+      }
+
+      // Legacy init — hard reject (P-256 JS DR removed)
+      throw new Error(`[DR Adapter] Legacy X3DH init from ${peerId} (version ${initMessage.version || '?'}). Please ask your contact to update to FIBEMATE v3.`);
+    },
+
+    async _receiveRustSession(peerId, initMessage) {
+      const bridge = _getRatchetBridge();
+      if (!bridge) throw new Error('Rust DR backend not available');
+
+      let myId = localStorage.getItem('fibemate_rust_identity_id');
+      if (!myId) throw new Error('No identity generated — call getMyPreKeyBundle() first');
+
+      // Parse initiator's keys (hex strings)
+      const peerIdentityPkHex = initMessage.identityKey;
+      const peerEphemeralPkHex = initMessage.ephemeralKey;
+      const peerDrPublicKeyHex = initMessage.drPublicKey || peerEphemeralPkHex;
+
+      console.log(`[DR Adapter] X3DH respond to ${peerId} (X25519)`);
+
+      // X3DH responder
+      const x3dh = await bridge.x3dhRespond(myId, peerIdentityPkHex, peerEphemeralPkHex);
+
+      // Init DR session
+      const dr = await bridge.initSession(x3dh.ssId, peerId, false);
+
+      // Set peer DR key
+      await bridge.setPeerKey(dr.sessionId, peerDrPublicKeyHex);
+
+      // Store mapping
+      _sessionMap.set(peerId, {
+        sessionId: dr.sessionId,
+        identityId: myId,
+        version: DR_VERSION,
+        createdAt: Date.now()
+      });
+      _saveSessionMap();
+
+      return {
+        responseMessage: {
+          type: 'x3dh_accept_rust',
+          version: DR_VERSION,
+          protocol: DR_PROTOCOL,
+          identityKey: x3dh.ourIdentityPkHex,
+          signedPrekeyPk: x3dh.ourSignedPrekeyPkHex,
+          drPublicKey: dr.ourPublicKeyHex,
+          accepted: true
+        },
+        sessionEstablished: true,
+        sessionReady: true,
+        rustSession: true
+      };
+    },
+
+    /** Confirm Alice's side after Bob's accept (sets peer DR key). */
+    async confirmSession(peerId, bobResponse) {
+      const sessionInfo = _sessionMap.get(peerId);
+      if (!sessionInfo || sessionInfo.version !== DR_VERSION) {
+        return { confirmed: false };
+      }
+
+      const bridge = _getRatchetBridge();
+      if (bobResponse.drPublicKey) {
+        await bridge.setPeerKey(sessionInfo.sessionId, bobResponse.drPublicKey);
+      }
+      console.log(`[DR Adapter] Session confirmed with ${peerId}`);
+      return { confirmed: true };
+    },
+
+    // ════════════════════════════════════════════════════════════
+    // Encrypt / Decrypt — Core Interface
+    // ════════════════════════════════════════════════════════════
+
+    /**
+     * Encrypt a message.
+     *
+     * @param {string} peerId
+     * @param {string} plaintext
+     * @returns {Promise<{version, protocol, messageJson}>}
+     */
+    async encrypt(peerId, plaintext) {
+      if (!_initialized) await this.init();
+      const sessionInfo = _sessionMap.get(peerId);
+      const bridge = _getRatchetBridge();
+
+      if (sessionInfo && sessionInfo.version >= DR_VERSION && bridge) {
+        // Use Rust DR
+        try {
+          const result = await bridge.encrypt(sessionInfo.sessionId, plaintext);
+          return {
+            version: DR_VERSION,
+            protocol: DR_PROTOCOL,
+            messageJson: result.messageJson,
+            messageNum: result.messageNum
+          };
+        } catch (e) {
+          console.error(`[DR Adapter] Rust encrypt failed for ${peerId}:`, e.message);
+          throw new Error(`Encrypt failed: ${e.message}`);
+        }
+      }
+
+      throw new Error(`No crypto session for ${peerId} — call initiateSession first`);
+    },
+
+    /**
+     * Decrypt a message. Auto-detects protocol version and dispatches.
+     *
+     * @param {string} peerId
+     * @param {object} envelope — from encrypt() output
+     * @returns {Promise<string>} plaintext
+     */
+    async decrypt(peerId, envelope) {
+      if (!_initialized) await this.init();
+      const version = _detectVersion(envelope);
+
+      if (version === DR_VERSION) {
+        // Rust DR v3
+        return this._decryptRust(peerId, envelope);
+      }
+
+      // v1/v2 — hard reject (P-256 JS DR removed in v3)
+      throw new Error(`Unsupported protocol version ${version}. Please ask your contact to update to FIBEMATE v3 (X25519 Rust DR).`);
+    },
+
+    async _decryptRust(peerId, envelope) {
+      const bridge = _getRatchetBridge();
+      if (!bridge) throw new Error('Rust DR backend not available');
+
+      // If we already have a session, use it
+      let sessionInfo = _sessionMap.get(peerId);
+      if (sessionInfo && sessionInfo.version >= DR_VERSION) {
+        try {
+          return await bridge.decrypt(sessionInfo.sessionId, envelope.messageJson);
+        } catch (e) {
+          console.error(`[DR Adapter] Rust decrypt failed (stale session?):`, e.message);
+          // Don't fall through — ratchet state mismatch is fatal
+          throw new Error(`Decrypt failed: ${e.message}`);
+        }
+      }
+
+      throw new Error(`No Rust DR session established with ${peerId}`);
+    },
+
+    // ════════════════════════════════════════════════════════════
+    // Session Management
+    // ════════════════════════════════════════════════════════════
+
+    /** Check if a session exists. */
+    async hasSession(peerId) {
+      return _sessionMap.has(peerId);
+    },
+
+    async deleteSession(peerId) {
+      const sessionInfo = _sessionMap.get(peerId);
+      if (!sessionInfo) return;
+      const bridge = _getRatchetBridge();
+      if (bridge) await bridge.deleteSession(sessionInfo.sessionId);
+      _sessionMap.delete(peerId);
+      _saveSessionMap();
+    },
+
+    async getSessionStatus(peerId) {
+      const sessionInfo = _sessionMap.get(peerId);
+      if (sessionInfo && sessionInfo.version >= DR_VERSION) {
+        return {
+          secured: true,
+          protocol: DR_PROTOCOL,
+          curve: 'X25519',
+          kdf: 'HKDF-SHA-256',
+          aead: 'AES-256-GCM',
+          forwardSecrecy: true,
+          futureSecrecy: true,
+          sessionAge: Date.now() - (sessionInfo.createdAt || Date.now()),
+          backend: 'rust-native'
+        };
+      }
+      return { secured: false, protocol: null, forwardSecrecy: false };
+    },
+
+    // ════════════════════════════════════════════════════════════
+    // Safety Number Fingerprint
+    // ════════════════════════════════════════════════════════════
+
+    /** Alias: main-v3.js uses getSecurityStatus. */
+    async getSecurityStatus(peerId) {
+      return this.getSessionStatus(peerId);
+    },
+
+    // ════════════════════════════════════════════════════════════
+    // Safety Number Fingerprint (Rust SHA-256 via dr_safety_number)
+    // ════════════════════════════════════════════════════════════
+
+    /**
+     * Get the Safety Number for a peer.
+     *
+     * Delegates to Rust `dr_safety_number` — no JS key material.
+     *
+     * @param {string} peerId
+     * @returns {Promise<{fingerprint, ourFingerprint, peerFingerprint}>}
+     */
+    async getSafetyNumberFingerprint(peerId) {
+      const sessionInfo = _sessionMap.get(peerId);
+      if (!sessionInfo) throw new Error(`No session for ${peerId}`);
+      const bridge = _getRatchetBridge();
+      if (!bridge) throw new Error('Rust DR backend not available');
+      const sn = await bridge.getSafetyNumber(sessionInfo.sessionId);
+      console.log(`[DR Adapter] Safety Number: ${sn.safetyNumber}`);
+      return {
+        fingerprint: sn.safetyNumber,
+        ourFingerprint: sn.ourFingerprint,
+        peerFingerprint: sn.peerFingerprint,
+        backend: 'rust-x25519-sha256'
+      };
+    },
+
+
+
+    // ════════════════════════════════════════════════════════════
+    // Hybrid PQ support (delegated to JS PQ layer for now)
+    // ════════════════════════════════════════════════════════════
+
+    async initiateHybridSession(peerId, bundle) {
+      // TODO: After dr_init supports two ss_ids, combine X3DH + ML-KEM
+      console.log('[DR Adapter] initiateHybridSession: falling back to classical X3DH (hybrid not yet in Rust)');
+      return this.initiateSession(peerId, bundle);
+    },
+
+    async receiveHybridSession(peerId, aliceInit) {
+      // TODO: After dr_init supports two ss_ids, combine X3DH + ML-KEM
+      return this.receiveSession(peerId, aliceInit);
+    },
+
+  };
+
+  // Install as window.MessageCryptoV2 (pure Rust X25519 v3 backend)
+  if (typeof window !== 'undefined' && !window._DRAdapterInstalled) {
+    window.MessageCryptoV2 = Adapter;
+    window._DRAdapterInstalled = true;
+    console.log('[DR Adapter] ✅ Installed as window.MessageCryptoV2 (Rust X25519 backend — no JS fallback)');
+  }
+
+  // Also export as standalone
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = Adapter;
+  }
+
+})();

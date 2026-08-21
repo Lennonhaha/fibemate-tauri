@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>ML-KEM-768 Time-Domain Test</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #1a1a2e; color: #eee; }
+        .pass { color: #4f4; }
+        .fail { color: #f44; }
+        .info { color: #88f; }
+        pre { background: #16213e; padding: 10px; border-radius: 5px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>ML-KEM-768 Pure Time-Domain Test</h1>
+    <div id="output"></div>
+    <script src="ml-kem-768-td.js"></script>
+    <script>
+        const out = document.getElementById('output');
+        function log(msg, cls='') {
+            out.innerHTML += `<div class="${cls}">${msg}</div>`;
+        }
+
+        async function runTests() {
+            log('=== ML-KEM-768 Time-Domain Implementation Tests ===', 'info');
+            log('');
+
+            // Test 1: Basic KeyGen
+            log('Test 1: Key Generation...');
+            try {
+                const kp = MLKEM768.generateKeypair();
+                log(`  Public key: ${kp.publicKey.length} bytes (expected ${MLKEM768.PUBLIC_KEY_BYTES})`, 
+                    kp.publicKey.length === MLKEM768.PUBLIC_KEY_BYTES ? 'pass' : 'fail');
+                log(`  Secret key: ${kp.secretKey.length} bytes (expected ${MLKEM768.SECRET_KEY_BYTES})`,
+                    kp.secretKey.length === MLKEM768.SECRET_KEY_BYTES ? 'pass' : 'fail');
+            } catch(e) {
+                log(`  ERROR: ${e.message}`, 'fail');
+            }
+
+            // Test 2: Encaps/Decaps round-trip
+            log('');
+            log('Test 2: Encapsulate/Decapsulate Round-Trip...');
+            try {
+                const kp = MLKEM768.generateKeypair();
+                const enc = MLKEM768.encapsulate(kp.publicKey);
+                log(`  Ciphertext: ${enc.ciphertext.length} bytes (expected ${MLKEM768.CIPHERTEXT_BYTES})`,
+                    enc.ciphertext.length === MLKEM768.CIPHERTEXT_BYTES ? 'pass' : 'fail');
+                log(`  Shared secret: ${enc.sharedSecret.length} bytes (expected ${MLKEM768.SHARED_SECRET_BYTES})`,
+                    enc.sharedSecret.length === MLKEM768.SHARED_SECRET_BYTES ? 'pass' : 'fail');
+                
+                const ss2 = MLKEM768.decapsulate(kp.secretKey, enc.ciphertext);
+                const match = enc.sharedSecret.every((b, i) => b === ss2[i]);
+                log(`  Decaps matches: ${match}`, match ? 'pass' : 'fail');
+                if (!match) {
+                    log(`  Expected: ${Array.from(enc.sharedSecret).map(b => b.toString(16).padStart(2,'0')).join('')}`, 'fail');
+                    log(`  Got:      ${Array.from(ss2).map(b => b.toString(16).padStart(2,'0')).join('')}`, 'fail');
+                }
+            } catch(e) {
+                log(`  ERROR: ${e.message}`, 'fail');
+                console.error(e);
+            }
+
+            // Test 3: Multiple iterations
+            log('');
+            log('Test 3: 10 Iterations...');
+            let passCount = 0;
+            for (let i = 0; i < 10; i++) {
+                try {
+                    const kp = MLKEM768.generateKeypair();
+                    const enc = MLKEM768.encapsulate(kp.publicKey);
+                    const ss2 = MLKEM768.decapsulate(kp.secretKey, enc.ciphertext);
+                    const match = enc.sharedSecret.every((b, j) => b === ss2[j]);
+                    if (match) passCount++;
+                } catch(e) {
+                    log(`  Iteration ${i}: ERROR - ${e.message}`, 'fail');
+                }
+            }
+            log(`  Passed: ${passCount}/10`, passCount === 10 ? 'pass' : 'fail');
+
+            // Test 4: Decapsulation failure (wrong ciphertext)
+            log('');
+            log('Test 4: Decapsulation with wrong ciphertext...');
+            try {
+                const kp = MLKEM768.generateKeypair();
+                const enc = MLKEM768.encapsulate(kp.publicKey);
+                const wrongCt = new Uint8Array(enc.ciphertext);
+                wrongCt[0] ^= 0xFF;
+                const ssWrong = MLKEM768.decapsulate(kp.secretKey, wrongCt);
+                const match = enc.sharedSecret.every((b, i) => b === ssWrong[i]);
+                log(`  Wrong ct gives different ss: ${!match}`, !match ? 'pass' : 'fail');
+            } catch(e) {
+                log(`  ERROR: ${e.message}`, 'fail');
+            }
+
+            // Test 5: Hybrid Key Exchange
+            log('');
+            log('Test 5: Hybrid Key Exchange...');
+            try {
+                const alice = new MLKEM768.HybridKeyExchange();
+                const bob = new MLKEM768.HybridKeyExchange();
+                const alicePub = await alice.initialize();
+                const bobPub = await bob.initialize();
+                
+                const aliceEnc = await alice.encapsulateToPeer(bobPub.kemPublicKey, bobPub.ecdhPublicKey);
+                const bobSs = await bob.decapsulateFromPeer(aliceEnc.ciphertext, alicePub.ecdhPublicKey);
+                
+                const match = aliceEnc.sharedSecret.every((b, i) => b === bobSs[i]);
+                log(`  Shared secrets match: ${match}`, match ? 'pass' : 'fail');
+            } catch(e) {
+                log(`  ERROR: ${e.message}`, 'fail');
+                console.error(e);
+            }
+
+            log('');
+            log('=== Tests Complete ===', 'info');
+        }
+
+        runTests();
+    </script>
+</body>
+</html>

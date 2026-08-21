@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ML-KEM-768 Test</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #1a1a2e; color: #eee; }
+    .pass { color: #4e4; }
+    .fail { color: #e44; }
+    .info { color: #48f; }
+    pre { background: #16213e; padding: 10px; border-radius: 5px; overflow-x: auto; }
+    button { padding: 10px 20px; margin: 5px; cursor: pointer; background: #0f3460; color: #fff; border: none; border-radius: 5px; }
+    button:hover { background: #16213e; }
+  </style>
+</head>
+<body>
+  <h1>ML-KEM-768 功能验证</h1>
+  <p>测试时域实现：密钥生成、封装、解封装</p>
+  <button onclick="runBasicTest()">基本功能测试</button>
+  <button onclick="runKATTest()">KAT 向量测试</button>
+  <button onclick="runPerformanceTest()">性能测试</button>
+  <div id="output"></div>
+
+  <script src="crypto/crypto/ml-kem-768.js"></script>
+  <script src="crypto/crypto/ml-kem-768-wrapper.js"></script>
+  <script>
+    const output = document.getElementById('output');
+    function log(msg, cls = 'info') {
+      output.innerHTML += `<div class="${cls}">${msg}</div>`;
+    }
+
+    async function runBasicTest() {
+      output.innerHTML = '';
+      log('=== 基本功能测试 ===');
+      try {
+        const start = performance.now();
+        const keys = await MLKEM768.generateKeypair();
+        log(`密钥生成: ${(performance.now() - start).toFixed(1)}ms`, 'pass');
+        log(`公钥长度: ${keys.publicKey.length} bytes`);
+        log(`私钥长度: ${keys.secretKey.length} bytes`);
+
+        const encStart = performance.now();
+        const encResult = await MLKEM768.encapsulate(keys.publicKey);
+        const ciphertext = encResult.ciphertext;
+        log(`封装: ${(performance.now() - encStart).toFixed(1)}ms`, 'pass');
+        log(`密文长度: ${ciphertext.length} bytes`);
+
+        const decStart = performance.now();
+        const sharedSecret = await MLKEM768.decapsulate(keys.secretKey, ciphertext);
+        log(`解封装: ${(performance.now() - decStart).toFixed(1)}ms`, 'pass');
+        log(`共享密钥长度: ${sharedSecret.length} bytes`);
+
+        // Verify deterministic
+        const ss2 = await MLKEM768.decapsulate(keys.secretKey, ciphertext);
+        const match = Array.from(sharedSecret).every((b, i) => b === ss2[i]);
+        log(`确定性验证: ${match ? 'PASS' : 'FAIL'}`, match ? 'pass' : 'fail');
+
+        // Wrong key test
+        const wrongKeys = await MLKEM768.generateKeypair();
+        const wrongSS = await MLKEM768.decapsulate(wrongKeys.secretKey, ciphertext);
+        const diff = Array.from(sharedSecret).some((b, i) => b !== wrongSS[i]);
+        log(`错误密钥测试: ${diff ? '不同密钥' : '相同密钥(!)'}`, diff ? 'pass' : 'fail');
+
+      } catch (e) {
+        log(`ERROR: ${e.message}`, 'fail');
+        console.error(e);
+      }
+    }
+
+    async function runKATTest() {
+      output.innerHTML = '';
+      log('=== KAT 向量测试 ===');
+      log('注意：需要外部 KAT 向量文件');
+      log('请加载 NIST FIPS 204 测试向量');
+    }
+
+    async function runPerformanceTest() {
+      output.innerHTML = '';
+      log('=== 性能测试 ===');
+      try {
+        const keys = await MLKEM768.generateKeypair();
+        const iterations = 10;
+
+        let encTotal = 0, decTotal = 0;
+        for (let i = 0; i < iterations; i++) {
+          const t1 = performance.now();
+          const encRes = await MLKEM768.encapsulate(keys.publicKey);
+          const ct = encRes.ciphertext;
+          encTotal += performance.now() - t1;
+
+          const t2 = performance.now();
+          await MLKEM768.decapsulate(keys.secretKey, ct);
+          decTotal += performance.now() - t2;
+        }
+
+        log(`封装平均: ${(encTotal / iterations).toFixed(1)}ms`);
+        log(`解封装平均: ${(decTotal / iterations).toFixed(1)}ms`);
+        log(`总耗时: ${(encTotal + decTotal).toFixed(1)}ms / ${iterations} 轮`, 'pass');
+
+      } catch (e) {
+        log(`ERROR: ${e.message}`, 'fail');
+      }
+    }
+  </script>
+</body>
+</html>

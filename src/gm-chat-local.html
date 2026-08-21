@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>GM Chat Local Test</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font:13px/1.5 'Segoe UI',system-ui;background:#0d1117;color:#c9d1d9;height:100vh;display:flex;flex-direction:column}
+h1{font-size:16px;color:#58a6ff;padding:12px 20px;border-bottom:1px solid #30363d;display:flex;align-items:center;gap:10px}
+h1 .dot{display:inline-block;width:8px;height:8px;border-radius:50%}
+.dot.on{background:#3fb950}.dot.off{background:#f85149}.dot.warn{background:#d29922}
+#topbar{display:flex;gap:10px;padding:10px 20px;border-bottom:1px solid #30363d;align-items:center;flex-wrap:wrap}
+#topbar label{color:#8b949e;font-size:12px}
+#topbar input{background:#161b22;border:1px solid #30363d;color:#c9d1d9;padding:4px 8px;border-radius:4px;font:12px monospace;width:200px}
+button{background:#238636;color:white;border:none;padding:6px 14px;border-radius:4px;cursor:pointer;font:12px inherit}
+button:hover{background:#2ea043}
+button:disabled{opacity:0.4;cursor:default}
+button.small{padding:3px 8px;font-size:11px}
+#chat-wrap{display:flex;flex:1;overflow:hidden}
+.panel{flex:1;display:flex;flex-direction:column;border-right:1px solid #30363d;min-width:0}
+.panel:last-child{border-right:none}
+.panel-header{padding:8px 14px;background:#161b22;border-bottom:1px solid #30363d;display:flex;justify-content:space-between;align-items:center}
+.panel-header .name{font-weight:600;color:#58a6ff}
+.panel-header .status{font-size:11px}
+.msg-list{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:4px}
+.msg{border-radius:8px;padding:6px 12px;max-width:85%;word-break:break-all;position:relative}
+.msg.sent{background:#1f6feb;align-self:flex-end}
+.msg.recv{background:#30363d;align-self:flex-start}
+.msg .body{font-size:13px}
+.msg .meta{font-size:10px;color:#8b949e;margin-top:2px}
+.msg .crypto{font-size:10px;font-family:monospace;color:#d29922;margin-top:2px;max-height:40px;overflow:hidden}
+.input-area{display:flex;padding:8px;gap:6px;border-top:1px solid #30363d;background:#161b22}
+.input-area input{flex:1;background:#0d1117;border:1px solid #30363d;color:#c9d1d9;padding:6px 10px;border-radius:4px;font:13px inherit}
+#log-panel{height:120px;overflow-y:auto;background:#0d1117;border-top:1px solid #30363d;padding:8px 20px;font:11px monospace}
+#log-panel .ok{color:#3fb950} #log-panel .err{color:#f85149} #log-panel .warn{color:#d29922} #log-panel .info{color:#8b949e}
+.spin{animation:spin 0.8s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+</style>
+</head><body>
+<h1>🔐 GM Chat Local Test <span style="font-size:11px;color:#8b949e">localhost:3000 → SM4-GCM</span><span id="conn-dot" class="dot off"></span></h1>
+
+<div id="topbar">
+  <label>Alice ID</label><input id="uid-a" value="alice" size="16">
+  <label>Bob ID</label><input id="uid-b" value="bob" size="16">
+  <button id="btn-connect" onclick="doConnect()">🔗 Connect & Start</button>
+  <button id="btn-poll" onclick="doPoll()" disabled style="background:#30363d">🔄 Poll</button>
+  <span id="poll-status" style="font-size:11px;color:#8b949e">Not started</span>
+</div>
+
+<div id="chat-wrap">
+  <div class="panel" id="panel-a">
+    <div class="panel-header"><span class="name">👤 Alice</span><span class="status" id="status-a">—</span></div>
+    <div class="msg-list" id="msgs-a"></div>
+    <div class="input-area">
+      <input id="input-a" placeholder="GM encrypted message..." onkeydown="if(event.key==='Enter')doSend('a')">
+      <button onclick="doSend('a')">Send →</button>
+    </div>
+  </div>
+  <div class="panel" id="panel-b">
+    <div class="panel-header"><span class="name">👤 Bob</span><span class="status" id="status-b">—</span></div>
+    <div class="msg-list" id="msgs-b"></div>
+    <div class="input-area">
+      <input id="input-b" placeholder="GM encrypted message..." onkeydown="if(event.key==='Enter')doSend('b')">
+      <button onclick="doSend('b')">Send →</button>
+    </div>
+  </div>
+</div>
+<div id="log-panel"></div>
+
+<script src="sm3-browser.js"></script>
+<script src="sm4-browser.js"></script>
+<script>
+// ============ CONFIG ============
+const API = '/api';
+const SM4_SHARED_KEY = 'b1a2c3d4e5f60718293a4b5c6d7e8f90'; // 16-byte PSK
+let state = { convId: null, userIds: {}, polling: false };
+
+// ============ UI HELPERS ============
+function log(msg, cls) {
+  const el = document.getElementById('log-panel');
+  const t = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  el.innerHTML += `<span class="${cls||''}">[${t}] ${msg}</span>\n`;
+  el.scrollTop = el.scrollHeight;
+}
+
+function setStatus(panel, text, cls) {
+  const el = document.getElementById('status-'+panel);
+  el.textContent = text;
+  el.style.color = cls === 'ok' ? '#3fb950' : cls === 'err' ? '#f85149' : '#d29922';
+}
+
+function addMsg(panel, text, side, encrypted) {
+  const list = document.getElementById('msgs-'+panel);
+  const div = document.createElement('div');
+  div.className = 'msg ' + (side === 'sent' ? 'sent' : 'recv');
+  div.innerHTML = `<div class="body">${escapeHtml(text)}</div>` +
+    (encrypted ? `<div class="crypto">🔒 ${encrypted.substring(0,60)}…</div>` : '') +
+    `<div class="meta">${new Date().toLocaleTimeString('zh-CN',{hour12:false})} ${side==='sent'?'→':'←'}</div>`;
+  list.appendChild(div);
+  list.scrollTop = list.scrollHeight;
+}
+
+function showToast(panel, msg) {
+  const list = document.getElementById('msgs-'+panel);
+  const div = document.createElement('div');
+  div.className = 'msg recv';
+  div.innerHTML = `<div class="body" style="color:#d29922;font-style:italic">${msg}</div>`;
+  list.appendChild(div);
+  list.scrollTop = list.scrollHeight;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+async function api(method, path, body) {
+  const opts = { method, headers: { 'Content-Type': 'application/json' } };
+  if (body) opts.body = JSON.stringify(body);
+  const r = await fetch(API + path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) log(`HTTP ${r.status}: ${JSON.stringify(data)}`, 'err');
+  return { ok: r.ok, status: r.status, data };
+}
+
+// ============ CONNECT ============
+async function doConnect() {
+  const uidA = document.getElementById('uid-a').value.trim() || 'alice';
+  const uidB = document.getElementById('uid-b').value.trim() || 'bob';
+
+  state.userIds = { a: uidA, b: uidB };
+
+  log(`Connecting: Alice=${uidA}, Bob=${uidB}`, 'info');
+
+  // Alice 发起会话
+  const r1 = await api('POST', '/conversations/find-or-create', {
+    userId: uidB,
+    myUserId: uidA
+  });
+  if (!r1.ok) { log('Conversation FAIL', 'err'); return; }
+  state.convId = r1.data.conversationId;
+  log(`Conversation: ${state.convId}`, 'ok');
+
+  // 加载历史消息(空会话)
+  await loadMessages('a');
+  await loadMessages('b');
+
+  document.getElementById('btn-poll').disabled = false;
+  document.getElementById('btn-connect').disabled = true;
+  document.getElementById('conn-dot').className = 'dot on';
+  setStatus('a', 'Ready', 'ok');
+  setStatus('b', 'Ready', 'ok');
+
+  state.polling = true;
+  doPoll();
+  log('✅ Connected. Auto-polling started.', 'ok');
+}
+
+// ============ LOAD ============
+async function loadMessages(panel) {
+  if (!state.convId) return;
+  const r = await api('GET', `/conversations/${state.convId}/messages?limit=50`);
+  if (!r.ok) return;
+  const panelEl = document.getElementById('msgs-'+panel);
+  panelEl.innerHTML = '';
+  const myId = state.userIds[panel];
+  for (const m of (r.data.messages || [])) {
+    const isMe = m.senderUserId === myId;
+    // 解析 ciphertext 信封 (fixed: was trying m.iv/m.authTag directly)
+    let ct, iv, tag;
+    try {
+      const env = JSON.parse(m.ciphertext);
+      ct = env.ct; iv = env.iv; tag = env.tag;
+    } catch { ct = m.ciphertext; }
+    try {
+      const dec = SM4GCM.decrypt(ct || '', SM4_SHARED_KEY, iv, tag);
+      if (dec !== null) {
+        addMsg(panel, dec, isMe ? 'sent' : 'recv', ct);
+      } else {
+        addMsg(panel, `[🔒 SM4 auth failed]`, isMe ? 'sent' : 'recv', ct);
+      }
+    } catch(e) {
+      addMsg(panel, `[解密失败] ${ct?.substring(0,40)||''}...`, isMe ? 'sent' : 'recv', ct);
+    }
+  }
+}
+
+// ============ SEND ============
+async function doSend(panel) {
+  if (!state.convId) { log('Not connected', 'err'); return; }
+  const input = document.getElementById('input-'+panel);
+  const text = input.value.trim();
+  if (!text) return;
+
+  const myId = state.userIds[panel];
+
+  // Encrypt with SM4-GCM
+  let encrypted;
+  try {
+    encrypted = SM4GCM.encrypt(text, SM4_SHARED_KEY);
+  } catch(e) {
+    log('Encrypt error: ' + e.message, 'err');
+    showToast(panel, '❌ SM4 encrypt fail: ' + e.message);
+    return;
+  }
+
+  // JSON 信封
+  const envelope = JSON.stringify({
+    ct: encrypted.ciphertext,
+    iv: encrypted.iv,
+    tag: encrypted.authTag,
+    algo: 'sm4-gcm'
+  });
+
+  const preview = text.substring(0, 30) + (text.length > 30 ? '…' : '');
+  log(`${panel.toUpperCase()} → "${preview}"`, 'info');
+
+  const r = await api('POST', '/messages', {
+    conversationId: state.convId,
+    ciphertext: envelope,
+    messageType: 'text',
+    senderUserId: myId
+  });
+
+  if (r.ok) {
+    addMsg(panel, text, 'sent', encrypted.ciphertext);
+    input.value = '';
+    log(`✅ Delivered (msgId=${r.data.messageId})`, 'ok');
+    setTimeout(() => doPoll(), 500);
+  } else {
+    log(`Send FAIL: ${JSON.stringify(r.data)}`, 'err');
+    showToast(panel, '❌ Send fail');
+  }
+}
+
+// ============ POLL ============
+async function doPoll() {
+  if (!state.convId || !state.polling) return;
+
+  for (const panel of ['a', 'b']) {
+    const myId = state.userIds[panel];
+    if (!myId) continue;
+    try {
+      const r = await api('GET', `/conversations/${state.convId}/messages?limit=50`);
+      if (!r.ok) continue;
+
+      const list = document.getElementById('msgs-'+panel);
+      const existingIds = new Set(
+        Array.from(list.querySelectorAll('.msg'))
+          .filter(d => d.dataset.msgId)
+          .map(d => d.dataset.msgId)
+      );
+
+      for (const m of (r.data.messages || [])) {
+        if (existingIds.has(m.id)) continue;
+
+        const isMe = m.senderUserId === myId;
+        // Parse envelope
+        let ct, iv, tag;
+        try {
+          const env = JSON.parse(m.ciphertext);
+          ct = env.ct; iv = env.iv; tag = env.tag;
+        } catch { ct = m.ciphertext; }
+
+        let body;
+        try {
+          const dec = SM4GCM.decrypt(ct || '', SM4_SHARED_KEY, iv, tag);
+          body = dec !== null ? dec : `[🔒 SM4 auth failed]`;
+        } catch(e) {
+          body = `[解密失败]`;
+        }
+
+        const div = document.createElement('div');
+        div.className = 'msg ' + (isMe ? 'sent' : 'recv');
+        div.dataset.msgId = m.id;
+        div.innerHTML = `<div class="body">${escapeHtml(body)}</div>` +
+          `<div class="crypto">🔒 ${ct.substring(0,60)}…</div>` +
+          `<div class="meta">${new Date(m.createdAt).toLocaleTimeString('zh-CN',{hour12:false})} ${isMe?'→':'←'}</div>`;
+        list.appendChild(div);
+      }
+      list.scrollTop = list.scrollHeight;
+    } catch(e) {
+      // ignore poll errors
+    }
+  }
+
+  document.getElementById('poll-status').textContent =
+    'Polled @ ' + new Date().toLocaleTimeString('zh-CN', { hour12: false });
+  setTimeout(doPoll, 3000);
+}
+
+// ============ INIT ============
+window.addEventListener('DOMContentLoaded', () => {
+  // Verify SM4GCM loaded
+  if (typeof SM4GCM === 'undefined') {
+    log('❌ SM4GCM not loaded! Check sm4-browser.js', 'err');
+    return;
+  }
+  // Self-test
+  const st = SM4GCM.selftest();
+  if (st.ok) {
+    log('✅ SM4-GCM selftest PASS', 'ok');
+  } else {
+    log('❌ SM4-GCM selftest FAIL: ' + st.err, 'err');
+  }
+});
+</script>
+</body></html>

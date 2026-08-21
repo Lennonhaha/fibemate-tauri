@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Key Manager Integration Test</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #1a1a2e; color: #fff; }
+    .pass { color: #00d4aa; }
+    .fail { color: #ff4757; }
+    .info { color: #74b9ff; }
+    pre { background: #16213e; padding: 10px; border-radius: 4px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>🔐 Key Manager Integration Test</h1>
+  <div id="output"></div>
+
+  <script src="secure-key-storage.js"></script>
+  <script src="key-storage-migration.js"></script>
+  <script src="key-manager.js"></script>
+  <script>
+    const output = document.getElementById('output');
+    function log(msg, type = 'info') {
+      const div = document.createElement('div');
+      div.className = type;
+      div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+      output.appendChild(div);
+    }
+
+    async function runTests() {
+      log('Starting Key Manager integration tests...', 'info');
+
+      try {
+        // Test 1: Initialize KeyManager
+        log('Test 1: Initialize KeyManager...', 'info');
+        const km = new KeyManager();
+        await km.init();
+        log('✓ KeyManager initialized', 'pass');
+
+        // Test 2: Check migration (should not need migration on fresh start)
+        log('Test 2: Check migration status...', 'info');
+        const needsMigration = await km.migration.checkMigrationNeeded();
+        log(`Migration needed: ${needsMigration}`, needsMigration ? 'info' : 'pass');
+
+        // Test 3: Store a test key
+        log('Test 3: Store test key...', 'info');
+        const testKey = await crypto.subtle.generateKey(
+          { name: 'ECDH', namedCurve: 'P-256' },
+          true,
+          ['deriveKey', 'deriveBits']
+        );
+        
+        // Simulate password entry
+        window.__devicePassword = 'test-password-123';
+        await km.storeIdentityKey(testKey, 'test-password-123');
+        log('✓ Test key stored securely', 'pass');
+
+        // Test 4: Retrieve key
+        log('Test 4: Retrieve encrypted key...', 'info');
+        const retrieved = await km.getIdentityKey();
+        log('✓ Key retrieved successfully', 'pass');
+        log(`Key type: ${retrieved.kty}, crv: ${retrieved.crv}`, 'info');
+
+        // Test 5: Verify key integrity
+        log('Test 5: Verify key integrity...', 'info');
+        const originalJwk = await crypto.subtle.exportKey('jwk', testKey.privateKey);
+        const match = JSON.stringify(originalJwk) === JSON.stringify(retrieved);
+        log(match ? '✓ Key integrity verified' : '✗ Key mismatch!', match ? 'pass' : 'fail');
+
+        // Test 6: Clear session password
+        log('Test 6: Clear session password...', 'info');
+        km.clearSessionPassword();
+        log('✓ Session password cleared', 'pass');
+
+        // Test 7: Verify password required after clear
+        log('Test 7: Verify password required after clear...', 'info');
+        try {
+          await km.getIdentityKey();
+          log('✗ Should have required password', 'fail');
+        } catch (e) {
+          log('✓ Password correctly required after clear', 'pass');
+        }
+
+        log('\n🎉 All tests completed!', 'pass');
+
+      } catch (error) {
+        log(`✗ Test failed: ${error.message}`, 'fail');
+        console.error(error);
+      }
+    }
+
+    runTests();
+  </script>
+</body>
+</html>

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>PQ-WASM Test</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #1a1a2e; color: #eee; }
+    .pass { color: #4ecca3; }
+    .fail { color: #e74c3c; }
+    .info { color: #3498db; }
+    pre { background: #16213e; padding: 10px; border-radius: 4px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>ML-KEM-768 WASM Test</h1>
+  <div id="log"></div>
+
+  <script type="module">
+    import init, { generateKeypair, encapsulate, decapsulate } from './pq-wasm/pkg/fibemate_pq_wasm.js';
+    
+    const log = document.getElementById('log');
+    function out(msg, cls = 'info') {
+      log.innerHTML += `<div class="${cls}">${msg}</div>`;
+    }
+    
+    async function runTests() {
+      try {
+        out('1. Initializing WASM module...', 'info');
+        await init();
+        out('   ✓ WASM initialized', 'pass');
+        
+        out('2. Checking exported functions...', 'info');
+        out(`   generateKeypair: ${typeof generateKeypair}`, 'info');
+        out(`   encapsulate: ${typeof encapsulate}`, 'info');
+        out(`   decapsulate: ${typeof decapsulate}`, 'info');
+        
+        if (typeof generateKeypair !== 'function') throw new Error('generateKeypair not found');
+        if (typeof encapsulate !== 'function') throw new Error('encapsulate not found');
+        if (typeof decapsulate !== 'function') throw new Error('decapsulate not found');
+        out('   ✓ All functions exported', 'pass');
+        
+        out('3. Generating keypair...', 'info');
+        const kp = generateKeypair();
+        out(`   public_key length: ${kp.public_key.length} bytes`, 'info');
+        out(`   secret_key length: ${kp.secret_key.length} bytes`, 'info');
+        if (kp.public_key.length !== 1184) throw new Error(`Expected 1184 bytes public key, got ${kp.public_key.length}`);
+        if (kp.secret_key.length !== 2400) throw new Error(`Expected 2400 bytes secret key, got ${kp.secret_key.length}`);
+        out('   ✓ Keypair generated with correct sizes', 'pass');
+        
+        out('4. Encapsulating...', 'info');
+        const enc = encapsulate(kp.public_key);
+        out(`   ciphertext length: ${enc.ciphertext.length} bytes`, 'info');
+        out(`   shared_secret length: ${enc.shared_secret.length} bytes`, 'info');
+        if (enc.ciphertext.length !== 1088) throw new Error(`Expected 1088 bytes ciphertext, got ${enc.ciphertext.length}`);
+        if (enc.shared_secret.length !== 32) throw new Error(`Expected 32 bytes shared secret, got ${enc.shared_secret.length}`);
+        out('   ✓ Encapsulation successful', 'pass');
+        
+        out('5. Decapsulating...', 'info');
+        const dec = decapsulate(kp.secret_key, enc.ciphertext);
+        out(`   shared_secret length: ${dec.length} bytes`, 'info');
+        if (dec.length !== 32) throw new Error(`Expected 32 bytes shared secret, got ${dec.length}`);
+        out('   ✓ Decapsulation successful', 'pass');
+        
+        out('6. Verifying shared secrets match...', 'info');
+        const match = enc.shared_secret.every((b, i) => b === dec[i]);
+        if (!match) throw new Error('Shared secrets do not match!');
+        out('   ✓ Shared secrets match', 'pass');
+        
+        out('', 'info');
+        out('========================================', 'pass');
+        out('ALL TESTS PASSED ✓', 'pass');
+        out('========================================', 'pass');
+        
+      } catch (err) {
+        out(`ERROR: ${err.message}`, 'fail');
+        console.error(err);
+      }
+    }
+    
+    runTests();
+  </script>
+</body>
+</html>

@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Schnorr ZK Test</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #1a1a2e; color: #eee; }
+        .pass { color: #4f4; }
+        .fail { color: #f44; }
+        .info { color: #88f; }
+    </style>
+</head>
+<body>
+    <h1>Schnorr ZK Proof Test</h1>
+    <div id="output"></div>
+    
+    <script src="schnorr-prover.js"></script>
+    <script src="schnorr-verifier.js"></script>
+    <script>
+        const out = document.getElementById('output');
+        function log(msg, cls='') {
+            out.innerHTML += `<div class="${cls}">${msg}</div>`;
+        }
+
+        async function runTests() {
+            log('=== Schnorr ZK Proof Tests ===', 'info');
+            
+            // Test parameters (small for demo)
+            const p = BigInt('0xFFFFFFFFFFFFFFFFC90FDAA22168C234C4C6628B80DC1CD129024E088A67CC74020BBEA63B139B22514A08798E3404DDEF9519B3CD3A431B302B0A6DF25F14374FE1356D6D51C245');
+            const g = BigInt(2);
+            const x = BigInt('1234567890123456789012345678901234567890123456789012345678901234');
+            const y = g ** x % p;
+            
+            log(`p: ${p.toString(16).slice(0, 16)}...`);
+            log(`g: ${g}`);
+            log(`x: ${x.toString(16).slice(0, 16)}... (private)`);
+            log(`y: ${y.toString(16).slice(0, 16)}... (public)`);
+            
+            // Test 1: Basic proof
+            log('');
+            log('Test 1: Generate and verify proof...');
+            try {
+                const prover = new SchnorrProver();
+                await prover.init();
+                
+                const proof = await prover.prove(x, { g, p, y });
+                log(`  t: ${proof.t.toString(16).slice(0, 16)}...`);
+                log(`  s: ${proof.s.toString(16).slice(0, 16)}...`);
+                log(`  c: ${proof.c.toString(16).slice(0, 16)}...`);
+                
+                const verifier = new SchnorrVerifier();
+                const valid = await verifier.verify(
+                    { 
+                        t: proof.t.toString(16), 
+                        s: proof.s.toString(16), 
+                        c: proof.c.toString(16) 
+                    },
+                    { 
+                        g: g.toString(16), 
+                        p: p.toString(16), 
+                        y: y.toString(16) 
+                    }
+                );
+                
+                log(`  Verification: ${valid ? 'PASSED' : 'FAILED'}`, valid ? 'pass' : 'fail');
+            } catch(e) {
+                log(`  ERROR: ${e.message}`, 'fail');
+                console.error(e);
+            }
+            
+            // Test 2: Wrong private key
+            log('');
+            log('Test 2: Verify with wrong private key...');
+            try {
+                const prover = new SchnorrProver();
+                await prover.init();
+                
+                const wrongX = BigInt('9999999999999999999999999999999999999999999999999999999999999999');
+                const wrongY = g ** wrongX % p;
+                
+                const proof = await prover.prove(x, { g, p, y: wrongY });
+                
+                const verifier = new SchnorrVerifier();
+                const valid = await verifier.verify(
+                    { 
+                        t: proof.t.toString(16), 
+                        s: proof.s.toString(16), 
+                        c: proof.c.toString(16) 
+                    },
+                    { 
+                        g: g.toString(16), 
+                        p: p.toString(16), 
+                        y: y.toString(16) 
+                    }
+                );
+                
+                log(`  Verification with wrong key: ${valid ? 'PASSED' : 'FAILED'}`, !valid ? 'pass' : 'fail');
+            } catch(e) {
+                log(`  ERROR: ${e.message}`, 'fail');
+            }
+            
+            // Test 3: Multiple iterations
+            log('');
+            log('Test 3: 5 iterations...');
+            let passCount = 0;
+            for (let i = 0; i < 5; i++) {
+                try {
+                    const prover = new SchnorrProver();
+                    await prover.init();
+                    const proof = await prover.prove(x, { g, p, y });
+                    
+                    const verifier = new SchnorrVerifier();
+                    const valid = await verifier.verify(
+                        { 
+                            t: proof.t.toString(16), 
+                            s: proof.s.toString(16), 
+                            c: proof.c.toString(16) 
+                        },
+                        { 
+                            g: g.toString(16), 
+                            p: p.toString(16), 
+                            y: y.toString(16) 
+                        }
+                    );
+                    
+                    if (valid) passCount++;
+                } catch(e) {
+                    log(`  Iteration ${i}: ERROR`, 'fail');
+                }
+            }
+            log(`  Passed: ${passCount}/5`, passCount === 5 ? 'pass' : 'fail');
+            
+            log('');
+            log('=== Tests Complete ===', 'info');
+        }
+
+        runTests();
+    </script>
+</body>
+</html>

@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ML-KEM-768 Test</title>
+    <style>
+        body {
+            font-family: 'Courier New', monospace;
+            background: #0a0a0f;
+            color: #00E5C3;
+            padding: 20px;
+        }
+        .test-result {
+            margin: 10px 0;
+            padding: 10px;
+            border: 1px solid #333;
+            border-radius: 4px;
+        }
+        .pass { border-color: #00E5C3; background: rgba(0, 229, 195, 0.1); }
+        .fail { border-color: #FF4757; background: rgba(255, 71, 87, 0.1); }
+        .info { border-color: #FFA502; background: rgba(255, 165, 2, 0.1); }
+        h1 { color: #00E5C3; }
+        h2 { color: #888; font-size: 14px; }
+        pre { font-size: 12px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h1>ML-KEM-768 测试套件</h1>
+    <div id="results"></div>
+
+    <script src="ml-kem-768.js"></script>
+    <script>
+        const results = document.getElementById('results');
+        let passCount = 0;
+        let failCount = 0;
+
+        function log(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = `test-result ${type}`;
+            div.innerHTML = `<strong>${type.toUpperCase()}</strong>: ${message}`;
+            results.appendChild(div);
+            if (type === 'pass') passCount++;
+            if (type === 'fail') failCount++;
+        }
+
+        async function runTests() {
+            log('开始 ML-KEM-768 测试...', 'info');
+
+            // Test 1: Constants
+            try {
+                const constants = MLKEM768.getConstants();
+                log(`Constants: PK=${constants.PUBLIC_KEY_BYTES}, SK=${constants.SECRET_KEY_BYTES}, CT=${constants.CIPHERTEXT_BYTES}, SS=${constants.SHARED_SECRET_BYTES}`, 'pass');
+            } catch (e) {
+                log(`Constants test failed: ${e.message}`, 'fail');
+            }
+
+            // Test 2: Keypair generation
+            let keypair;
+            try {
+                keypair = await MLKEM768.generateKeypair();
+                log(`Keypair generated: PK=${keypair.publicKey.length} bytes, SK=${keypair.secretKey.length} bytes`, 'pass');
+            } catch (e) {
+                log(`Keypair generation failed: ${e.message}`, 'fail');
+                return;
+            }
+
+            // Test 3: Encapsulation
+            let ciphertext;
+            try {
+                ciphertext = await MLKEM768.encapsulate(keypair.publicKey);
+                log(`Encapsulation: CT=${ciphertext.ciphertext.length} bytes, SS=${ciphertext.sharedSecret.length} bytes`, 'pass');
+            } catch (e) {
+                log(`Encapsulation failed: ${e.message}`, 'fail');
+                return;
+            }
+
+            // Test 4: Decapsulation
+            let sharedSecret;
+            try {
+                sharedSecret = await MLKEM768.decapsulate(keypair.secretKey, ciphertext.ciphertext);
+                log(`Decapsulation: SS=${sharedSecret.length} bytes`, 'pass');
+            } catch (e) {
+                log(`Decapsulation failed: ${e.message}`, 'fail');
+                return;
+            }
+
+            // Test 5: Shared secret match
+            try {
+                const match = Array.from(ciphertext.sharedSecret).every((byte, i) => byte === sharedSecret[i]);
+                if (match) {
+                    log('Shared secrets match!', 'pass');
+                } else {
+                    log('Shared secrets DO NOT match!', 'fail');
+                }
+            } catch (e) {
+                log(`Shared secret comparison failed: ${e.message}`, 'fail');
+            }
+
+            // Test 6: Hybrid combine
+            try {
+                const ecdhSecret = new Uint8Array(32);
+                crypto.getRandomValues(ecdhSecret);
+                const combined = await MLKEM768.hybridCombine(sharedSecret, ecdhSecret);
+                log(`Hybrid combine: ${combined.length} bytes`, 'pass');
+            } catch (e) {
+                log(`Hybrid combine failed: ${e.message}`, 'fail');
+            }
+
+            // Test 7: HybridKeyExchange
+            try {
+                const hke = new MLKEM768.HybridKeyExchange();
+                const initResult = await hke.initialize();
+                log(`HybridKeyExchange initialized: KEM_PK=${initResult.kemPublicKey.length} bytes, ECDH_PK=${initResult.ecdhPublicKey.byteLength} bytes`, 'pass');
+            } catch (e) {
+                log(`HybridKeyExchange failed: ${e.message}`, 'fail');
+            }
+
+            // Test 8: Serialization
+            try {
+                const json = keypair.toJSON();
+                const restored = MLKEM768.KyberKeypair.fromJSON(json);
+                log(`Serialization: PK match=${Array.from(keypair.publicKey).every((b, i) => b === restored.publicKey[i])}`, 'pass');
+            } catch (e) {
+                log(`Serialization failed: ${e.message}`, 'fail');
+            }
+
+            // Summary
+            log(`\n=== 测试完成 ===\n通过: ${passCount}\n失败: ${failCount}\n总计: ${passCount + failCount}`, passCount === 8 ? 'pass' : 'info');
+        }
+
+        runTests().catch(e => log(`Test suite error: ${e.message}`, 'fail'));
+    </script>
+</body>
+</html>

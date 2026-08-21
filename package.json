@@ -1,0 +1,14 @@
+{
+  "name": "fibemate-tauri",
+  "version": "3.0.0",
+  "description": "FIBEMATE - Post-Quantum Secure Messaging Desktop App (Tauri)",
+  "private": true,
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ZK Auth E2E Test</title>
+<style>
+  body { font-family: monospace; background: #1a1a2e; color: #eee; padding: 20px; max-width: 900px; margin: 0 auto; }
+  h1 { color: #e94560; border-bottom: 2px solid #e94560; padding-bottom: 8px; }
+  h2 { color: #0f3460; background: #16213e; padding: 6px 12px; border-radius: 4px; }
+  .test { padding: 4px 0; }
+  .pass { color: #4ecca3; }
+  .fail { color: #e94560; }
+  .log { color: #888; font-size: 0.9em; margin-left: 16px; }
+  .summary { background: #16213e; padding: 16px; border-radius: 8px; margin-top: 16px; font-size: 1.2em; }
+  .all-pass { color: #4ecca3; font-weight: bold; }
+  .has-fail { color: #e94560; font-weight: bold; }
+  #status { color: #f5c518; }
+</style>
+</head>
+<body>
+<h1>ZK Auth — Browser E2E Test</h1>
+<div id="status">Loading modules...</div>
+<div id="output"></div>
+<div id="summary"></div>
+
+<script src="/zk/schnorr-prover-v2.js"></script>
+<script src="/zk/bulletproofs.js"></script>
+<script src="/zk/zk-auth.js"></script>
+<script>
+(function() {
+  'use strict';
+  var out = document.getElementById('output');
+  var status = document.getElementById('status');
+  var summary = document.getElementById('summary');
+  var results = [];
+
+  function log(msg) {
+    var d = document.createElement('div');
+    d.className = 'log';
+    d.textContent = msg;
+    out.appendChild(d);
+    console.log(msg);
+  }
+
+  function record(name, passed, error) {
+    error = error || null;
+    results.push({ name: name, passed: passed, error: error });
+    var d = document.createElement('div');
+    d.className = 'test ' + (passed ? 'pass' : 'fail');
+    d.textContent = (passed ? '\u2713' : '\u2717') + ' ' + name + (error ? ' - ' + error : '');
+    out.appendChild(d);
+  }
+
+  function cloneProof(p) {
+    return {
+      type: p.type, username: p.username,
+      schnorrProof: { R: { x: p.schnorrProof.R.x, y: p.schnorrProof.R.y }, s: p.schnorrProof.s },
+      rangeProof: p.rangeProof,
+      publicKey: { x: p.publicKey.x, y: p.publicKey.y },
+      timestamp: p.timestamp
+    };
+  }
+
+  async function run() {
+    try {
+      // Check modules loaded
+      status.textContent = 'Checking modules...';
+      log('SchnorrProverV2: ' + (typeof SchnorrProverV2 === 'function' ? 'OK' : 'MISSING'));
+      log('Bulletproofs: ' + (typeof Bulletproofs === 'function' ? 'OK' : 'MISSING'));
+      log('ZKAuth: ' + (typeof ZKAuth === 'function' ? 'OK' : 'MISSING'));
+
+      // ===== Test 1: Full Auth Flow =====
+      status.textContent = 'Test 1: Full auth flow...';
+      log('--- Test 1: Full Auth Flow ---');
+      try {
+        var zk = new ZKAuth(); await zk.init();
+        var proof = await zk.generateLoginProof('testuser', 'testpass123');
+        log('  Proof type: ' + proof.type);
+        log('  publicKey.x: ' + proof.publicKey.x.substring(0, 20) + '...');
+        log('  R.x: ' + proof.schnorrProof.R.x.substring(0, 20) + '...');
+        log('  s: ' + proof.schnorrProof.s.substring(0, 20) + '...');
+        var valid = await zk.verifyLoginProof(proof);
+        record('generateLoginProof \u2192 verifyLoginProof roundtrip', valid);
+      } catch(e) { record('Full auth flow', false, e.message); }
+
+      // ===== Test 2: Tamper Detection =====
+      status.textContent = 'Test 2: Tamper detection...';
+      log('\n--- Test 2: Tamper Detection ---');
+      try {
+        var zk = new ZKAuth(); await zk.init();
+        var proof = await zk.generateLoginProof('alice', 'password1');
+
+        var t1 = cloneProof(proof);
+        t1.schnorrProof.s = '1';
+        var r1 = await zk.verifyLoginProof(t1);
+        record('Tamper: s="1" rejected', !r1, r1 ? 'Expected FAIL' : null);
+
+        var t2 = cloneProof(proof);
+        var chars = t2.schnorrProof.R.x.split('');
+        chars[5] = (chars[5] === 'f') ? '0' : 'f';
+        t2.schnorrProof.R.x = chars.join('');
+        var r2 = await zk.verifyLoginProof(t2);
+        record('Tamper: R.x modified rejected', !r2, r2 ? 'Expected FAIL' : null);
+
+        var t3 = cloneProof(proof);
+        var zkOther = new ZKAuth(); await zkOther.init();
+        var otherProof = await zkOther.generateLoginProof('eve', 'badpass');
+        t3.publicKey = otherProof.publicKey;
+        var r3 = await zk.verifyLoginProof(t3);
+        record('Tamper: wrong publicKey rejected', !r3, r3 ? 'Expected FAIL' : null);
+      } catch(e) { record('Tamper detection', false, e.message); }
+
+      // ===== Test 3: Key Uniqueness =====
+      status.textContent = 'Test 3: Key uniqueness...';
+      log('\n--- Test 3: Key Uniqueness ---');
+      try {
+        var zk = new ZKAuth(); await zk.init();
+        var pa = await zk.generateLoginProof('alice', 'pass1');
+        var pb = await zk.generateLoginProof('bob', 'pass2');
+        record('Different credentials \u2192 different keys', pa.publicKey.x !== pb.publicKey.x);
+        
+        var va = await zk.verifyLoginProof(pa);
+        var vb = await zk.verifyLoginProof(pb);
+        record('Both proofs independently valid', va && vb);
+
+        var cross = cloneProof(pa);
+        cross.publicKey = pb.publicKey;
+        var cr = await zk.verifyLoginProof(cross);
+        record('Cross-verification rejected', !cr, cr ? 'Expected FAIL' : null);
+      } catch(e) { record('Key uniqueness', false, e.message); }
+
+      // ===== Test 4: UTF-8 =====
+      status.textContent = 'Test 4: UTF-8...';
+      log('\n--- Test 4: UTF-8 Support ---');
+      try {
+        var zk = new ZKAuth(); await zk.init();
+        var proof = await zk.generateLoginProof('\u6d4b\u8bd5\u7528\u6237', '\u5bc6\u7801123!@#');
+        var valid = await zk.verifyLoginProof(proof);
+        record('UTF-8 Chinese credentials roundtrip', valid);
+      } catch(e) { record('UTF-8', false, e.message); }
+
+      // ===== Test 5: Determinism =====
+      status.textContent = 'Test 5: Determinism...';
+      log('\n--- Test 5: Determinism ---');
+      try {
+        var zk = new ZKAuth(); await zk.init();
+        var p1 = await zk.generateLoginProof('user', 'pass');
+        var p2 = await zk.generateLoginProof('user', 'pass');
+        record('Same credentials \u2192 same public key', p1.publicKey.x === p2.publicKey.x);
+      } catch(e) { record('Determinism', false, e.message); }
+
+      // ===== Summary =====
+      status.textContent = 'Done.';
+      var passed = results.filter(function(r){return r.passed;}).length;
+      var total = results.length;
+      var allPass = (passed === total);
+      
+      summary.innerHTML = '<div class="summary ' + (allPass ? 'all-pass' : 'has-fail') + '">' +
+        'Total: ' + passed + '/' + total + ' ' + (allPass ? '\u2705 ALL PASS' : '\u274c FAILURES PRESENT') +
+        '</div>';
+      
+      // Expose to window for CfT capture
+      window.__zk_test_results = { passed: passed, total: total, allPass: allPass, results: results };
+
+    } catch(e) {
+      status.textContent = 'FATAL: ' + e.message;
+      console.error(e);
+    }
+  }
+
+  run();
+})();
+</script>
+</body>
+</html>

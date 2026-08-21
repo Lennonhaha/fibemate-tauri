@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>ML-KEM-768 Fix Verification v2</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #1a1a2e; color: #eee; }
+        .pass { color: #4f4; }
+        .fail { color: #f44; }
+        .info { color: #48f; }
+        pre { background: #16213e; padding: 10px; border-radius: 5px; overflow-x: auto; }
+    </style>
+</head>
+<body>
+    <h2>ML-KEM-768 Fix Verification v2</h2>
+    <div id="output"></div>
+
+<script src="ml-kem-768.js"></script>
+<script>
+function log(msg, cls='info') {
+    const el = document.getElementById('output');
+    el.innerHTML += `<div class="${cls}">${msg}</div>`;
+}
+
+function bufToHex(buf) {
+    return Array.from(buf).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+async function runTests() {
+    log('=== ML-KEM-768 Fix Verification v2 ===');
+    log('Testing with deep copy fixes...');
+    
+    // Test 1: Basic keygen + encaps + decaps
+    log('<br>--- Test 1: Basic Round Trip ---');
+    try {
+        const kp = MLKEM768.generateKeypair();
+        log(`Public key: ${bufToHex(kp.publicKey).slice(0,32)}... (${kp.publicKey.length} bytes)`);
+        log(`Secret key: ${bufToHex(kp.secretKey).slice(0,32)}... (${kp.secretKey.length} bytes)`);
+        
+        const enc = MLKEM768.encapsulate(kp.publicKey);
+        log(`Ciphertext: ${bufToHex(enc.ciphertext).slice(0,32)}... (${enc.ciphertext.length} bytes)`);
+        log(`Shared secret (enc): ${bufToHex(enc.sharedSecret)}`);
+        
+        const dec = MLKEM768.decapsulate(kp.secretKey, enc.ciphertext);
+        log(`Shared secret (dec): ${bufToHex(dec)}`);
+        
+        const match = bufToHex(enc.sharedSecret) === bufToHex(dec);
+        log(`Result: ${match ? 'MATCH ✓' : 'MISMATCH ✗'}`, match ? 'pass' : 'fail');
+    } catch(e) {
+        log(`Error: ${e.message}`, 'fail');
+        console.error(e);
+    }
+    
+    // Test 2: 20 rounds
+    log('<br>--- Test 2: 20 Rounds ---');
+    let passCount = 0;
+    for(let i=0; i<20; i++) {
+        try {
+            const kp = MLKEM768.generateKeypair();
+            const enc = MLKEM768.encapsulate(kp.publicKey);
+            const dec = MLKEM768.decapsulate(kp.secretKey, enc.ciphertext);
+            if(bufToHex(enc.sharedSecret) === bufToHex(dec)) passCount++;
+        } catch(e) {
+            log(`Round ${i+1} error: ${e.message}`, 'fail');
+        }
+    }
+    log(`Passed: ${passCount}/20`, passCount===20 ? 'pass' : 'fail');
+    
+    // Test 3: Same keypair, multiple encaps
+    log('<br>--- Test 3: Same Keypair, 10 Encapsulations ---');
+    try {
+        const kp = MLKEM768.generateKeypair();
+        let sameKpPass = 0;
+        for(let i=0; i<10; i++) {
+            const enc = MLKEM768.encapsulate(kp.publicKey);
+            const dec = MLKEM768.decapsulate(kp.secretKey, enc.ciphertext);
+            if(bufToHex(enc.sharedSecret) === bufToHex(dec)) sameKpPass++;
+        }
+        log(`Passed: ${sameKpPass}/10`, sameKpPass===10 ? 'pass' : 'fail');
+    } catch(e) {
+        log(`Error: ${e.message}`, 'fail');
+    }
+    
+    // Test 4: Verify s_ntt not modified after keygen
+    log('<br>--- Test 4: Secret Key Integrity ---');
+    try {
+        const kp = MLKEM768.generateKeypair();
+        const enc1 = MLKEM768.encapsulate(kp.publicKey);
+        const dec1 = MLKEM768.decapsulate(kp.secretKey, enc1.ciphertext);
+        
+        const enc2 = MLKEM768.encapsulate(kp.publicKey);
+        const dec2 = MLKEM768.decapsulate(kp.secretKey, enc2.ciphertext);
+        
+        const match1 = bufToHex(enc1.sharedSecret) === bufToHex(dec1);
+        const match2 = bufToHex(enc2.sharedSecret) === bufToHex(dec2);
+        
+        log(`First encaps: ${match1 ? 'MATCH' : 'MISMATCH'}`, match1 ? 'pass' : 'fail');
+        log(`Second encaps: ${match2 ? 'MATCH' : 'MISMATCH'}`, match2 ? 'pass' : 'fail');
+    } catch(e) {
+        log(`Error: ${e.message}`, 'fail');
+    }
+    
+    log('<br>=== Done ===');
+}
+
+runTests();
+</script>
+</body>
+</html>

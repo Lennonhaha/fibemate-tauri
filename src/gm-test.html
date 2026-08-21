@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>GM Test</title>
+<style>body{font:14px monospace;padding:20px;background:#111;color:#0f0} .ok{color:#0f0} .fail{color:red} .warn{color:orange}</style>
+</head><body><h1>Phase 2.4 GM Integration Test</h1>
+<pre id="log"></pre>
+<script>
+const log = document.getElementById('log');
+function add(msg, cls) { log.innerHTML += `<span class="${cls||''}">${msg}</span>\n`; }
+
+window.addEventListener('error', e => {
+  if (e.target && e.target.tagName === 'SCRIPT') add(`SCRIPT FAIL: ${e.target.src}`, 'fail');
+  else add(`JS ERROR: ${e.message} @ ${e.filename}:${e.lineno}`, 'fail');
+});
+
+async function runTests() {
+  // Load GM modules
+  const scripts = [
+    {file: 'modules/gm/sm3_implementation.js', global: 'SM3'},
+    {file: 'modules/gm/sm2-browser.bundle.js', global: 'SM2Browser'},
+    {file: 'modules/gm/message-gm.js', global: 'MessageGM'},
+  ];
+  
+  for (const s of scripts) {
+    await new Promise((resolve, reject) => {
+      const tag = document.createElement('script');
+      tag.src = s.file;
+      tag.onload = () => { add(`✅ ${s.file}`, 'ok'); resolve(); };
+      tag.onerror = () => { add(`💥 ${s.file} FAIL`, 'fail'); resolve(); };
+      document.head.appendChild(tag);
+    });
+  }
+
+  // =============================================
+  // TEST 1: SM3 hash
+  // =============================================
+  add('\n--- TEST 1: SM3 Hash ---');
+  try {
+    const sm3 = new SM3();
+    const h = sm3.hashSync('hello');
+    add(`SM3("hello") = ${h.length} hex chars: ${h.substring(0,32)}...`, 'ok');
+    
+    // Known test vector
+    const expected = 'becbbfaae6548b8b...';  // Well-known SM3 of "abc" is 66c7f0f4...
+    const h2 = sm3.hashSync('abc');
+    // SM3("abc") = 66c7f0f4 62eeedd9 d1f2d46b dc10e4e2 4167c487 5cf2f7a2 297da02b 8f4ba8e0
+    const expected_abc = '66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0';
+    add(`SM3("abc") = ${h2}`, 'ok');
+    add(`  Expected:  ${expected_abc}`, 'ok');
+    add(`  Match: ${h2 === expected_abc ? '✅ YES' : '❌ NO'}`, h2 === expected_abc ? 'ok' : 'fail');
+  } catch(e) {
+    add(`SM3 ERROR: ${e.message}`, 'fail');
+  }
+
+  // =============================================
+  // TEST 2: SM2 key generation
+  // =============================================
+  add('\n--- TEST 2: SM2 Key Generation ---');
+  try {
+    const kp = SM2Browser.generateKeypair();
+    add(`Public: ${kp.publicKey.substring(0,40)}... (${kp.publicKey.length} chars)`, 'ok');
+    add(`Private: ${kp.privateKey.substring(0,16)}... (${kp.privateKey.length} chars)`, 'ok');
+  } catch(e) {
+    add(`SM2 KeyGen ERROR: ${e.message}`, 'fail');
+  }
+
+  // =============================================
+  // TEST 3: SM2 encrypt/decrypt roundtrip
+  // =============================================
+  add('\n--- TEST 3: SM2 Encrypt/Decrypt ---');
+  try {
+    const kp = SM2Browser.generateKeypair();
+    const msg = 'Hello SM2 World! ' + Date.now();
+    const enc = SM2Browser.encrypt(kp.publicKey, msg);
+    const dec = SM2Browser.decrypt(kp.privateKey, enc);
+    add(`Encrypted: ${enc.length} chars (hex)`, 'ok');
+    add(`Decrypted: "${dec}"`, 'ok');
+    add(`Match: ${dec === msg ? '✅ YES' : '❌ NO'}`, dec === msg ? 'ok' : 'fail');
+  } catch(e) {
+    add(`SM2 Enc/Dec ERROR: ${e.message}`, 'fail');
+  }
+
+  // =============================================
+  // TEST 4: SM4 encrypt/decrypt roundtrip
+  // =============================================
+  add('\n--- TEST 4: SM4 Encrypt/Decrypt (via SM4 standalone) ---');
+  try {
+    // SM4 is embedded in message-gm.js via sm4.js bundle
+    // We test via MessageGM which uses SM4 internally
+    const gm = new MessageGM();
+    const kp = gm.generateKeyPair();
+    const msg = 'Test SM4 payload';
+    const enc = gm.encrypt(kp.publicKey, msg);
+    const dec = gm.decrypt(kp.privateKey, enc);
+    add(`Encrypted envelope: ${enc.length} chars`, 'ok');
+    add(`Decrypted: "${dec}"`, 'ok');
+    add(`Match: ${dec === msg ? '✅ YES' : '❌ NO'}`, dec === msg ? 'ok' : 'fail');
+  } catch(e) {
+    add(`MessageGM ERROR: ${e.message}`, 'fail');
+  }
+
+  // =============================================
+  // TEST 5: MessageGM selftest
+  // =============================================
+  add('\n--- TEST 5: MessageGM SelfTest ---');
+  try {
+    const gm = new MessageGM();
+    const result = gm.selfTest();
+    if (result.ok) {
+      add(`✅ SelfTest PASSED`, 'ok');
+    } else {
+      add(`❌ SelfTest FAILED: ${result.error}`, 'fail');
+    }
+  } catch(e) {
+    add(`SelfTest ERROR: ${e.message}`, 'fail');
+  }
+
+  // =============================================
+  // TEST 6: encryptWithGM interface
+  // =============================================
+  add('\n--- TEST 6: encryptWithGM Interface ---');
+  try {
+    if (typeof window.encryptWithGM !== 'undefined') {
+      add('window.encryptWithGM exists ✅', 'ok');
+      add(`  encrypt: ${typeof window.encryptWithGM.encrypt}`, typeof window.encryptWithGM.encrypt === 'function' ? 'ok' : 'fail');
+      add(`  decrypt: ${typeof window.encryptWithGM.decrypt}`, typeof window.encryptWithGM.decrypt === 'function' ? 'ok' : 'fail');
+      add(`  setPeerKey: ${typeof window.encryptWithGM.setPeerKey}`, typeof window.encryptWithGM.setPeerKey === 'function' ? 'ok' : 'fail');
+      add(`  getMyPublicKey: ${typeof window.encryptWithGM.getMyPublicKey}`, typeof window.encryptWithGM.getMyPublicKey === 'function' ? 'ok' : 'fail');
+    } else {
+      add('❌ window.encryptWithGM MISSING', 'fail');
+    }
+  } catch(e) {
+    add(`Bridge ERROR: ${e.message}`, 'fail');
+  }
+
+  // =============================================
+  // TEST 7: Chinese text roundtrip (important for use case)
+  // =============================================
+  add('\n--- TEST 7: Chinese Text Roundtrip ---');
+  try {
+    const gm = new MessageGM();
+    const kp = gm.generateKeyPair();
+    const cnMsg = '你好世界！这是一条加密测试消息。🔥🚀';
+    const enc = gm.encrypt(kp.publicKey, cnMsg);
+    const dec = gm.decrypt(kp.privateKey, enc);
+    add(`Encrypted: ${enc.length} chars`, 'ok');
+    add(`Decrypted: "${dec}"`, 'ok');
+    add(`Match: ${dec === cnMsg ? '✅ YES' : '❌ NO'}`, dec === cnMsg ? 'ok' : 'fail');
+  } catch(e) {
+    add(`CN Roundtrip ERROR: ${e.message}`, 'fail');
+  }
+
+  // =============================================
+  // TEST 8: Binary/large message
+  // =============================================
+  add('\n--- TEST 8: Large Message Roundtrip ---');
+  try {
+    const gm = new MessageGM();
+    const kp = gm.generateKeyPair();
+    const largeMsg = 'X'.repeat(4096);
+    const enc = gm.encrypt(kp.publicKey, largeMsg);
+    const dec = gm.decrypt(kp.privateKey, enc);
+    const match = dec === largeMsg;
+    add(`Encrypted: ${enc.length} chars`, 'ok');
+    add(`Decrypted: ${dec.length} chars`, 'ok');
+    add(`Match: ${match ? '✅ YES' : '❌ NO'}`, match ? 'ok' : 'fail');
+  } catch(e) {
+    add(`Large msg ERROR: ${e.message}`, 'fail');
+  }
+
+  add('\n--- GM Test Suite Complete ---', 'warn');
+}
+
+setTimeout(runTests, 100);
+</script>
+</body></html>

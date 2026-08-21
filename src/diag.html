@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Diag</title>
+<style>body{font:14px monospace;padding:20px;background:#111;color:#0f0} .ok{color:#0f0} .fail{color:red} .warn{color:orange}</style>
+</head><body><h1>GM Module Diagnostics</h1>
+<pre id="log"></pre>
+<script>
+const log = document.getElementById('log');
+function add(msg, cls) { log.innerHTML += `<span class="${cls||''}">${msg}</span>\n`; }
+
+window.addEventListener('error', e => {
+  if (e.target && e.target.tagName === 'SCRIPT') add(`SCRIPT FAIL: ${e.target.src}`, 'fail');
+  else add(`JS ERROR: ${e.message} @ ${e.filename}:${e.lineno}`, 'fail');
+});
+
+// Set auth
+localStorage.setItem('fk_token', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI3ZTA3MzQxZC0zMDU4LTRiNjItODMxMC0wNDQwNmNlMTIwNWUiLCJ1c2VybmFtZSI6InRlc3RyZWczIiwiZGV2aWNlSWQiOiJjMjYyN2VmMC1mNjQ4LTRlNjItYmY2ZS1lMjkwZjNjOGJlMGMiLCJpYXQiOjE3ODIwMDMwODksImV4cCI6MTc4MjAxMDI4OX0.tBdu-9CqSgX9lebMvdpSkUlXk6Xexbd7GTk_CUVBunM');
+localStorage.setItem('fk_uid', '7e07341d-3058-4b62-8310-04406ce1205e');
+localStorage.setItem('fk_displayName', 'Test3');
+localStorage.setItem('fk_uname', 'testreg3');
+localStorage.removeItem('fk_api_url');
+
+async function diag() {
+  // Load scripts one by one
+  const scripts = [
+    {file: 'modules/gm/sm3_implementation.js', expect: 'SM3'},
+    {file: 'modules/gm/sm2-browser.bundle.js', expect: 'SM2Browser'},
+    {file: 'modules/gm/message-gm.js', expect: 'MessageGM'},
+    {file: 'p2p-core.js', expect: 'P2PNetwork'},
+  ];
+  
+  for (const s of scripts) {
+    const ok = await new Promise(resolve => {
+      const tag = document.createElement('script');
+      tag.src = s.file;
+      tag.onload = () => {
+        const exists = typeof window[s.expect] !== 'undefined';
+        add(`${exists ? '✅' : '❌'} ${s.file} (${s.expect}=${exists ? 'found' : 'MISSING'})`, exists ? 'ok' : 'fail');
+        resolve(true);
+      };
+      tag.onerror = () => {
+        add(`💥 ${s.file} LOAD ERROR`, 'fail');
+        resolve(false);
+      };
+      document.head.appendChild(tag);
+    });
+    if (!ok) break;
+  }
+  
+  // Check main.html loads
+  try {
+    const r = await fetch('main.html');
+    add(`\nmain.html: ${r.status} (${(await r.text()).length}B)`, r.ok ? 'ok' : 'fail');
+    
+    // Also check main.js and chat.js
+    for (const f of ['main.js', 'chat.js', 'websocket.js']) {
+      try {
+        const r2 = await fetch(f);
+        add(`${f}: ${r2.status} (${(await r2.text()).length}B)`, 'ok');
+      } catch(e) {
+        add(`${f}: ${e.message}`, 'fail');
+      }
+    }
+  } catch(e) {
+    add(`main.html: ${e.message}`, 'fail');
+  }
+  
+  add('\n✅ Diagnosis complete', 'warn');
+}
+
+setTimeout(diag, 200);
+</script>
+</body></html>

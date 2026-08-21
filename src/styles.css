@@ -1,0 +1,691 @@
+/* ================================================
+   FIBEMATE 登录界面样式
+   设计语言：深色极简 · Teal色系
+   参考图风格：六边形网格 + 盾牌Logo
+   ================================================ */
+
+:root {
+  --bg-primary: #0A0A0F;
+  --bg-card: #13131A;
+  --bg-input: #1A2420;
+  --bg-input-login: #162019;
+  --bg-userbar: #0F1E18;
+  --border-subtle: #2A2A32;
+  --border-focus: #00E5C3;
+  --accent: #00E5C3;
+  --accent-dark: #00B4A0;
+  --accent-dim: rgba(0, 229, 195, 0.10);
+  --accent-glow: rgba(0, 229, 195, 0.40);
+  --text-primary: #FFFFFF;
+  --text-secondary: #8A8A96;
+  --text-muted: #55555F;
+  --danger: #FF4757;
+  --font-sans: 'Inter', 'PingFang SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  min-height: 100vh;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ================================================
+   背景：六边形网格 + 渐变光效
+   ================================================ */
+
+.login-wrapper,
+.register-wrapper {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+/* 六边形网格背景 */
+.bg-grid {
+  position: absolute;
+  inset: 0;
+  background-image: 
+    radial-gradient(ellipse at center, rgba(0, 229, 195, 0.15) 0%, transparent 50%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='28' height='49' viewBox='0 0 28 49'%3E%3Cg fill-rule='evenodd'%3E%3Cg fill='%2300E5C3' fill-opacity='0.04'%3E%3Cpath d='M13.99 9.25l13 7.5v15l-13 7.5L1 31.75v-15l12.99-7.5zM3 17.9v12.7l10.99 6.34 11-6.35V17.9l-11-6.34L3 17.9zM0 15l12.98-7.5V0h-2v6.35L0 12.69v2.3zm0 18.5L12.98 41v8h-2v-6.85L0 35.81v-2.3zM15 0v7.5L27.99 15H28v-2.31h-.01L17 6.35V0h-2zm0 49v-8l12.99-7.5H28v2.31h-.01L17 42.15V49h-2z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  pointer-events: none;
+}
+
+/* 顶部渐变光效 */
+.bg-glow {
+  position: absolute;
+  top: -20%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 800px;
+  height: 500px;
+  background: radial-gradient(ellipse at center, rgba(0, 229, 195, 0.12) 0%, transparent 60%);
+  pointer-events: none;
+}
+
+/* ================================================
+   登录卡片
+   ================================================ */
+
+.login-card {
+  position: relative;
+  z-index: 1;
+  width: 320px;
+  padding: 36px 28px 28px;
+  background: linear-gradient(145deg, #111916 0%, #0D1512 100%);
+  border: 1px solid rgba(0, 180, 140, 0.10);
+  border-radius: 20px;
+  box-shadow: 
+    0 0 0 1px rgba(0, 229, 195, 0.03),
+    0 32px 80px rgba(0, 0, 0, 0.6),
+    0 0 100px rgba(0, 229, 195, 0.03);
+  animation: cardFadeIn 0.7s ease-out;
+}
+
+@keyframes cardFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(24px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* ================================================
+   Logo 区域 - 盾牌设计
+   ================================================ */
+
+.logo-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 18px;
+}
+
+.shield-logo {
+  width: 64px;
+  height: 72px;
+  margin-bottom: 18px;
+  position: relative;
+  z-index: 1;
+  animation: shieldGlow 3s ease-in-out infinite;
+}
+
+.logo-bg-circle {
+  position: absolute;
+  width: 160px;
+  height: 160px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0,229,195,0.18) 0%, transparent 70%);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -80%);
+  pointer-events: none;
+  animation: logoBgPulse 3s ease-in-out infinite;
+  z-index: 0;
+}
+
+.shield-logo svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 0 16px var(--accent-glow));
+}
+
+@keyframes shieldGlow {
+  0%, 100% {
+    filter: drop-shadow(0 0 12px rgba(0,229,195,0.3)) drop-shadow(0 4px 16px rgba(0,229,195,0.15));
+    opacity: 0.88;
+  }
+  50% {
+    filter: drop-shadow(0 0 28px rgba(0,229,195,0.65)) drop-shadow(0 4px 28px rgba(0,229,195,0.4));
+    opacity: 1;
+  }
+}
+
+@keyframes logoBgPulse {
+  0%, 100% {
+    opacity: 0.06;
+    transform: scale(0.95);
+  }
+  50% {
+    opacity: 0.14;
+    transform: scale(1.05);
+  }
+}
+
+.brand-name {
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: 6px;
+  color: var(--text-primary);
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+
+.brand-sub {
+  font-size: 11px;
+  color: var(--text-secondary);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+/* ================================================
+   安全徽章
+   ================================================ */
+
+.security-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 24px;
+  padding: 5px 12px;
+  border: 1px solid rgba(0, 229, 195, 0.20);
+  border-radius: 12px;
+  background: var(--accent-dim);
+  font-size: 10px;
+  color: var(--accent);
+  letter-spacing: 0.8px;
+  width: fit-content;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+/* ================================================
+   表单 - 无边框输入框
+   ================================================ */
+
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.input-group {
+  position: relative;
+}
+
+.input-group input {
+  width: 100%;
+  padding: 13px 14px;
+  background: var(--bg-input-login);
+  border: 1px solid rgba(0, 180, 140, 0.08);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: var(--font-sans);
+  outline: none;
+  transition: background 0.2s, box-shadow 0.2s, border-color 0.2s;
+}
+
+.input-group input::placeholder {
+  color: var(--text-muted);
+}
+
+.input-group input:focus {
+  background: #1A2B23;
+  border-color: rgba(0, 229, 195, 0.25);
+  box-shadow: 0 0 0 2px var(--accent-dim), inset 0 0 20px rgba(0, 180, 140, 0.04);
+}
+
+/* ================================================
+   主按钮 - 渐变风格
+   ================================================ */
+
+.btn-primary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 13px;
+  margin-top: 6px;
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%);
+  border: none;
+  border-radius: 8px;
+  color: #0A0A0F;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: all 0.25s;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+.btn-primary:hover {
+  background: linear-gradient(135deg, #00F5D0 0%, var(--accent) 100%);
+  box-shadow: 0 6px 24px var(--accent-glow);
+  transform: translateY(-2px);
+}
+
+.btn-primary:active {
+  transform: translateY(0);
+  box-shadow: 0 2px 8px rgba(0, 229, 195, 0.3);
+}
+
+.btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  transform: none;
+}
+
+/* ================================================
+   次要按钮
+   ================================================ */
+
+.btn-text {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  padding: 8px;
+  transition: color 0.2s;
+  width: 100%;
+  text-align: center;
+  letter-spacing: 0.5px;
+}
+
+.btn-text:hover {
+  color: var(--accent);
+}
+
+/* ================================================
+   分隔线
+   ================================================ */
+
+.divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0;
+}
+
+.divider span:not(.divider-text) {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border-subtle), transparent);
+}
+
+.divider-text {
+  font-size: 10px;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+}
+
+/* ================================================
+   注册入口
+   ================================================ */
+
+.register-link {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+.register-link a {
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 500;
+  transition: opacity 0.2s;
+  letter-spacing: 0.3px;
+}
+
+.register-link a:hover {
+  opacity: 0.75;
+}
+
+/* ================================================
+   用户协议链接
+   ================================================ */
+.agreement-links {
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.6;
+}
+
+.agreement-links a {
+  color: var(--text-secondary);
+  text-decoration: none;
+  font-size: 11px;
+  transition: color 0.2s;
+}
+
+.agreement-links a:hover {
+  color: var(--accent);
+}
+
+/* ================================================
+   底部安全标识
+   ================================================ */
+
+.footer-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  margin-top: 20px;
+  font-size: 9px;
+  color: var(--text-muted);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+/* ================================================
+   Toast 提示
+   ================================================ */
+
+.toast {
+  position: fixed;
+  bottom: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 20px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--text-primary);
+  box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  z-index: 1000;
+  animation: toastIn 0.3s ease-out;
+  letter-spacing: 0.3px;
+}
+
+.toast.error {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.toast.success {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* ================================================
+   响应式
+   ================================================ */
+
+@media (max-width: 380px) {
+  .login-card {
+    width: calc(100vw - 28px);
+    padding: 28px 22px 22px;
+    border-radius: 16px;
+  }
+  
+  .brand-name {
+    font-size: 22px;
+    letter-spacing: 4px;
+  }
+}
+
+/* ================================================
+   更多登录方式下拉
+   ================================================ */
+
+.more-options-panel {
+  display: none;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.04);
+  animation: fadeIn 0.2s ease;
+}
+
+.more-options-panel.show {
+  display: flex;
+}
+
+.more-option-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px;
+  background: var(--bg-input);
+  border: none;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-family: var(--font-sans);
+  cursor: pointer;
+  transition: all 0.2s;
+  letter-spacing: 0.3px;
+}
+
+.more-option-btn:hover {
+  background: #242430;
+  color: var(--accent);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ================================================
+   ZK Auth Styles
+   ================================================ */
+
+.btn-secondary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 13px;
+  background: rgba(0, 229, 195, 0.08);
+  border: 1px solid rgba(0, 229, 195, 0.25);
+  border-radius: 12px;
+  color: var(--accent);
+  font-size: 12px;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  transition: all 0.25s;
+  margin-top: 8px;
+}
+
+.btn-secondary:hover {
+  background: rgba(0, 229, 195, 0.15);
+  border-color: rgba(0, 229, 195, 0.5);
+}
+
+.btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ZK Progress */
+.zk-badge {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 16px;
+  background: rgba(0, 229, 195, 0.05);
+  border: 1px solid rgba(0, 229, 195, 0.15);
+  border-radius: 10px;
+  margin-bottom: 12px;
+  font-size: 11px;
+  color: rgba(0, 229, 195, 0.7);
+  font-family: 'Courier New', monospace;
+  animation: fadeIn 0.3s ease;
+}
+
+.zk-step {
+  transition: color 0.3s;
+}
+
+/* ZK Toggle */
+.zk-toggle {
+  margin: 10px 0;
+}
+
+.toggle-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: var(--font-sans);
+}
+
+.toggle-label input[type="checkbox"] {
+  display: none;
+}
+
+.toggle-switch {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  background: var(--bg-input);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  transition: all 0.25s;
+  flex-shrink: 0;
+}
+
+.toggle-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: var(--text-secondary);
+  border-radius: 50%;
+  transition: all 0.25s;
+}
+
+.toggle-label input[type="checkbox"]:checked + .toggle-switch {
+  background: rgba(0, 229, 195, 0.3);
+  border-color: var(--accent);
+}
+
+.toggle-label input[type="checkbox"]:checked + .toggle-switch::after {
+  left: 18px;
+  background: var(--accent);
+}
+
+/* Error Message */
+.error-msg {
+  padding: 8px 12px;
+  background: rgba(255, 80, 80, 0.1);
+  border: 1px solid rgba(255, 80, 80, 0.3);
+  border-radius: 8px;
+  color: #ff7070;
+  font-size: 11px;
+  font-family: var(--font-sans);
+  margin-top: 8px;
+  animation: fadeIn 0.2s ease;
+}
+
+/* ================================================
+   登录 Tab 切换按钮
+   ================================================ */
+.login-tabs {
+  display: flex;
+  gap: 4px;
+  background: rgba(255,255,255,0.05);
+  border-radius: 10px;
+  padding: 4px;
+  margin-bottom: 18px;
+}
+
+.tab-btn {
+  flex: 1;
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  letter-spacing: 0.3px;
+}
+
+.tab-btn:hover {
+  color: var(--text-primary);
+  background: rgba(255,255,255,0.05);
+}
+
+.tab-btn.active {
+  background: #0d3b39;
+  color: var(--accent);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4), 0 0 12px rgba(0,229,195,0.1);
+}
+
+/* Toast */
+.toast {
+  position: fixed;
+  bottom: 30px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 20px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  z-index: 1000;
+  max-width: 90%;
+  text-align: center;
+  animation: slideUp 0.3s ease;
+}
+
+.toast.info {
+  background: rgba(0, 229, 195, 0.15);
+  border: 1px solid rgba(0, 229, 195, 0.3);
+  color: var(--accent);
+}
+
+.toast.success {
+  background: rgba(0, 200, 100, 0.15);
+  border: 1px solid rgba(0, 200, 100, 0.3);
+  color: #00e57a;
+}
+
+.toast.error {
+  background: rgba(255, 80, 80, 0.15);
+  border: 1px solid rgba(255, 80, 80, 0.3);
+  color: #ff7070;
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translate(-50%, 20px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}

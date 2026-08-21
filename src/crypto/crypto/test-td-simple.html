@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><title>ML-KEM-TD Quick Test</title></head>
+<body style="font-family:monospace;white-space:pre;padding:20px;background:#1a1a2e;color:#0f0;">
+<h2>ML-KEM-768 Time-Domain Test</h2>
+<div id="out">Loading...</div>
+<script src="ml-kem-768-td.js"></script>
+<script>
+const out = document.getElementById('out');
+function log(msg) { out.textContent += msg + '\n'; }
+out.textContent = '';
+
+function eq(a,b) {
+    if(a.length!==b.length)return false;
+    for(let i=0;i<a.length;i++)if(a[i]!==b[i])return false;
+    return true;
+}
+
+log('=== ML-KEM-768 Time-Domain ===\n');
+
+// Test 1: KeyGen
+log('Test 1: Key Generation');
+try {
+    const kp = MLKEM768.generateKeypair();
+    log(`  pk: ${kp.publicKey.length} bytes (exp ${MLKEM768.PUBLIC_KEY_BYTES}) ${kp.publicKey.length===MLKEM768.PUBLIC_KEY_BYTES?'OK':'FAIL'}`);
+    log(`  sk: ${kp.secretKey.length} bytes (exp ${MLKEM768.SECRET_KEY_BYTES}) ${kp.secretKey.length===MLKEM768.SECRET_KEY_BYTES?'OK':'FAIL'}`);
+} catch(e) { log(`  ERROR: ${e.message}`); }
+
+// Test 2: Encaps/Decaps
+log('\nTest 2: Encapsulate/Decapsulate');
+try {
+    const kp = MLKEM768.generateKeypair();
+    const enc = MLKEM768.encapsulate(kp.publicKey);
+    log(`  ct: ${enc.ciphertext.length} bytes (exp ${MLKEM768.CIPHERTEXT_BYTES}) ${enc.ciphertext.length===MLKEM768.CIPHERTEXT_BYTES?'OK':'FAIL'}`);
+    log(`  ss: ${enc.sharedSecret.length} bytes (exp ${MLKEM768.SHARED_SECRET_BYTES}) ${enc.sharedSecret.length===MLKEM768.SHARED_SECRET_BYTES?'OK':'FAIL'}`);
+    
+    const t0 = performance.now();
+    const ss2 = MLKEM768.decapsulate(kp.secretKey, enc.ciphertext);
+    const t1 = performance.now();
+    const match = eq(enc.sharedSecret, ss2);
+    log(`  match: ${match?'OK':'FAIL'} (${(t1-t0).toFixed(1)}ms)`);
+    if(!match) {
+        log('  expected: '+Array.from(enc.sharedSecret).map(b=>b.toString(16).padStart(2,'0')).join(''));
+        log('  got:      '+Array.from(ss2).map(b=>b.toString(16).padStart(2,'0')).join(''));
+    }
+} catch(e) { log(`  ERROR: ${e.message}`); console.error(e); }
+
+// Test 3: 5 iterations
+log('\nTest 3: 5 Iterations');
+let pass=0;
+for(let i=0;i<5;i++){
+    try {
+        const kp=MLKEM768.generateKeypair();
+        const enc=MLKEM768.encapsulate(kp.publicKey);
+        const ss2=MLKEM768.decapsulate(kp.secretKey, enc.ciphertext);
+        if(eq(enc.sharedSecret, ss2)) pass++;
+    } catch(e) { log(`  iter ${i}: ERROR`); }
+}
+log(`  passed: ${pass}/5 ${pass===5?'OK':'FAIL'}`);
+
+// Test 4: Wrong ct
+log('\nTest 4: Wrong ciphertext');
+try {
+    const kp=MLKEM768.generateKeypair();
+    const enc=MLKEM768.encapsulate(kp.publicKey);
+    const wrong=new Uint8Array(enc.ciphertext);
+    wrong[0]^=0xFF;
+    const ssWrong=MLKEM768.decapsulate(kp.secretKey, wrong);
+    const diff=!eq(enc.sharedSecret, ssWrong);
+    log(`  different ss: ${diff?'OK':'FAIL'}`);
+} catch(e) { log(`  ERROR: ${e.message}`); }
+
+log('\n=== Done ===');
+</script>
+</body>
+</html>

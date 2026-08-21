@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>WASM Integration E2E Test</title>
+<script src="crypto/crypto/ml-kem-768.js"></script>
+<script src="crypto/crypto/ml-kem-768-wrapper.js"></script>
+<style>
+body { font-family: monospace; background:#0a0a0f; color:#00E5C3; padding:24px; }
+.pass { color:#00E5C3; } .fail { color:#ff4444; } .warn { color:#ffaa00; }
+.result { margin:4px 0; padding:4px 8px; border-radius:4px; }
+</style>
+</head>
+<body>
+<h1>ML-KEM-768 WASM Integration E2E</h1>
+<div id="status">⏳ Loading...</div>
+<div id="results"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function log(className, msg) {
+  const div = document.createElement('div');
+  div.className = 'result ' + className;
+  div.textContent = msg;
+  $('results').appendChild(div);
+}
+
+(async () => {
+  try {
+    $('status').textContent = '⏳ Initializing ML-KEM-768...';
+
+    // Wait for wrapper auto-init
+    await new Promise(r => setTimeout(r, 2000));
+
+    const m = window.MLKEM768;
+    if (!m) { log('fail', 'MLKEM768 not on window'); return; }
+
+    // 1. Status
+    const status = m.getStatus();
+    $('status').textContent = status.engine === 'wasm' 
+      ? '✅ WASM LOADED (pqc_kyber v0.7.1)' 
+      : '⚠️ Pure JS fallback';
+    log('pass', 'Engine: ' + status.engine.toUpperCase());
+    log('pass', 'Initialized: ' + status.initialized);
+
+    // 2. API surface
+    log('pass', 'init: ' + (typeof m.init === 'function' ? '✓' : '✗'));
+    log('pass', 'keygen: ' + (typeof m.keygen === 'function' ? '✓' : '✗'));
+    log('pass', 'encaps: ' + (typeof m.encaps === 'function' ? '✓' : '✗'));
+    log('pass', 'decaps: ' + (typeof m.decaps === 'function' ? '✓' : '✗'));
+
+    // 3. Key generation
+    const kp = m.keygen();
+    const pkOk = kp.publicKey.length === 1184;
+    const skOk = kp.secretKey.length === 2400;
+    log(pkOk && skOk ? 'pass' : 'fail', 
+      'Keys: PK=' + kp.publicKey.length + ' SK=' + kp.secretKey.length);
+
+    // 4. Encaps/Decaps roundtrip
+    const enc = m.encaps(kp.publicKey);
+    const dec = m.decaps(kp.secretKey, enc.ciphertext);
+    const ctOk = enc.ciphertext.length === 1088;
+    const ssOk = enc.sharedSecret.length === 32;
+    log(ctOk && ssOk ? 'pass' : 'fail',
+      'Encaps: CT=' + enc.ciphertext.length + ' SS=' + enc.sharedSecret.length);
+
+    // Compare shared secrets
+    const match = Array.from(enc.sharedSecret).every((b,i) => b === dec[i]);
+    log(match ? 'pass' : 'fail', 
+      'Roundtrip: ' + (match ? 'SS MATCH ✓' : 'SS MISMATCH ✗'));
+
+    // 5. Multi roundtrip (50×)
+    let ok = 0;
+    for (let i = 0; i < 50; i++) {
+      const kp2 = m.keygen();
+      const enc2 = m.encaps(kp2.publicKey);
+      const dec2 = m.decaps(kp2.secretKey, enc2.ciphertext);
+      if (Array.from(enc2.sharedSecret).every((b,j) => b === dec2[j])) ok++;
+    }
+    log(ok === 50 ? 'pass' : 'fail', '50× roundtrip: ' + ok + '/50');
+
+    // 6. Performance
+    const trials = 100;
+    let kgT = 0, encT = 0, decT = 0;
+    const refKp = m.keygen();
+    const refEnc = m.encaps(refKp.publicKey);
+    for (let i = 0; i < trials; i++) {
+      const t0 = performance.now();
+      m.keygen();
+      kgT += performance.now() - t0;
+      
+      const t1 = performance.now();
+      m.encaps(refKp.publicKey);
+      encT += performance.now() - t1;
+      
+      const t2 = performance.now();
+      m.decaps(refKp.secretKey, refEnc.ciphertext);
+      decT += performance.now() - t2;
+    }
+    log('pass', 'Keygen: ' + (kgT/trials).toFixed(2) + 'ms avg (' + trials + '×)');
+    log('pass', 'Encaps: ' + (encT/trials).toFixed(2) + 'ms avg (' + trials + '×)');
+    log('pass', 'Decaps: ' + (decT/trials).toFixed(2) + 'ms avg (' + trials + '×)');
+
+    // 7. hybridCombine (WASM only)
+    if (status.engine === 'wasm' && typeof m.hybridCombine === 'function') {
+      const combined = m.hybridCombine(enc.sharedSecret, new Uint8Array(32));
+      log('pass', 'hybridCombine: ' + combined.length + ' bytes');
+    } else {
+      log('warn', 'hybridCombine: WASM only, skipped');
+    }
+
+    // Summary
+    const allPass = match && ok === 50 && pkOk && skOk && ctOk && ssOk;
+    $('status').textContent = allPass 
+      ? '🎉 ALL TESTS PASSED — Engine: ' + status.engine.toUpperCase()
+      : '❌ FAILURES DETECTED';
+    $('status').style.color = allPass ? '#00E5C3' : '#ff4444';
+
+  } catch (e) {
+    log('fail', 'ERROR: ' + e.message);
+    $('status').textContent = '💥 CRASH: ' + e.message;
+  }
+})();
+</script>
+</body>
+</html>

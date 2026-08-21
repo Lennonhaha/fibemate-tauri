@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FIBEMATE 卫星网络适配测试</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0a0a0f;
+      color: #fff;
+      padding: 20px;
+      line-height: 1.6;
+    }
+    
+    h1 {
+      color: #00E5C3;
+      margin-bottom: 10px;
+    }
+    
+    .subtitle {
+      color: #888;
+      margin-bottom: 30px;
+    }
+    
+    .section {
+      background: #1a1a24;
+      border-radius: 12px;
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    
+    .section h2 {
+      color: #00E5C3;
+      margin-bottom: 15px;
+      font-size: 18px;
+    }
+    
+    .btn {
+      background: linear-gradient(135deg, #00E5C3, #00B4A0);
+      color: #000;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+      margin-right: 10px;
+      margin-bottom: 10px;
+    }
+    
+    .btn:hover { opacity: 0.9; }
+    
+    .btn-secondary {
+      background: #333;
+      color: #fff;
+    }
+    
+    .btn-danger {
+      background: #f44336;
+      color: #fff;
+    }
+    
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+      padding: 10px;
+      background: #0a0a0f;
+      border-radius: 8px;
+    }
+    
+    .status-indicator {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #333;
+    }
+    
+    .status-indicator.active { background: #00E5C3; box-shadow: 0 0 10px rgba(0, 229, 195, 0.5); }
+    .status-indicator.warning { background: #ff9800; }
+    .status-indicator.error { background: #f44336; }
+    
+    .metric {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid #333;
+    }
+    
+    .metric:last-child { border-bottom: none; }
+    .metric-label { color: #888; }
+    .metric-value { color: #fff; font-weight: 600; }
+    
+    .log {
+      background: #0a0a0f;
+      border-radius: 8px;
+      padding: 15px;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      max-height: 400px;
+      overflow-y: auto;
+      margin-top: 15px;
+    }
+    
+    .log-entry {
+      margin-bottom: 5px;
+      color: #888;
+    }
+    
+    .log-entry.info { color: #00E5C3; }
+    .log-entry.warning { color: #ff9800; }
+    .log-entry.error { color: #f44336; }
+    .log-entry.success { color: #4CAF50; }
+    
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 20px;
+    }
+    
+    .test-result {
+      padding: 10px;
+      margin: 5px 0;
+      border-radius: 6px;
+      background: #0a0a0f;
+    }
+    
+    .test-result.pass { border-left: 3px solid #4CAF50; }
+    .test-result.fail { border-left: 3px solid #f44336; }
+    
+    .progress-bar {
+      width: 100%;
+      height: 20px;
+      background: #333;
+      border-radius: 10px;
+      overflow: hidden;
+      margin-top: 10px;
+    }
+    
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #00E5C3, #00B4A0);
+      transition: width 0.3s ease;
+    }
+  </style>
+</head>
+<body>
+  <h1>🛰️ FIBEMATE 卫星网络适配测试</h1>
+  <p class="subtitle">Week 3: 真实环境测试 - 验证所有功能模块</p>
+
+  <!-- 测试控制 -->
+  <div class="section">
+    <h2>测试控制</h2>
+    <button class="btn" onclick="runAllTests()">运行全部测试</button>
+    <button class="btn btn-secondary" onclick="runNetworkTest()">网络检测测试</button>
+    <button class="btn btn-secondary" onclick="runSatelliteModeTest()">卫星模式测试</button>
+    <button class="btn btn-secondary" onclick="runFECTest()">FEC测试</button>
+    <button class="btn btn-secondary" onclick="runReconnectTest()">重连测试</button>
+    <button class="btn btn-secondary" onclick="runPerformanceTest()">性能测试</button>
+    <button class="btn btn-danger" onclick="clearLog()">清空日志</button>
+  </div>
+
+  <!-- 实时状态 -->
+  <div class="grid">
+    <div class="section">
+      <h2>网络状态</h2>
+      <div class="status">
+        <div class="status-indicator" id="networkStatus"></div>
+        <span id="networkType">未检测</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">RTT</span>
+        <span class="metric-value" id="rttValue">-</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">丢包率</span>
+        <span class="metric-value" id="lossValue">-</span>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>卫星模式</h2>
+      <div class="status">
+        <div class="status-indicator" id="satelliteStatus"></div>
+        <span id="satelliteMode">未激活</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">混合网跳数</span>
+        <span class="metric-value" id="hopsValue">5</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">FEC冗余</span>
+        <span class="metric-value" id="fecValue">关闭</span>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>测试结果</h2>
+      <div class="metric">
+        <span class="metric-label">通过</span>
+        <span class="metric-value" id="passedCount">0</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">失败</span>
+        <span class="metric-value" id="failedCount">0</span>
+      </div>
+      <div class="metric">
+        <span class="metric-label">成功率</span>
+        <span class="metric-value" id="successRate">0%</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressBar" style="width: 0%"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 详细结果 -->
+  <div class="section">
+    <h2>详细结果</h2>
+    <div id="testResults"></div>
+  </div>
+
+  <!-- 日志 -->
+  <div class="section">
+    <h2>运行日志</h2>
+    <div class="log" id="logContainer">
+      <div class="log-entry info">点击"运行全部测试"开始测试...</div>
+    </div>
+  </div>
+
+  <!-- 引入模块 -->
+  <script src="modules/satellite/network-detector.js"></script>
+  <script src="modules/satellite/satellite-mode.js"></script>
+  <script src="modules/satellite/fec.js"></script>
+  <script src="modules/satellite/rapid-reconnect.js"></script>
+  <script src="modules/satellite/satellite-performance.js"></script>
+  <script src="modules/satellite/satellite-test-runner.js"></script>
+
+  <script>
+    // 日志函数
+    function log(message, type = 'info') {
+      const container = document.getElementById('logContainer');
+      const entry = document.createElement('div');
+      entry.className = `log-entry ${type}`;
+      entry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+      container.appendChild(entry);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    // 更新统计
+    function updateStats(passed, failed) {
+      document.getElementById('passedCount').textContent = passed;
+      document.getElementById('failedCount').textContent = failed;
+      const total = passed + failed;
+      const rate = total > 0 ? Math.round(passed / total * 100) : 0;
+      document.getElementById('successRate').textContent = rate + '%';
+      document.getElementById('progressBar').style.width = rate + '%';
+    }
+
+    // 添加测试结果
+    function addTestResult(name, success, details) {
+      const container = document.getElementById('testResults');
+      const div = document.createElement('div');
+      div.className = `test-result ${success ? 'pass' : 'fail'}`;
+      div.innerHTML = `<strong>${success ? '✅' : '❌'} ${name}</strong><br><small>${details}</small>`;
+      container.appendChild(div);
+    }
+
+    // 清空日志
+    function clearLog() {
+      document.getElementById('logContainer').innerHTML = '';
+      document.getElementById('testResults').innerHTML = '';
+      updateStats(0, 0);
+      log('日志已清空');
+    }
+
+    // 运行全部测试
+    async function runAllTests() {
+      clearLog();
+      log('开始运行全部测试...', 'info');
+      
+      const runner = new SatelliteTestRunner({ debug: true });
+      await runner.runAllTests();
+      
+      const report = runner.generateReport();
+      updateStats(report.totalPassed, report.totalTests - report.totalPassed);
+      
+      // 显示详细结果
+      Object.entries(runner.results).forEach(([name, result]) => {
+        if (result) {
+          addTestResult(
+            name,
+            result.success,
+            `${result.passed}/${result.total} passed`
+          );
+        }
+      });
+      
+      log(`测试完成: ${report.totalPassed}/${report.totalTests} (${report.rate}%)`, report.rate == 100 ? 'success' : 'warning');
+    }
+
+    // 单独测试
+    async function runNetworkTest() {
+      log('运行网络检测测试...', 'info');
+      const runner = new SatelliteTestRunner();
+      await runner.testNetworkDetection();
+      const result = runner.results.networkDetection;
+      addTestResult('Network Detection', result.success, `${result.passed}/${result.total} passed`);
+      updateStats(result.passed, result.total - result.passed);
+    }
+
+    async function runSatelliteModeTest() {
+      log('运行卫星模式测试...', 'info');
+      const runner = new SatelliteTestRunner();
+      await runner.testSatelliteMode();
+      const result = runner.results.satelliteMode;
+      addTestResult('Satellite Mode', result.success, `${result.passed}/${result.total} passed`);
+      updateStats(result.passed, result.total - result.passed);
+    }
+
+    async function runFECTest() {
+      log('运行FEC测试...', 'info');
+      const runner = new SatelliteTestRunner();
+      await runner.testFEC();
+      const result = runner.results.fec;
+      addTestResult('FEC', result.success, `${result.passed}/${result.total} passed`);
+      updateStats(result.passed, result.total - result.passed);
+    }
+
+    async function runReconnectTest() {
+      log('运行重连测试...', 'info');
+      const runner = new SatelliteTestRunner();
+      await runner.testReconnect();
+      const result = runner.results.reconnect;
+      addTestResult('Reconnect', result.success, `${result.passed}/${result.total} passed`);
+      updateStats(result.passed, result.total - result.passed);
+    }
+
+    async function runPerformanceTest() {
+      log('运行性能测试...', 'info');
+      const runner = new SatelliteTestRunner();
+      await runner.testPerformance();
+      const result = runner.results.performance;
+      addTestResult('Performance', result.success, `${result.passed}/${result.total} passed`);
+      updateStats(result.passed, result.total - result.passed);
+    }
+
+    // 初始化
+    log('FIBEMATE 卫星网络适配测试页面已加载');
+    log('模块加载状态:');
+    log(`  NetworkDetector: ${typeof NetworkDetector !== 'undefined' ? '✅' : '❌'}`);
+    log(`  SatelliteMode: ${typeof SatelliteMode !== 'undefined' ? '✅' : '❌'}`);
+    log(`  ForwardErrorCorrection: ${typeof ForwardErrorCorrection !== 'undefined' ? '✅' : '❌'}`);
+    log(`  RapidReconnect: ${typeof RapidReconnect !== 'undefined' ? '✅' : '❌'}`);
+    log(`  SatellitePerformance: ${typeof SatellitePerformance !== 'undefined' ? '✅' : '❌'}`);
+    log(`  SatelliteTestRunner: ${typeof SatelliteTestRunner !== 'undefined' ? '✅' : '❌'}`);
+  </script>
+</body>
+</html>

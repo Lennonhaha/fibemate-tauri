@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>NTT Verification</title>
+</head>
+<body>
+    <h2>NTT Verification</h2>
+    <pre id="output"></pre>
+
+<script src="ml-kem-768.js"></script>
+<script>
+function log(msg) {
+    document.getElementById('output').textContent += msg + '\n';
+}
+
+// Test 1: NTT round trip
+log('=== Test 1: NTT Round Trip ===');
+const f = new Int16Array(256);
+for(let i=0; i<256; i++) f[i] = i % 10;
+const f_orig = Array.from(f);
+
+log(`Original f[0..5]: ${f.slice(0,6)}`);
+
+ntt(f);
+log(`After NTT f[0..5]: ${f.slice(0,6)}`);
+
+invNTT(f);
+log(`After invNTT f[0..5]: ${f.slice(0,6)}`);
+
+let diff = 0;
+for(let i=0; i<256; i++) {
+    const d = ((f[i] - f_orig[i]) % 3329 + 3329) % 3329;
+    if(d !== 0) diff++;
+}
+log(`Differences after round trip: ${diff}/256`);
+
+// Test 2: NTT of zero vector
+log('\n=== Test 2: NTT of [1,0,0,...] ===');
+const delta = new Int16Array(256);
+delta[0] = 1;
+ntt(delta);
+log(`NTT([1,0,0,...])[0..5]: ${delta.slice(0,6)}`);
+log(`Expected: all 1s (since sum of 1*omega^0 = 1)`);
+
+// Test 3: Verify OMEGA is primitive 512th root
+log('\n=== Test 3: OMEGA^512 mod Q ===');
+let omega_512 = 1;
+for(let i=0; i<512; i++) omega_512 = (omega_512 * 17) % 3329;
+log(`OMEGA^512 mod 3329 = ${omega_512} (should be 1)`);
+
+let omega_256 = 1;
+for(let i=0; i<256; i++) omega_256 = (omega_256 * 17) % 3329;
+log(`OMEGA^256 mod 3329 = ${omega_256} (should be 3328 = -1)`);
+
+// Test 4: NTT matrix verification
+log('\n=== Test 4: NTT Matrix Check ===');
+log(`NTT_MATRIX[0][0] = ${NTT_MATRIX[0][0]} (should be 1)`);
+log(`NTT_MATRIX[0][1] = ${NTT_MATRIX[0][1]} (should be 1)`);
+log(`NTT_MATRIX[1][0] = ${NTT_MATRIX[1][0]} (should be 1)`);
+log(`NTT_MATRIX[1][1] = ${NTT_MATRIX[1][1]} (should be 17)`);
+
+// Test 5: Simple polynomial multiplication
+log('\n=== Test 5: polyMul ===');
+const a = new Int16Array(256);
+a[0] = 1; a[1] = 2;
+const b = new Int16Array(256);
+b[0] = 3; b[1] = 4;
+const c = polyMul(a, b);
+log(`polyMul([1,2,0,...], [3,4,0,...])[0..3]: ${c.slice(0,4)}`);
+log(`Expected: [3, 10, 8, 0] (mod 3329)`);
+log(`Actual check: 3=${c[0]}, 1*4+2*3=${c[1]}, 2*4=${c[2]}`);
+
+log('\n=== Done ===');
+</script>
+</body>
+</html>

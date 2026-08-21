@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>ML-KEM-768 Fix Verification</title>
+    <style>
+        body { font-family: 'Courier New', monospace; background: #0a0a0f; color: #00E5C3; padding: 20px; }
+        .pass { color: #00E5C3; }
+        .fail { color: #FF4757; }
+        .info { color: #FFA502; }
+        pre { font-size: 11px; word-break: break-all; }
+    </style>
+</head>
+<body>
+    <h1>ML-KEM-768 Fix Verification</h1>
+    <div id="results"></div>
+    <script src="ml-kem-768.js"></script>
+    <script>
+        const results = document.getElementById('results');
+        function log(msg, cls='info') {
+            const div = document.createElement('div');
+            div.className = cls;
+            div.textContent = `[${cls.toUpperCase()}] ${msg}`;
+            results.appendChild(div);
+        }
+
+        async function runTests() {
+            log('Testing ML-KEM-768 after fix...', 'info');
+            
+            // Test 1: Single round
+            let kp, enc, ss2;
+            try {
+                kp = MLKEM768.generateKeypair();
+                enc = MLKEM768.encapsulate(kp.publicKey);
+                ss2 = MLKEM768.decapsulate(kp.secretKey, enc.ciphertext);
+                
+                const match = enc.sharedSecret.every((b, i) => b === ss2[i]);
+                if (match) {
+                    log('Single round: SHARED SECRET MATCH!', 'pass');
+                } else {
+                    log('Single round: MISMATCH', 'fail');
+                    log(`Expected: ${Array.from(enc.sharedSecret).map(b=>b.toString(16).padStart(2,'0')).slice(0,8).join('')}...`, 'fail');
+                    log(`Got:      ${Array.from(ss2).map(b=>b.toString(16).padStart(2,'0')).slice(0,8).join('')}...`, 'fail');
+                }
+            } catch(e) {
+                log(`Error: ${e.message}\n${e.stack}`, 'fail');
+                return;
+            }
+
+            // Test 2: Multiple rounds
+            let passCount = 0;
+            const total = 20;
+            for (let i = 0; i < total; i++) {
+                try {
+                    const kp2 = MLKEM768.generateKeypair();
+                    const enc2 = MLKEM768.encapsulate(kp2.publicKey);
+                    const ss3 = MLKEM768.decapsulate(kp2.secretKey, enc2.ciphertext);
+                    if (enc2.sharedSecret.every((b, j) => b === ss3[j])) passCount++;
+                } catch(e) {
+                    log(`Round ${i} error: ${e.message}`, 'fail');
+                }
+            }
+            log(`${total} rounds: ${passCount}/${total} match`, passCount === total ? 'pass' : 'fail');
+
+            // Test 3: Same keypair, multiple encaps
+            let sameKpPass = 0;
+            const sameKpTotal = 10;
+            for (let i = 0; i < sameKpTotal; i++) {
+                try {
+                    const enc3 = MLKEM768.encapsulate(kp.publicKey);
+                    const ss4 = MLKEM768.decapsulate(kp.secretKey, enc3.ciphertext);
+                    if (enc3.sharedSecret.every((b, j) => b === ss4[j])) sameKpPass++;
+                } catch(e) {
+                    log(`Same KP round ${i} error: ${e.message}`, 'fail');
+                }
+            }
+            log(`Same keypair ${sameKpTotal}x: ${sameKpPass}/${sameKpTotal} match`, sameKpPass === sameKpTotal ? 'pass' : 'fail');
+
+            log('Done.', passCount === total && sameKpPass === sameKpTotal ? 'pass' : 'info');
+        }
+
+        runTests().catch(e => log(`Fatal error: ${e.message}\n${e.stack}`, 'fail'));
+    </script>
+</body>
+</html>

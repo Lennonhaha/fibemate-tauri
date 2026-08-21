@@ -1,0 +1,41 @@
+# --- Node ---
+node_modules/
+dist/
+*.log
+build-log.txt
+_build.log
+
+# --- Tauri / Rust 构建产物 ---
+src-tauri/target/
+src-tauri/gen/
+src-tauri/.cargo-audit-db/
+src-tauri/.cargo-audit-db..lock
+
+# --- 诊断/临时脚本（非项目源码）---
+diag*.js
+_diag*.js
+_debug.js
+check_index.js
+stress-test.js
+test_syntax.js
+settings-shot.png
+
+# --- 历史备份/损坏文件（不入库）---
+*.bak
+*.bak-*
+*.backup-*
+*.corrupted
+_fix-backup-*/
+
+# --- 敏感/环境文件 ---
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+
+# --- 系统 ---
+.DS_Store
+Thumbs.db

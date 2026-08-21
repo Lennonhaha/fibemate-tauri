@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>ML-KEM Wrapper Verification</title>
+    <style>
+        body { font-family: monospace; padding: 20px; background: #1a1a2e; color: #eee; }
+        .pass { color: #4f4; }
+        .fail { color: #f44; }
+        .info { color: #88f; }
+        pre { background: #16213e; padding: 10px; border-radius: 5px; }
+    </style>
+</head>
+<body>
+    <h1>ML-KEM-768 Wrapper Verification</h1>
+    <div id="output"></div>
+    
+    <script src="crypto/crypto/ml-kem-768.js"></script>
+    <script src="crypto/crypto/ml-kem-768-wrapper.js"></script>
+    <script>
+        const out = document.getElementById('output');
+        function log(msg, cls='') {
+            out.innerHTML += `<div class="${cls}">${msg}</div>`;
+        }
+
+        async function runTests() {
+            log('=== ML-KEM-768 Wrapper Verification ===', 'info');
+            log('');
+
+            // Test 1: Wrapper initialization
+            log('Test 1: Wrapper Initialization...');
+            try {
+                await MLKEM768Wrapper.init();
+                log(`  Initialized: ${MLKEM768Wrapper.initialized}`, MLKEM768Wrapper.initialized ? 'pass' : 'fail');
+            } catch(e) {
+                log(`  ERROR: ${e.message}`, 'fail');
+            }
+
+            // Test 2: KeyGen via wrapper
+            log('');
+            log('Test 2: KeyGen via Wrapper...');
+            try {
+                const kp = MLKEM768Wrapper.keygen();
+                log(`  public_key: ${kp.public_key.length} bytes (expected 1184)`, 
+                    kp.public_key.length === 1184 ? 'pass' : 'fail');
+                log(`  secret_key: ${kp.secret_key.length} bytes (expected 2400)`,
+                    kp.secret_key.length === 2400 ? 'pass' : 'fail');
+            } catch(e) {
+                log(`  ERROR: ${e.message}`, 'fail');
+            }
+
+            // Test 3: Encaps/Decaps round-trip
+            log('');
+            log('Test 3: Encaps/Decaps Round-Trip...');
+            try {
+                const kp = MLKEM768Wrapper.keygen();
+                const enc = MLKEM768Wrapper.encaps(kp.public_key);
+                log(`  ciphertext: ${enc.ciphertext.length} bytes (expected 1088)`,
+                    enc.ciphertext.length === 1088 ? 'pass' : 'fail');
+                log(`  shared_secret: ${enc.shared_secret.length} bytes (expected 32)`,
+                    enc.shared_secret.length === 32 ? 'pass' : 'fail');
+                
+                const ss2 = MLKEM768Wrapper.decaps(kp.secret_key, enc.ciphertext);
+                const match = enc.shared_secret.every((b, i) => b === ss2[i]);
+                log(`  Decaps matches: ${match}`, match ? 'pass' : 'fail');
+            } catch(e) {
+                log(`  ERROR: ${e.message}`, 'fail');
+                console.error(e);
+            }
+
+            // Test 4: 10 iterations
+            log('');
+            log('Test 4: 10 Iterations...');
+            let passCount = 0;
+            for (let i = 0; i < 10; i++) {
+                try {
+                    const kp = MLKEM768Wrapper.keygen();
+                    const enc = MLKEM768Wrapper.encaps(kp.public_key);
+                    const ss2 = MLKEM768Wrapper.decaps(kp.secret_key, enc.ciphertext);
+                    if (enc.shared_secret.every((b, j) => b === ss2[j])) passCount++;
+                } catch(e) {
+                    log(`  Iteration ${i}: ERROR`, 'fail');
+                }
+            }
+            log(`  Passed: ${passCount}/10`, passCount === 10 ? 'pass' : 'fail');
+
+            // Test 5: Wrong ciphertext
+            log('');
+            log('Test 5: Wrong Ciphertext...');
+            try {
+                const kp = MLKEM768Wrapper.keygen();
+                const enc = MLKEM768Wrapper.encaps(kp.public_key);
+                const wrongCt = new Uint8Array(enc.ciphertext);
+                wrongCt[0] ^= 0xFF;
+                const ssWrong = MLKEM768Wrapper.decaps(kp.secret_key, wrongCt);
+                const match = enc.shared_secret.every((b, i) => b === ssWrong[i]);
+                log(`  Wrong ct gives different ss: ${!match}`, !match ? 'pass' : 'fail');
+            } catch(e) {
+                log(`  ERROR: ${e.message}`, 'fail');
+            }
+
+            // Test 6: Hybrid Key Exchange
+            log('');
+            log('Test 6: Hybrid Key Exchange...');
+            try {
+                const alice = new MLKEM768.HybridKeyExchange();
+                const bob = new MLKEM768.HybridKeyExchange();
+                const alicePub = await alice.initialize();
+                const bobPub = await bob.initialize();
+                
+                const aliceEnc = await alice.encapsulateToPeer(bobPub.kemPublicKey, bobPub.ecdhPublicKey);
+                const bobSs = await bob.decapsulateFromPeer(aliceEnc.ciphertext, alicePub.ecdhPublicKey);
+                
+                const match = aliceEnc.sharedSecret.every((b, i) => b === bobSs[i]);
+                log(`  Shared secrets match: ${match}`, match ? 'pass' : 'fail');
+            } catch(e) {
+                log(`  ERROR: ${e.message}`, 'fail');
+                console.error(e);
+            }
+
+            log('');
+            log('=== Verification Complete ===', 'info');
+        }
+
+        runTests();
+    </script>
+</body>
+</html>

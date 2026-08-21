@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Schnorr Debug</title>
+  <style>
+    body { font-family: monospace; padding: 20px; background: #1a1a2e; color: #eee; }
+    .pass { color: #4e4; }
+    .fail { color: #e44; }
+    .info { color: #48f; }
+  </style>
+</head>
+<body>
+  <h1>Schnorr 诊断测试</h1>
+  <div id="output"></div>
+
+  <script src="schnorr-prover-v2.js"></script>
+  <script>
+    const output = document.getElementById('output');
+    function log(msg, cls = 'info') {
+      output.innerHTML += `<div class="${cls}">${msg}</div>`;
+    }
+
+    async function runTests() {
+      const prover = new SchnorrProverV2();
+      await prover.init();
+      log('初始化完成', 'pass');
+
+      // Test 1: Basic point operations
+      log('<br>=== 测试1: 点运算 ===');
+      const G = prover.curve.G;
+      log(`G = (${G.x.toString(16).substring(0,16)}..., ${G.y.toString(16).substring(0,16)}...)`);
+      
+      // 2*G
+      const G2 = prover._pointAdd(G, G);
+      log(`2*G = (${G2.x.toString(16).substring(0,16)}..., ${G2.y.toString(16).substring(0,16)}...)`);
+      
+      // n*G should be null (point at infinity)
+      const nG = prover._scalarMult(prover.curve.n, G);
+      log(`n*G = ${nG === null ? 'null (正确)' : '非null (错误!)'}`, nG === null ? 'pass' : 'fail');
+      
+      // Test 2: Verify s*G = R + c*P step by step
+      log('<br>=== 测试2: 验证方程分步 ===');
+      const privateKey = prover._randomScalar();
+      const publicKey = prover._scalarMult(privateKey, G);
+      log(`私钥: ${privateKey.toString(16).substring(0,16)}...`);
+      log(`公钥: (${publicKey.x.toString(16).substring(0,16)}..., ${publicKey.y.toString(16).substring(0,16)}...)`);
+      
+      const k = prover._randomScalar();
+      const R = prover._scalarMult(k, G);
+      log(`R = k*G: (${R.x.toString(16).substring(0,16)}..., ${R.y.toString(16).substring(0,16)}...)`);
+      
+      const c = await prover._hashChallenge(R.x, publicKey.x);
+      log(`c = ${c.toString(16).substring(0,16)}...`);
+      
+      const s = (k + c * privateKey) % prover.curve.n;
+      log(`s = ${s.toString(16).substring(0,16)}...`);
+      
+      // Left side: s*G
+      const sG = prover._scalarMult(s, G);
+      log(`s*G = (${sG.x.toString(16).substring(0,16)}..., ${sG.y.toString(16).substring(0,16)}...)`);
+      
+      // Right side: R + c*P
+      const cP = prover._scalarMult(c, publicKey);
+      log(`c*P = (${cP.x.toString(16).substring(0,16)}..., ${cP.y.toString(16).substring(0,16)}...)`);
+      
+      const RHS = prover._pointAdd(R, cP);
+      log(`R + c*P = (${RHS.x.toString(16).substring(0,16)}..., ${RHS.y.toString(16).substring(0,16)}...)`);
+      
+      const match = prover._pointsEqual(sG, RHS);
+      log(`s*G == R + c*P ? ${match ? 'PASS' : 'FAIL'}`, match ? 'pass' : 'fail');
+      
+      if (!match) {
+        log(`<br>调试信息:`, 'info');
+        log(`s*G.x = ${sG.x.toString(16)}`, 'info');
+        log(`RHS.x = ${RHS.x.toString(16)}`, 'info');
+        log(`s*G.y = ${sG.y.toString(16)}`, 'info');
+        log(`RHS.y = ${RHS.y.toString(16)}`, 'info');
+      }
+      
+      // Test 3: Full prove/verify
+      log('<br>=== 测试3: 完整证明/验证 ===');
+      const proof = await prover.prove(privateKey, publicKey);
+      const valid = await prover.verify(proof, publicKey);
+      log(`验证结果: ${valid ? 'PASS' : 'FAIL'}`, valid ? 'pass' : 'fail');
+    }
+
+    runTests().catch(e => {
+      log(`ERROR: ${e.message}`, 'fail');
+      console.error(e);
+    });
+  </script>
+</body>
+</html>
