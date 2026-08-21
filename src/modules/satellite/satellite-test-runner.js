@@ -10,8 +10,8 @@
 class SatelliteTestRunner {
   constructor(options = {}) {
     this.config = {
-      apiEndpoint: options.apiEndpoint || 'http://8.156.77.68:3001',
-      wsEndpoint: options.wsEndpoint || 'ws://8.156.77.68:3001/ws',
+      apiEndpoint: options.apiEndpoint || 'https://fibemate.net/api',
+      wsEndpoint: options.wsEndpoint || 'wss://fibemate.net/ws',
       testDuration: options.testDuration || 60000,  // 1分钟
       debug: options.debug || true
     };

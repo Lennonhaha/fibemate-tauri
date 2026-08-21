@@ -1,7 +1,7 @@
 /**
  * FIBEMATE Tauri - Main Interface Logic v3
  * Features: Messages, Contacts, Vault, Key Management, Settings, Voice Call
- * Backend: http://localhost:3006 (proxy to ECS 8.156.77.68:3001)
+ * Backend: https://fibemate.net/api (nginx reverse proxy)
  * CHANGED from v2: API_BASE, token key names, conversationId flow, WebSocket URL, contacts from backend
  */
 
