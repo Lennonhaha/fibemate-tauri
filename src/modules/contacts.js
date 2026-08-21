@@ -217,7 +217,7 @@ function assignContactToGroup(contactId, groupName) {
 // ========== RENDER ==========
 
 function renderContactList() {
-  const container = document.getElementById('contactsList');
+  const container = document.getElementById('contactList') || document.getElementById('contactsList');
   if (!container) return;
 
   // Filter contacts
@@ -527,7 +527,11 @@ async function loadContacts() {
   const empty = document.getElementById('emptyContacts');
   try {
     const token = localStorage.getItem('fk_token');
-    const res = await fetch(`${API_BASE}/contacts`, { headers: { Authorization: `Bearer ${token}` } });
+    // 加 8s 超时保护，防止网络挂起阻断初始化链
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(`${API_BASE}/contacts`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
+    clearTimeout(timeout);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const remote = data.contacts || [];

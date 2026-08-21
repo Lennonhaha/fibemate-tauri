@@ -1,6 +1,7 @@
 // ================================================
 // Vault v3.0-preview — Encrypted file storage with real upload/download
 // Extended: File preview, categorization, drag-and-drop
+// v3.1: 文件二进制数据改存 IndexedDB（解决 localStorage 5MB 配额崩溃）
 // ================================================
 const VAULT_MAX_SIZE = 10 * 1024 * 1024; // 10MB single file limit
 const VAULT_TOTAL_LIMIT = 50 * 1024 * 1024; // 50MB total vault limit
@@ -8,6 +9,123 @@ const VAULT_CATEGORIES = ['all', 'image', 'video', 'audio', 'document', 'other']
 
 // Current filter state
 let vaultCurrentCategory = 'all';
+
+// ============ IndexedDB 封装（文件二进制存储） ============
+const VaultDB = (function () {
+  const DB_NAME = 'fibemate_vault';
+  const DB_VERSION = 1;
+  const STORE = 'files';
+  let _db = null;
+
+  function open() {
+    return new Promise((resolve, reject) => {
+      if (_db) return resolve(_db);
+      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(STORE)) {
+          db.createObjectStore(STORE); // key = fileId（out-of-line key）
+        }
+      };
+      req.onsuccess = () => { _db = req.result; resolve(_db); };
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function put(fileId, blob) {
+    const db = await open();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([STORE], 'readwrite');
+      const store = tx.objectStore(STORE);
+      const req = store.put(blob, fileId);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function get(fileId) {
+    const db = await open();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([STORE], 'readonly');
+      const store = tx.objectStore(STORE);
+      const req = store.get(fileId);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function del(fileId) {
+    const db = await open();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction([STORE], 'readwrite');
+      const store = tx.objectStore(STORE);
+      const req = store.delete(fileId);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  return { put, get, del };
+})();
+
+// 生成唯一 fileId
+function _genFileId() {
+  return Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 10);
+}
+
+// 读取 vault 元数据（localStorage，轻量，无文件内容）
+function _readVaultMeta() {
+  try {
+    const arr = JSON.parse(localStorage.getItem('fk_vault') || '[]');
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) {
+    console.error('[Vault] Failed to parse fk_vault, resetting:', e.message);
+    try { localStorage.setItem('fk_vault', '[]'); } catch (_) {}
+    return [];
+  }
+}
+
+// 写入 vault 元数据（带配额保护）
+function _writeVaultMeta(files) {
+  try {
+    localStorage.setItem('fk_vault', JSON.stringify(files));
+    return true;
+  } catch (e) {
+    console.error('[Vault] Failed to write fk_vault metadata:', e.message);
+    showToast('Vault metadata write failed: ' + e.message, 'error');
+    return false;
+  }
+}
+
+// 迁移旧格式（含 _data 的 Base64）到 IndexedDB
+async function _migrateLegacyVault(files) {
+  let changed = false;
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    if (f._data && !f.fileId) {
+      try {
+        const bytes = _base64ToBytes(f._data);
+        const blob = new Blob([bytes], { type: f.type || 'application/octet-stream' });
+        const fileId = _genFileId();
+        await VaultDB.put(fileId, blob);
+        f.fileId = fileId;
+        delete f._data;
+        changed = true;
+      } catch (e) {
+        console.warn('[Vault] legacy migrate failed for', f.name, e.message);
+      }
+    }
+  }
+  if (changed) _writeVaultMeta(files);
+  return files;
+}
+
+function _base64ToBytes(base64) {
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  return bytes;
+}
 
 function _getCategory(file) {
   if (!file.type) return 'other';
@@ -25,23 +143,19 @@ function _getCategory(file) {
   return 'other';
 }
 
-function loadVault() {
+async function loadVault() {
   const list = document.getElementById('vaultList');
   const empty = document.getElementById('emptyVault');
-  let files = [];
-  try {
-    files = JSON.parse(localStorage.getItem('fk_vault') || '[]');
-    if (!Array.isArray(files)) files = [];
-  } catch (e) {
-    console.error('[Vault] Failed to parse fk_vault, resetting to empty:', e.message);
-    files = [];
-    try { localStorage.setItem('fk_vault', '[]'); } catch (_) {}
+  let files = _readVaultMeta();
+
+  // 异步迁移旧数据
+  try { files = await _migrateLegacyVault(files); } catch (e) {
+    console.warn('[Vault] migration error:', e.message);
   }
 
   // Build category filter UI (insert before list)
   try { _ensureCategoryFilter(); } catch (e) { console.warn('[Vault] category filter failed:', e.message); }
 
-  // Filter files by current category
   const filtered = vaultCurrentCategory === 'all'
     ? files
     : files.filter(f => _getCategory(f) === vaultCurrentCategory);
@@ -55,7 +169,7 @@ function loadVault() {
 function _ensureCategoryFilter() {
   const container = document.getElementById('vaultList')?.parentElement;
   if (!container) return;
-  if (document.getElementById('vaultCategoryFilter')) return; // already exists
+  if (document.getElementById('vaultCategoryFilter')) return;
 
   const filterDiv = document.createElement('div');
   filterDiv.id = 'vaultCategoryFilter';
@@ -95,11 +209,13 @@ function buildVaultItem(f, idx) {
 
 function bindVaultEvents() {
   document.querySelectorAll('.vault-delete').forEach(btn => {
-    btn.addEventListener('click', (e) => {
+    btn.addEventListener('click', async (e) => {
       const idx = parseInt(e.target.closest('.vault-item').dataset.idx);
-      const files = JSON.parse(localStorage.getItem('fk_vault') || '[]');
+      const files = _readVaultMeta();
+      const target = files[idx];
+      if (target && target.fileId) { try { await VaultDB.del(target.fileId); } catch (err) { console.warn('[Vault] delete blob failed:', err.message); } }
       files.splice(idx, 1);
-      localStorage.setItem('fk_vault', JSON.stringify(files));
+      _writeVaultMeta(files);
       loadVault();
       showToast('File removed from vault', 'info');
     });
@@ -110,7 +226,6 @@ function bindVaultEvents() {
       _downloadFile(idx);
     });
   });
-  // Preview events
   document.querySelectorAll('.vault-preview').forEach(btn => {
     btn.addEventListener('click', (e) => {
       const idx = parseInt(e.target.closest('.vault-item').dataset.idx);
@@ -119,27 +234,27 @@ function bindVaultEvents() {
   });
 }
 
-// Real file download — reconstructs blob from stored Base64
-function _downloadFile(idx) {
-  const files = JSON.parse(localStorage.getItem('fk_vault') || '[]');
+// Real file download — reconstructs blob from IndexedDB
+async function _downloadFile(idx) {
+  const files = _readVaultMeta();
   const file = files[idx];
   if (!file) { showToast('File not found', 'error'); return; }
 
-  if (!file._data) {
-    showToast('File data unavailable (stored in legacy format)', 'error');
-    return;
-  }
-
   try {
-    // Decode Base64 → Blob → download
-    const byteChars = atob(file._data);
-    const bytes = new Uint8Array(byteChars.length);
-    for (let i = 0; i < byteChars.length; i++) {
-      bytes[i] = byteChars.charCodeAt(i);
+    let blob = null;
+    if (file.fileId) {
+      blob = await VaultDB.get(file.fileId);
+    } else if (file._data) {
+      // 兼容旧数据
+      blob = new Blob([_base64ToBytes(file._data)], { type: file.type || 'application/octet-stream' });
     }
-    const blob = new Blob([bytes], { type: file.type || 'application/octet-stream' });
-    const url = URL.createObjectURL(blob);
 
+    if (!blob) {
+      showToast('File data unavailable', 'error');
+      return;
+    }
+
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
     a.download = file.name;
@@ -156,8 +271,8 @@ function _downloadFile(idx) {
 }
 
 // ========== FILE PREVIEW ==========
-function previewFile(idx) {
-  const files = JSON.parse(localStorage.getItem('fk_vault') || '[]');
+async function previewFile(idx) {
+  const files = _readVaultMeta();
   const file = files[idx];
   if (!file) { showToast('File not found', 'error'); return; }
 
@@ -178,14 +293,26 @@ function previewFile(idx) {
 
   modal.appendChild(closeBtn);
 
-  if (file.type?.startsWith('image/') && file._data) {
-    // Image preview
-    const img = document.createElement('img');
-    img.src = 'data:' + file.type + ';base64,' + file._data;
-    img.style.cssText = 'max-width:100%;max-height:60vh;object-fit:contain;border-radius:8px;';
-    modal.appendChild(img);
+  if (file.type?.startsWith('image/')) {
+    // Image preview：从 IndexedDB 取 blob
+    let blob = null;
+    try {
+      if (file.fileId) blob = await VaultDB.get(file.fileId);
+      else if (file._data) blob = new Blob([_base64ToBytes(file._data)], { type: file.type });
+    } catch (e) { console.warn('[Vault] preview blob failed:', e.message); }
+
+    if (blob) {
+      const img = document.createElement('img');
+      img.src = URL.createObjectURL(blob);
+      img.onload = () => URL.revokeObjectURL(img.src);
+      img.style.cssText = 'max-width:100%;max-height:60vh;object-fit:contain;border-radius:8px;';
+      modal.appendChild(img);
+    } else {
+      const info = document.createElement('div');
+      info.textContent = 'Image data unavailable';
+      modal.appendChild(info);
+    }
   } else {
-    // File info
     const info = document.createElement('div');
     info.innerHTML =
       '<div style="font-size:48px;text-align:center;margin-bottom:16px">' + (file.type?.startsWith('video/') ? '\uD83C\uDFAC' : file.type?.startsWith('audio/') ? '\uD83C\uDFB5' : '\uD83D\uDCC4') + '</div>' +
@@ -199,7 +326,6 @@ function previewFile(idx) {
     modal.appendChild(info);
   }
 
-  // Download button at bottom
   const dlBtn = document.createElement('button');
   dlBtn.textContent = 'Download';
   dlBtn.style.cssText = 'display:block;margin:16px auto 0;padding:8px 24px;background:var(--accent,#4a9eff);color:#fff;border:none;border-radius:8px;cursor:pointer;';
@@ -253,73 +379,60 @@ function handleVaultFileSelect(e) {
   if (files.length) dropzone.querySelector('p').textContent = files.length + ' file(s) selected: ' + Array.from(files).map(f => f.name).join(', ');
 }
 
-function uploadVaultFile() {
+async function uploadVaultFile() {
   const input = document.getElementById('vaultFileInput');
   if (!input.files.length) { showToast('Please select a file', 'error'); return; }
 
-  const files = JSON.parse(localStorage.getItem('fk_vault') || '[]');
+  const files = _readVaultMeta();
   let totalSize = files.reduce((sum, f) => sum + (f.size || 0), 0);
 
-  // Process files async (Base64 encoding)
   const selectedFiles = Array.from(input.files);
-  let processed = 0;
 
-  function processNext() {
-    if (processed >= selectedFiles.length) {
-      // All done — save and refresh
-      localStorage.setItem('fk_vault', JSON.stringify(files));
-      loadVault();
-      hideModal('modalUploadVault');
-      input.value = '';
-      document.getElementById('vaultDropzone').querySelector('p').textContent = 'Drag files here or click to browse';
-      showToast(selectedFiles.length + ' file(s) encrypted and stored in vault', 'success');
-      return;
-    }
+  for (let i = 0; i < selectedFiles.length; i++) {
+    const f = selectedFiles[i];
 
-    const f = selectedFiles[processed];
-
-    // Size check
+    // 单文件大小检查
     if (f.size > VAULT_MAX_SIZE) {
       showToast(f.name + ' exceeds 10MB limit, skipped', 'error');
-      processed++;
-      processNext();
-      return;
+      continue;
     }
+    // 总量检查
     if (totalSize + f.size > VAULT_TOTAL_LIMIT) {
       showToast('Vault storage full (50MB limit), remaining files skipped', 'error');
-      localStorage.setItem('fk_vault', JSON.stringify(files));
-      loadVault();
-      hideModal('modalUploadVault');
-      input.value = '';
-      return;
+      break;
     }
 
-    // Read file → Base64
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64 = reader.result.split(',')[1]; // strip data:... prefix
+    try {
+      // 文件二进制直接存 IndexedDB（不转 Base64，省空间 + 无配额问题）
+      const fileId = _genFileId();
+      await VaultDB.put(fileId, f);
+
       totalSize += f.size;
       files.push({
+        fileId: fileId,
         name: f.name,
         type: f.type,
         size: f.size,
         uploadedAt: Date.now(),
         encrypted: true,
-        category: _getCategory({ type: f.type, name: f.name }),
-        _data: base64
+        category: _getCategory({ type: f.type, name: f.name })
       });
-      processed++;
-      processNext();
-    };
-    reader.onerror = () => {
-      showToast('Failed to read ' + f.name, 'error');
-      processed++;
-      processNext();
-    };
-    reader.readAsDataURL(f);
+    } catch (err) {
+      console.error('[Vault] upload failed for', f.name, err);
+      showToast('Failed to store ' + f.name + ': ' + (err.message || err), 'error');
+      // 即使失败也继续下一个文件，不中断整个流程
+      continue;
+    }
   }
 
-  processNext();
+  // 保存元数据 + 刷新
+  _writeVaultMeta(files);
+  await loadVault();
+  hideModal('modalUploadVault');
+  input.value = '';
+  const dz = document.getElementById('vaultDropzone');
+  if (dz) { const p = dz.querySelector('p'); if (p) p.textContent = 'Drag files here or click to browse'; }
+  showToast('File(s) encrypted and stored in vault', 'success');
 }
 
 // Initialize dropzone enhancement when modal opens

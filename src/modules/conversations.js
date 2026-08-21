@@ -6,7 +6,10 @@ async function loadConversations() {
   const empty = document.getElementById('emptyState');
   try {
     const token = localStorage.getItem('fk_token');
-    const res = await fetch(`${API_BASE}/conversations`, { headers: { Authorization: `Bearer ${token}` } });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(`${API_BASE}/conversations`, { headers: { Authorization: `Bearer ${token}` }, signal: controller.signal });
+    clearTimeout(timeout);
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     const convs = data.conversations || [];

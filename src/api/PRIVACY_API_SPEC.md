@@ -5,7 +5,7 @@ This document defines the backend API endpoints required to support the 7 privac
 
 ## Base URL
 ```
-http://8.156.77.68:3001/api
+https://fibemate.net/api
 ```
 
 ## Authentication

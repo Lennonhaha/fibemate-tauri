@@ -24,6 +24,14 @@ function switchTab(tab) {
   }
   const placeholders = { messages: 'Search messages...', contacts: 'Search contacts...', vault: 'Search vault...', keys: 'Search keys...', settings: 'Search settings...' };
   document.getElementById('searchInput').placeholder = placeholders[tab] || 'Search...';
+
+  // 切到 contacts 时重新从后端拉取好友列表（修「点开无好友」）
+  if (tab === 'contacts' && typeof loadContacts === 'function') {
+    loadContacts().catch(() => {});
+  }
+  if (tab === 'messages' && typeof loadConversations === 'function') {
+    loadConversations().catch(() => {});
+  }
 }
 
 function hideAllMainViews() {

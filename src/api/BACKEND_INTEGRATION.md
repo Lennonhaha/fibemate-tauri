@@ -32,7 +32,7 @@ Server runs on `http://localhost:3002`
 In `src/api/privacy-api-client.js`:
 ```javascript
 const API_BASE = 'http://localhost:3002'; // Development
-// const API_BASE = 'http://8.156.77.68:3001/api'; // Production
+// const API_BASE = 'https://fibemate.net/api'; // Production (via nginx reverse proxy)
 ```
 
 ### 3. Use API Client
