@@ -39,3 +39,6 @@ _fix-backup-*/
 # --- 系统 ---
 .DS_Store
 Thumbs.db
+__MACOSX/
+._*
+*.DS_Store
