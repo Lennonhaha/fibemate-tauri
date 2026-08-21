@@ -190,12 +190,20 @@ async function sendMessage() {
         // 尝试从服务器获取对方的 pre-key bundle
         try {
           const token = localStorage.getItem('fk_token');
-          const response = await fetch(`${API_BASE}/privacy/prekey-bundle/${STATE.currentPeerId}`, {
+          const response = await fetch(`${API_BASE}/users/${STATE.currentPeerId}/keys`, {
             headers: { 'Authorization': `Bearer ${token}` }
           });
           
           if (response.ok) {
-            const bundle = await response.json();
+            const keysResp = await response.json();
+            // 后端 /api/users/:userId/keys 返回 { identityKey, signedPrekey, ... }
+            // 前端 adapter 需要 { identityKey, signedPreKey }（驼峰）
+            const bundle = {
+              identityKey: keysResp.identityKey,
+              signedPreKey: keysResp.signedPrekey || keysResp.identityKey,
+              signedPreKeyId: 0,
+              oneTimePreKeys: []
+            };
             if (bundle && bundle.identityKey) {
               // v6: 优先使用混合 X3DH (ECDH + ML-KEM-768)
               let sessionResult;
@@ -210,6 +218,10 @@ async function sendMessage() {
                 const isHybrid = sessionResult.hybrid || false;
                 console.log(`[Send v6] X3DH session established with ${STATE.currentPeerId} (${isHybrid ? 'hybrid' : 'classical'})`);
                 showToast(`安全会话已建立${isHybrid ? ' (后量子)' : ''}`, 'success');
+                // 保存 initialMessage，附加到第一条消息（让 Bob 能 establish 会话）
+                if (sessionResult.initialMessage) {
+                  STATE.pendingInitMessage = sessionResult.initialMessage;
+                }
               }
             } else {
               console.warn(`[Send v6] No pre-key bundle available for ${STATE.currentPeerId}`);
@@ -293,9 +305,14 @@ async function sendMessage() {
           const envelope = await Crypto.encrypt(STATE.currentPeerId, text);
           isEncrypted = true;
           encLabel = 'AES';
+          // 若有 pending initialMessage（首次 X3DH），附加到 envelope，让 Bob 能 establish 会话
+          const wireEnvelope = STATE.pendingInitMessage
+            ? { initMessage: STATE.pendingInitMessage, message: envelope }
+            : envelope;
+          STATE.pendingInitMessage = null;
           payload = {
             conversationId: STATE.currentConversationId,
-            envelope: JSON.stringify(envelope),
+            envelope: JSON.stringify(wireEnvelope),
             protocol: envelope.protocol || 'double-ratchet',
             version: envelope.version || 1,
             messageType: 'e2ee',
@@ -316,11 +333,11 @@ async function sendMessage() {
 
     // v4: WebSocket 优先，REST 备选
     if (STATE.ws && STATE.ws.readyState === WebSocket.OPEN) {
-      STATE.ws.send(JSON.stringify({
+      _wsSend({
         type: 'message',
         to: STATE.currentPeerId,
         ...payload
-      }));
+      });
       console.log('[Send v4] Message sent via WebSocket');
       return;
     }

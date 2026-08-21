@@ -46,8 +46,29 @@ function connectWebSocket() {
           if (msg.envelope && typeof Crypto !== 'undefined') {
             // v6 opaque envelope 格式
             try {
-              const envelope = JSON.parse(msg.envelope);
-              
+              let wire = JSON.parse(msg.envelope);
+
+              // 首次 X3DH 握手：envelope 里带 initMessage（Alice 附加）
+              if (wire && wire.initMessage && Crypto.receiveSession) {
+                try {
+                  const result = await Crypto.receiveSession(msg.from, wire.initMessage);
+                  if (result.responseMessage) {
+                    // 回传 responseMessage 给发起方，让其 confirmSession
+                    _wsSend({ type: 'key_exchange_response', to: msg.from, responsePayload: { responseMessage: result.responseMessage } });
+                    console.log('[WS v7] X3DH session established + response sent');
+                  }
+                } catch (initErr) {
+                  console.error('[WS v7] X3DH receiveSession failed:', initErr.message);
+                }
+                wire = wire.message; // 取真正加密的消息
+              }
+
+              const envelope = wire;
+              if (!envelope || typeof envelope !== 'object') {
+                appendMessage(false, '[空消息]', msg.createdAt || Date.now());
+                return;
+              }
+
               // 检测 GM 加密信封（Phase 2.4+）
               if (envelope.encryption === 'sm2-sm4-sm3' && window.encryptWithGM) {
                 text = await window.encryptWithGM.decrypt(msg.from, envelope);
@@ -56,7 +77,7 @@ function connectWebSocket() {
                 return;
               }
               
-              // Check if this is an X3DH init message (first contact)
+              // Check if this is an X3DH init message (first contact, legacy P-256)
               if (envelope.ephemeralPublicKey && !envelope.ciphertext) {
                 // This is a session init message, not an encrypted payload
                 const initSuccess = await handleX3DHInitMessage(msg);
@@ -100,6 +121,17 @@ function connectWebSocket() {
         } else if (msg.type === 'new_message') {
           showToast(`New message from ${msg.from}`, 'info');
           loadConversations();
+        } else if (msg.type === 'key_exchange_response') {
+          // Alice 收到 Bob 的 X3DH responseMessage → confirmSession
+          const Crypto = typeof MessageCryptoV2 !== 'undefined' ? MessageCryptoV2 : MessageCrypto;
+          if (Crypto && Crypto.confirmSession && msg.payload && msg.payload.responseMessage) {
+            try {
+              await Crypto.confirmSession(msg.from, msg.payload.responseMessage);
+              console.log('[WS v7] X3DH session confirmed (response from ' + msg.from + ')');
+            } catch (e) {
+              console.error('[WS v7] confirmSession failed:', e.message);
+            }
+          }
         } else if (msg.type === 'message_recall') {
           // 消息撤回
           if (typeof MessageRecall !== 'undefined') {

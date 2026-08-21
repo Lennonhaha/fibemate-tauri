@@ -162,7 +162,8 @@ impl X3DH {
         their_identity: &[u8; 32],
         their_signed_prekey: &[u8; 32],
     ) -> Result<[u8; 32], String> {
-        let dh1 = my_identity.diffie_hellman(their_identity)?;
+        // X3DH (Signal spec): DH1 = DH(IK_A, SPK_B)
+        let dh1 = my_identity.diffie_hellman(their_signed_prekey)?;
         let dh2 = my_ephemeral.diffie_hellman(their_identity)?;
         let dh3 = my_ephemeral.diffie_hellman(their_signed_prekey)?;
         let mut combined = [0u8; 96];
@@ -391,6 +392,50 @@ mod tests {
         let s1 = alice.diffie_hellman(&bob.public_key).unwrap();
         let s2 = bob.diffie_hellman(&alice.public_key).unwrap();
         assert_eq!(s1, s2);
+    }
+
+    #[test]
+    fn test_x3dh_symmetry() {
+        // X3DH 双方共享密钥必须一致（Signal 规范）
+        let ik_a = RatchetKeyPair::generate();
+        let ek_a = RatchetKeyPair::generate();
+        let ik_b = RatchetKeyPair::generate();
+        let spk_b = RatchetKeyPair::generate();
+
+        let initiator_ss = X3DH::initiator(&ik_a, &ek_a, &ik_b.public_key, &spk_b.public_key).unwrap();
+        let responder_ss = X3DH::responder(&ik_b, &spk_b, &ik_a.public_key, &ek_a.public_key).unwrap();
+        assert_eq!(initiator_ss, responder_ss, "X3DH 双方共享密钥不对称");
+    }
+
+    #[test]
+    fn test_hkdf_golden_vectors() {
+        use hkdf::Hkdf;
+        use sha2::Sha256;
+        // 固定输入，供 JS 端对齐验证
+        let secret = [42u8; 32];
+        let hkdf = Hkdf::<Sha256>::new(None, &secret);
+        let mut send_key = [0u8; 32];
+        let mut recv_key = [0u8; 32];
+        hkdf.expand(b"send_chain_key", &mut send_key).unwrap();
+        hkdf.expand(b"recv_chain_key", &mut recv_key).unwrap();
+        eprintln!("GOLDEN_SEND_KEY={}", hex::encode(send_key));
+        eprintln!("GOLDEN_RECV_KEY={}", hex::encode(recv_key));
+
+        let hkdf2 = Hkdf::<Sha256>::new(None, &send_key);
+        let mut msg_key = [0u8; 32];
+        let mut next_chain = [0u8; 32];
+        hkdf2.expand(b"message_key", &mut msg_key).unwrap();
+        hkdf2.expand(b"next_chain", &mut next_chain).unwrap();
+        eprintln!("GOLDEN_MSG_KEY={}", hex::encode(msg_key));
+        eprintln!("GOLDEN_NEXT_CHAIN={}", hex::encode(next_chain));
+
+        let combined = [7u8; 96];
+        let hkdf3 = Hkdf::<Sha256>::new(None, &combined);
+        let mut ss = [0u8; 32];
+        hkdf3.expand(b"shared_secret", &mut ss).unwrap();
+        eprintln!("GOLDEN_SHARED_SECRET={}", hex::encode(ss));
+
+        assert_eq!(send_key.len(), 32);
     }
 
     #[test]

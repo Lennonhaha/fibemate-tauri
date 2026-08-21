@@ -43,15 +43,22 @@ document.addEventListener('DOMContentLoaded', async () => {
       // 预生成 pre-key bundle（后台异步，不阻塞 UI）
       MessageCryptoV2.getMyPreKeyBundle().then(async bundle => {
         console.log('[Init v5] Pre-key bundle ready, identity key established');
-        // 上传 bundle 到服务器
-        if (typeof privacyAPI !== 'undefined') {
-          const userId = localStorage.getItem('fk_uid') || localStorage.getItem('fk_uname');
-          try {
-            await privacyAPI.uploadPreKeyBundle(userId, bundle);
-            console.log('[Init v5] Pre-key bundle uploaded to server');
-          } catch (uploadErr) {
-            console.warn('[Init v5] Pre-key upload failed:', uploadErr.message);
-          }
+        // 上传 bundle 到服务器（后端无 /pre-keys 路由，用 /api/auth/update-keys）
+        const userId = localStorage.getItem('fk_uid') || localStorage.getItem('fk_uname');
+        try {
+          const token = localStorage.getItem('fk_token');
+          await fetch(`${API_BASE}/auth/update-keys`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+              publicKey: bundle.identityKey,
+              signedPrekey: bundle.signedPreKey || bundle.identityKey,
+              prekeySignature: bundle.signedPreKeySignature || ''
+            })
+          });
+          console.log('[Init v5] Pre-key bundle uploaded to server (update-keys)');
+        } catch (uploadErr) {
+          console.warn('[Init v5] Pre-key upload failed:', uploadErr.message);
         }
         // P1-2: 启动 OPK 自动补充
         MessageCryptoV2.startOPKAutoReplenish();

@@ -237,8 +237,12 @@ pub fn x3dh_respond(
     let their_identity = hex_to_bytes_32(&peer_identity_pk_hex, "peer identity key")?;
     let their_ephemeral = hex_to_bytes_32(&peer_ephemeral_pk_hex, "peer ephemeral key")?;
 
-    // Generate signed pre-key
-    let my_signed_prekey = RatchetKeyPair::generate();
+    // Signed pre-key = identity key (spk = ik)
+    // 对齐前端 getMyPreKeyBundle() 的 "Reuse identity key as pre-key" 设计。
+    // 若这里临时生成新 spk，则与前端上传的 bundle（signedPreKey=identityKey）不一致，
+    // 导致 X3DH 双方 dh1 不对称、shared secret 永远不一致（Bug 2）。
+    // TODO: 将来升级为独立持久化 signed pre-key（需同步前端 bundle 上传逻辑）。
+    let my_signed_prekey = my_identity.clone();
 
     // X3DH responder computation
     let shared_secret = X3DH::responder(

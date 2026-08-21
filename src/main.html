@@ -23,6 +23,10 @@
   <!-- Tauri Crypto Bridge: replaces WASM ML-KEM with Rust backend (auto-detects Tauri) -->
   <script src="tauri-crypto-bridge.js"></script>
 <script src="tauri-ratchet-bridge.js"></script>
+  <!-- JS DR fallback (non-Tauri): tweetnacl + 纯 JS X25519 双棘轮，与 Rust 端协议互通 -->
+  <script src="vendor/nacl/nacl-fast.js"></script>
+  <script src="js-double-ratchet.js"></script>
+  <script src="js-ratchet-bridge.js"></script>
 <script src="tauri-message-crypto-adapter.js"></script>
   <script src="api/privacy-api-client.js" type="module"></script>
   <script src="privacy-layers/index.js" type="module"></script>

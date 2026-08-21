@@ -298,17 +298,14 @@ class PrivacyAPIClient {
    *                  signedPreKey: "<hex>", signedPreKeyId: number, oneTimePreKeys?: [], kemPublicKey?: "<hex>" }
    */
   async uploadPreKeyBundle(userId, bundle) {
-    const body = { ...bundle };
-    const version = this.detectBundleVersion(bundle);
-    body.version = version;
-    body.protocol = version >= 3 ? 'x25519-double-ratchet' : 'p256-x3dh';
-    if (version >= 3) {
-      body.curve = 'x25519';
-      body.oneTimePreKeys = body.oneTimePreKeys || []; // Server expects array
-    }
-    return this.request(`/pre-keys/${userId}`, {
+    // 后端无 /pre-keys 路由，映射到 /api/auth/update-keys
+    return this.request(`/auth/update-keys`, {
       method: 'POST',
-      body: JSON.stringify(body)
+      body: JSON.stringify({
+        publicKey: bundle.identityKey,
+        signedPrekey: bundle.signedPreKey || bundle.identityKey,
+        prekeySignature: bundle.signedPreKeySignature || ''
+      })
     });
   }
 
@@ -322,7 +319,16 @@ class PrivacyAPIClient {
    *                       identityKey: "<hex>", signedPreKey: "<hex>", signedPreKeyId, kemPublicKey? }
    */
   async fetchPreKeyBundle(userId) {
-    return this.request(`/pre-keys/${userId}`);
+    // 后端无 /pre-keys 路由，映射到 GET /api/users/:userId/keys
+    const keysResp = await this.request(`/users/${userId}/keys`);
+    return {
+      identityKey: keysResp.identityKey,
+      signedPreKey: keysResp.signedPrekey || keysResp.identityKey,
+      signedPreKeyId: 0,
+      oneTimePreKeys: keysResp.oneTimePreKey ? [keysResp.oneTimePreKey] : [],
+      oneTimePreKey: keysResp.oneTimePreKey || null,
+      kemPublicKey: keysResp.kemPublicKey || null
+    };
   }
 
   /**

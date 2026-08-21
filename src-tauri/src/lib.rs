@@ -7,6 +7,9 @@ pub mod sm2;
 pub mod sm3;
 mod commands;
 
+#[cfg(test)]
+mod interop_test;
+
 use commands::CryptoState;
 
 // ================================================
