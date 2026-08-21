@@ -6,7 +6,7 @@ Built on Tauri v2 (Rust + WebView), designed for the quantum era.
 [![Build](https://img.shields.io/badge/build-passing-brightgreen)]()
 [![Tests](https://img.shields.io/badge/tests-12%2F12%20passed-brightgreen)]()
 [![Rust](https://img.shields.io/badge/rust-1.85+-orange)]()
-[![License](https://img.shields.io/badge/license-MIT-blue)]()
+[![License](https://img.shields.io/badge/license-GPLv3-blue)]()
 
 ---
 
@@ -234,7 +234,7 @@ fibemate-tauri/
 
 ## 📄 License
 
-MIT License — see [LICENSE](LICENSE) for details.
+GNU General Public License v3.0 (GPLv3) — see [LICENSE](LICENSE) for details.
 
 ---
 
