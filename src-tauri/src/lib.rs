@@ -17,7 +17,7 @@ use commands::CryptoState;
 #[tauri::command]
 fn get_ws_url() -> String {
     std::env::var("FIBEMATE_WS_URL")
-        .unwrap_or_else(|_| "ws://8.156.77.68/ws".to_string())
+        .unwrap_or_else(|_| "wss://fibemate.net/ws".to_string())
 }
 
 /// Get user data directory for key storage
