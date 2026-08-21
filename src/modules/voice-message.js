@@ -244,6 +244,8 @@ const VoiceMessage = (() => {
       btnVoice.addEventListener('click', () => {
         if (isRecording) {
           stopRecording(true); // 发送
+        } else if (!STATE.currentPeerId) {
+          showToast('请先选择一个联系人', 'info');
         } else {
           startRecording();
         }

@@ -213,8 +213,8 @@ function bindEvents() {
 
   document.getElementById('btnAddContact')?.addEventListener('click', () => showModal('modalAddContact'));
   document.getElementById('btnAddContactEmpty')?.addEventListener('click', () => showModal('modalAddContact'));
-  document.getElementById('btnConfirmAddContact')?.addEventListener('click', addContact);
-  document.getElementById('contactUsername')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') addContact(); });
+  document.getElementById('btnConfirmAddContact')?.addEventListener('click', addContactFromInput);
+  document.getElementById('contactUsername')?.addEventListener('keydown', (e) => { if (e.key === 'Enter') addContactFromInput(); });
 
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {

@@ -12,6 +12,7 @@ const WebRTCModule = (() => {
     let isVideoEnabled = false;
     let ws = null;
     let currentCallType = 'voice'; // 'voice' | 'video'
+    let currentPeerId = null;      // 当前通话对象
 
     // STUN/TURN 服务器配置
     const ICE_SERVERS = [
@@ -35,12 +36,21 @@ const WebRTCModule = (() => {
     // 设置 WebSocket 通话信令处理
     function setupWebSocketHandlers() {
         if (!ws) return;
-        
+
+        // 后端 WS 消息均经 WsPadding 混淆，需 unpad 后解析
         const originalHandler = ws.onmessage;
         ws.onmessage = (event) => {
             try {
-                const data = JSON.parse(event.data);
-                
+                let raw;
+                if (typeof WsPadding !== 'undefined' && !(typeof event.data === 'string')) {
+                    const un = WsPadding.unpad(event.data);
+                    if (un.isCover) return;
+                    raw = new TextDecoder().decode(un.payload);
+                } else {
+                    raw = event.data;
+                }
+                const data = JSON.parse(raw);
+
                 switch (data.type) {
                     case 'call_offer':
                         handleIncomingOffer(data);
@@ -48,10 +58,10 @@ const WebRTCModule = (() => {
                     case 'call_answer':
                         handleIncomingAnswer(data);
                         return;
-                    case 'call_hangup':
+                    case 'call_end':
                         handleRemoteHangup(data);
                         return;
-                    case 'ice_candidate':
+                    case 'call_ice':
                         handleRemoteIceCandidate(data);
                         return;
                     case 'incoming_call':
@@ -107,6 +117,7 @@ const WebRTCModule = (() => {
     // 开始通话
     async function startCall(peerId, callType = 'voice') {
         currentCallType = callType;
+        currentPeerId = peerId;
         isCalling = true;
         
         try {
@@ -152,6 +163,7 @@ const WebRTCModule = (() => {
     // 接受来电
     async function acceptCall(peerId, callType = 'voice') {
         currentCallType = callType;
+        currentPeerId = peerId || STATE.currentPeerId;
         isCalling = true;
 
         try {
@@ -179,7 +191,7 @@ const WebRTCModule = (() => {
             // 发送 Answer
             sendSignaling({
                 type: 'call_answer',
-                to: peerId,
+                to: peerId || STATE.currentPeerId,
                 sdp: answer.sdp
             });
 
@@ -197,8 +209,8 @@ const WebRTCModule = (() => {
     // 拒绝来电
     function rejectCall(peerId) {
         sendSignaling({
-            type: 'call_hangup',
-            to: peerId,
+            type: 'call_end',
+            to: peerId || currentPeerId || STATE.currentPeerId,
             reason: 'rejected'
         });
         hideIncomingCallUI();
@@ -208,7 +220,8 @@ const WebRTCModule = (() => {
     // 结束通话
     function endCall() {
         sendSignaling({
-            type: 'call_hangup',
+            type: 'call_end',
+            to: currentPeerId || STATE.currentPeerId,
             reason: 'local_hangup'
         });
         cleanup();
@@ -276,7 +289,12 @@ const WebRTCModule = (() => {
         if (!peerConnection) {
             createPeerConnection();
         }
-        
+
+        // 记录来电者（acceptCall/rejectCall 时用）
+        if (data.from) {
+            STATE.currentPeerId = data.from;
+        }
+
         peerConnection.setRemoteDescription(new RTCSessionDescription({
             type: 'offer',
             sdp: data.sdp
@@ -337,16 +355,19 @@ const WebRTCModule = (() => {
 
     function sendSignaling(data) {
         if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(JSON.stringify({
-                type: 'call_signaling',
-                ...data
-            }));
+            const payload = JSON.stringify(data);
+            if (typeof WsPadding !== 'undefined') {
+                ws.send(WsPadding.pad(payload));
+            } else {
+                ws.send(payload);
+            }
         }
     }
 
     function sendIceCandidate(candidate) {
         sendSignaling({
-            type: 'ice_candidate',
+            type: 'call_ice',
+            to: currentPeerId || STATE.currentPeerId,
             candidate: candidate
         });
     }

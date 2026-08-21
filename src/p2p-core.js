@@ -97,9 +97,12 @@ class P2PNetwork {
   // 广播自己的存在 (通过UDP或WebSocket广播)
   broadcastPresence(ip) {
     // 简化版：通过已知端口范围扫描
+    // 注意：原实现调用了不存在的 this.tryConnect()，导致每次 ICE 候选
+    // 收集时抛 "this.tryConnect is not a function"，被 ErrorBoundary 捕获。
+    // 改用真实存在的 connectToPeer()，并捕获 async rejection 静默失败。
     const ports = [3001, 3002, 3003, 8080, 8081];
     ports.forEach(port => {
-      this.tryConnect(ip, port);
+      this.connectToPeer(ip, port).catch(() => {});
     });
   }
   

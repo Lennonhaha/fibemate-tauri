@@ -131,6 +131,18 @@ const MobileAdapt = (() => {
           padding-bottom: env(safe-area-inset-bottom, 0);
         }
 
+        /* 主题切换小球挪到右上角，避开底部导航设置键 */
+        #btnThemeToggle {
+          bottom: auto !important;
+          top: 16px !important;
+          right: 16px !important;
+          width: 34px !important;
+          height: 34px !important;
+          font-size: 15px !important;
+          z-index: 90 !important;
+          opacity: 0.75;
+        }
+
         .mobile-nav-item {
           flex: 1;
           display: flex;

@@ -12,8 +12,9 @@
  */
 async function initPrivacyFeatures() {
   try {
-    // Import privacy layers
-    const { PrivacyLayerManager } = await import('./privacy-layers/index.js');
+    // Import privacy layers（privacy-layers/index.js 以 type=module 加载，类挂在 window.FIBEMATE 上）
+    const PrivacyLayerManager = window.FIBEMATE?.PrivacyLayerManager
+      || (await import('../privacy-layers/index.js')).PrivacyLayerManager;
     
     STATE.privacyManager = new PrivacyLayerManager({
       burnAfterRead: true,

@@ -6,14 +6,14 @@ function connectWebSocket() {
   if (!token) return;
   try {
     // 使用与 API 相同的地址，但协议改为 STATE.ws
-    const apiBase = API_BASE.replace('http://', 'ws://').replace('/api', '');
+    const apiBase = API_BASE.replace(/^http/, 'ws').replace(/\/api$/, '');
     STATE.ws = new WebSocket(`${apiBase}/ws?token=${token}`);
+    STATE.ws.binaryType = 'arraybuffer';
     STATE.ws.onopen = () => {
       console.log('[WS v3] Connected to proxy');
-      // Register user for WebRTC signaling
-      const username = localStorage.getItem('fk_uname');
-      if (username && STATE.ws.readyState === 1) {
-        STATE.ws.send(JSON.stringify({ type: 'register', userId: username }));
+      // 后端 WS 认证协议：发送 { type: 'auth', token }（经 WsPadding 混淆）
+      if (STATE.ws.readyState === 1) {
+        _wsSend({ type: 'auth', token });
       }
       // Initialize WebRTC module
       if (typeof WebRTCModule !== 'undefined') {
@@ -34,7 +34,9 @@ function connectWebSocket() {
     };
     STATE.ws.onmessage = async (e) => {
       try {
-        const msg = JSON.parse(e.data);
+        const raw = _wsUnpad(e.data);
+        if (raw == null) return; // cover traffic 丢弃
+        const msg = JSON.parse(raw);
         console.log('[WS v4] Received:', msg.type);
         
         if (msg.type === 'new_message' && msg.from === STATE.currentPeerId) {
@@ -133,5 +135,43 @@ function decodeCiphertext(ciphertext) {
     }
   } catch (e) {}
   return ciphertext;
+}
+
+// ================================================
+// WS 流量混淆层（WsPadding）：发送 pad / 接收 unpad
+// 与后端 /opt/fibemate-full/src/crypto/ws-padding.js 对齐
+// ================================================
+function _wsSend(obj) {
+  if (!STATE.ws || STATE.ws.readyState !== 1) return false;
+  try {
+    if (typeof WsPadding !== 'undefined') {
+      STATE.ws.send(WsPadding.pad(JSON.stringify(obj)));
+    } else {
+      STATE.ws.send(JSON.stringify(obj));
+    }
+    return true;
+  } catch (e) {
+    console.error('[WS] _wsSend error:', e);
+    return false;
+  }
+}
+
+function _wsUnpad(data) {
+  try {
+    if (typeof WsPadding !== 'undefined') {
+      const buf = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
+      const un = WsPadding.unpad(buf);
+      if (un.isCover) return null; // cover traffic，丢弃
+      return new TextDecoder().decode(un.payload);
+    }
+    // 无 WsPadding 时按明文处理
+    if (data instanceof ArrayBuffer) {
+      return new TextDecoder().decode(data);
+    }
+    return data;
+  } catch (e) {
+    console.error('[WS] _wsUnpad error:', e);
+    return data;
+  }
 }
 

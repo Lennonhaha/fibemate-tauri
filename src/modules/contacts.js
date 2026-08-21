@@ -33,6 +33,77 @@ function addContact(peer) {
   return true;
 }
 
+// v3: 从「Add Contact」输入框读用户名，调后端 API 搜索并添加联系人。
+// 绑定到 btnConfirmAddContact 按钮（main.js）。旧版 addContact(peer) 保留给
+// syncContactsFromPeers 等本地调用，此处是真正的后端交互版本。
+async function addContactFromInput() {
+  const usernameInput = document.getElementById('contactUsername');
+  const displayNameInput = document.getElementById('contactDisplayName');
+  const username = (usernameInput?.value || '').trim();
+  if (!username) { showToast('Please enter a username', 'error'); return; }
+
+  try {
+    const token = localStorage.getItem('fk_token');
+    const api = (typeof API_BASE !== 'undefined') ? API_BASE : 'https://fibemate.net/api';
+
+    // 1) 搜索用户
+    const searchRes = await fetch(`${api}/users/search?q=${encodeURIComponent(username)}`, {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!searchRes.ok) {
+      const e = await searchRes.text().catch(() => '');
+      showToast('Search failed: ' + (searchRes.status === 401 ? 'not authenticated' : e || ('HTTP ' + searchRes.status)), 'error');
+      return;
+    }
+    const searchData = await searchRes.json();
+    const users = (searchData.users || []).filter(u => (u.username || '').toLowerCase() === username.toLowerCase() ||
+      (u.displayName && u.displayName.toLowerCase() === username.toLowerCase()));
+    if (users.length === 0) {
+      showToast('User "' + username + '" not found', 'error');
+      return;
+    }
+    const targetUser = users[0];
+
+    // 2) 添加联系人（后端双向 pending）
+    const res = await fetch(`${api}/contacts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ userId: targetUser.id })
+    });
+    if (!res.ok) {
+      const err = await res.text().catch(() => '');
+      if (res.status === 409) { showToast('Already a contact', 'info'); }
+      else { showToast('Add failed: ' + (err || ('HTTP ' + res.status)), 'error'); }
+      return;
+    }
+
+    if (typeof hideModal === 'function') hideModal('modalAddContact');
+    if (usernameInput) usernameInput.value = '';
+    if (displayNameInput) displayNameInput.value = '';
+    showToast('Added ' + (targetUser.displayName || targetUser.username), 'success');
+
+    // 3) 同步到本地缓存并刷新列表
+    const newContact = {
+      id: targetUser.id,
+      name: targetUser.displayName || targetUser.username,
+      displayName: targetUser.displayName || targetUser.username,
+      username: targetUser.username,
+      avatar: (targetUser.displayName || targetUser.username).charAt(0).toUpperCase(),
+      isOnline: !!targetUser.isOnline,
+      addedAt: Date.now()
+    };
+    if (!contacts.find(c => c.id === newContact.id)) {
+      contacts.push(newContact);
+      localStorage.setItem('fk_contacts', JSON.stringify(contacts));
+    }
+    if (typeof loadContacts === 'function') await loadContacts().catch(() => {});
+    if (typeof renderContactList === 'function') renderContactList();
+  } catch (err) {
+    console.error('[AddContact v3]', err);
+    showToast('Add contact failed: ' + (err && err.message ? err.message : err), 'error');
+  }
+}
+
 function removeContact(contactId) {
   contacts = contacts.filter(c => c.id !== contactId);
   localStorage.setItem('fk_contacts', JSON.stringify(contacts));

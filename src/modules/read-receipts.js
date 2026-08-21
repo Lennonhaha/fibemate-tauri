@@ -117,50 +117,9 @@ const ReadReceipts = (() => {
         margin-top: 2px;
       }
 
-      /* 开关组件 */
-      .toggle-switch {
-        position: relative;
-        width: 44px;
-        height: 24px;
+      /* 开关组件（复用 main.css 的 .toggle 体系，不再自造 toggle-switch） */
+      .read-receipt-toggle .toggle {
         flex-shrink: 0;
-      }
-
-      .toggle-switch input {
-        opacity: 0;
-        width: 0;
-        height: 0;
-      }
-
-      .toggle-slider {
-        position: absolute;
-        cursor: pointer;
-        inset: 0;
-        background: var(--bg-input);
-        border: 1px solid var(--border-subtle);
-        border-radius: 12px;
-        transition: all 0.2s;
-      }
-
-      .toggle-slider::before {
-        content: '';
-        position: absolute;
-        width: 18px;
-        height: 18px;
-        left: 2px;
-        top: 2px;
-        background: var(--text-secondary);
-        border-radius: 50%;
-        transition: all 0.2s;
-      }
-
-      .toggle-switch input:checked + .toggle-slider {
-        background: var(--accent-dim);
-        border-color: var(--accent);
-      }
-
-      .toggle-switch input:checked + .toggle-slider::before {
-        transform: translateX(20px);
-        background: var(--accent);
       }
 
       /* 隐私模式标记 */
@@ -196,7 +155,6 @@ const ReadReceipts = (() => {
       section.id = 'readReceiptSettings';
       section.innerHTML = `
         <div class="settings-section-title">
-          <span>👁️</span>
           <span>Read Receipts</span>
         </div>
         <div class="read-receipt-toggle">
@@ -204,7 +162,7 @@ const ReadReceipts = (() => {
             <div class="read-receipt-toggle-label">Send Read Receipts</div>
             <div class="read-receipt-toggle-desc">Let others know when you've read their messages</div>
           </div>
-          <label class="toggle-switch">
+          <label class="toggle">
             <input type="checkbox" id="toggleReadReceipts" ${receiptEnabled ? 'checked' : ''}>
             <span class="toggle-slider"></span>
           </label>
@@ -217,7 +175,7 @@ const ReadReceipts = (() => {
             </div>
             <div class="read-receipt-toggle-desc">Don't auto-send receipts — only when you manually mark</div>
           </div>
-          <label class="toggle-switch">
+          <label class="toggle">
             <input type="checkbox" id="toggleReceiptPrivacy" ${receiptPrivacyMode ? 'checked' : ''}>
             <span class="toggle-slider"></span>
           </label>

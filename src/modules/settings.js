@@ -284,11 +284,11 @@ function renderSettings() {
         <label class="toggle"><input type="checkbox" data-setting="zkMode" checked><span class="toggle-slider"></span></label>
       </div>
       <div class="setting-item">
-        <div class="setting-info"><div class="setting-name">Mixnet Routing</div><div class="setting-desc">🧪 仿真可用（单机）</div></div>
+        <div class="setting-info"><div class="setting-name">Mixnet Routing</div><div class="setting-desc">仿真可用（单机）</div></div>
         <label class="toggle"><input type="checkbox" data-setting="mixnet" checked><span class="toggle-slider"></span></label>
       </div>
       <div class="setting-item">
-        <div class="setting-info"><div class="setting-name">Post-Quantum KEM</div><div class="setting-desc">✅ ML-KEM-768 已启用</div></div>
+        <div class="setting-info"><div class="setting-name">Post-Quantum KEM</div><div class="setting-desc">ML-KEM-768 已启用</div></div>
         <label class="toggle"><input type="checkbox" data-setting="pqKem" checked><span class="toggle-slider"></span></label>
       </div>
       <div class="setting-item">
@@ -372,7 +372,7 @@ function renderSettings() {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
       </div>
       <div class="setting-item clickable" id="settingPhone">
-        <div class="setting-info"><div class="setting-name">📱 绑定手机</div><div class="setting-desc" id="settingPhoneDesc">未绑定</div></div>
+        <div class="setting-info"><div class="setting-name">绑定手机</div><div class="setting-desc" id="settingPhoneDesc">未绑定</div></div>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
       </div>
       <div class="setting-item clickable" id="settingSafetyNumber">
@@ -392,7 +392,7 @@ function renderSettings() {
         <div class="setting-info"><div class="setting-name">Version</div><div class="setting-desc">FIBEMATE v3.0-preview</div></div>
       </div>
       <div class="setting-item">
-        <div class="setting-info"><div class="setting-name">Security Score</div><div class="setting-desc" id="securityScoreDesc">${_calcSecurityScore()} — Exceeds Signal (78)</div></div>
+        <div class="setting-info"><div class="setting-name">Security Score</div><div class="setting-desc" id="securityScoreDesc">${_calcSecurityScore()}</div></div>
       </div>
     </div>
   `;

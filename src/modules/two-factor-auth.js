@@ -312,13 +312,12 @@ const TwoFactorAuth = (() => {
       section.id = 'twofaSettingsSection';
       section.innerHTML = `
         <div class="settings-section-title">
-          <span>🔐</span>
           <span>Two-Factor Authentication</span>
         </div>
         <div class="twofa-card">
           <div class="twofa-card-title">
             <span class="twofa-status-badge ${is2FAEnabled ? 'enabled' : 'disabled'}" id="twofaStatusBadge">
-              ${is2FAEnabled ? '🔒 Enabled' : '🔓 Disabled'}
+              ${is2FAEnabled ? 'Enabled' : 'Disabled'}
             </span>
           </div>
           <div class="twofa-card-desc">
@@ -354,7 +353,7 @@ const TwoFactorAuth = (() => {
 
     if (badge) {
       badge.className = `twofa-status-badge ${is2FAEnabled ? 'enabled' : 'disabled'}`;
-      badge.textContent = is2FAEnabled ? '🔒 Enabled' : '🔓 Disabled';
+      badge.textContent = is2FAEnabled ? 'Enabled' : 'Disabled';
     }
 
     if (btn) {

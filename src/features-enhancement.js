@@ -209,7 +209,7 @@ class AutoReconnect {
   handleOnline() {
     this.isOnline = true;
     showToast('Back online', 'success');
-    if (ws && ws.readyState !== WebSocket.OPEN) {
+    if (STATE.ws && STATE.ws.readyState !== WebSocket.OPEN) {
       connectWebSocket();
     }
   }
@@ -225,28 +225,51 @@ class AutoReconnect {
     if (!token) return;
 
     try {
-      const apiBase = API_BASE.replace('http://', 'ws://').replace('/api', '');
-      ws = new WebSocket(`${apiBase}/ws?token=${token}`);
+      const apiBase = API_BASE.replace(/^http/, 'ws').replace(/\/api$/, '');
+      // 使用 STATE.ws（与 websocket.js 原始实现一致），避免隐式全局 ws 引用
+      STATE.ws = new WebSocket(`${apiBase}/ws?token=${token}`);
+      STATE.ws.binaryType = 'arraybuffer';
       
-      ws.onopen = () => {
+      STATE.ws.onopen = () => {
         console.log('[WS Enhanced] Connected');
         this.reconnectAttempts = 0;
         this.reconnectDelay = 1000;
         showToast('Real-time connection established', 'success');
+
+        // 与 websocket.js 的 connectWebSocket 保持一致：认证 + 初始化 WebRTC 信令
+        if (STATE.ws.readyState === 1) {
+          if (typeof WsPadding !== 'undefined') {
+            STATE.ws.send(WsPadding.pad(JSON.stringify({ type: 'auth', token })));
+          } else {
+            STATE.ws.send(JSON.stringify({ type: 'auth', token }));
+          }
+        }
+        if (typeof WebRTCModule !== 'undefined') {
+          WebRTCModule.init(STATE.ws);
+          console.log('[WebRTC] Module initialized (enhanced WS)');
+        }
       };
       
-      ws.onclose = () => {
+      STATE.ws.onclose = () => {
         console.log('[WS Enhanced] Disconnected');
         this.attemptReconnect();
       };
       
-      ws.onerror = (err) => {
+      STATE.ws.onerror = (err) => {
         console.error('[WS Enhanced] Error:', err);
       };
       
-      ws.onmessage = async (e) => {
+      STATE.ws.onmessage = async (e) => {
         try {
-          const msg = JSON.parse(e.data);
+          let raw;
+          if (typeof WsPadding !== 'undefined' && !(typeof e.data === 'string')) {
+            const un = WsPadding.unpad(e.data);
+            if (un.isCover) return;
+            raw = new TextDecoder().decode(un.payload);
+          } else {
+            raw = e.data;
+          }
+          const msg = JSON.parse(raw);
           await this.handleMessage(msg);
         } catch (err) {
           console.error('[WS Enhanced] Parse error:', err);
@@ -334,13 +357,32 @@ class ErrorBoundary {
     window.addEventListener('unhandledrejection', (e) => this.handlePromiseError(e));
   }
 
+  // 预期内的网络错误（后端接口暂不可用 / 鉴权过期 / 网络失败）不弹红框，
+  // 避免用户登录时被「Error Occurred」打扰。只有真正的代码错误才弹。
+  isExpectedError(reason) {
+    if (!reason) return true; // 无具体错误对象，不弹
+    const msg = String(reason.message || reason);
+    if (!msg || msg === 'Unknown error' || msg === 'Async operation failed') return true;
+    // HTTP 状态错误（404/401/500 等，后端路由/鉴权）
+    if (/HTTP\s+\d{3}/.test(msg)) return true;
+    // fetch / 网络层失败
+    if (/Failed to fetch|fetch failed|network|Network|load failed|Load failed/i.test(msg)) return true;
+    // 后端 API 不可用 / 未实现
+    if (/\/api\//.test(msg) && (/failed|404|401|500|not available|未实现/i.test(msg))) return true;
+    // 后量子 WASM 不可用（走 JS fallback，非致命）
+    if (/expected magic word|WebAssembly|instantiate/i.test(msg)) return true;
+    return false;
+  }
+
   handleError(event) {
     console.error('[ErrorBoundary]', event.error);
+    if (this.isExpectedError(event.error)) return;
     this.showErrorUI(event.error?.message || 'Unknown error');
   }
 
   handlePromiseError(event) {
     console.error('[ErrorBoundary] Promise rejected:', event.reason);
+    if (this.isExpectedError(event.reason)) return;
     this.showErrorUI(event.reason?.message || 'Async operation failed');
   }
 

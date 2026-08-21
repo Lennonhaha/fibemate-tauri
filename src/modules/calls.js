@@ -278,7 +278,7 @@ function _startCallFallback(name) {
   document.getElementById('callName').textContent = name;
   document.getElementById('callAvatar').textContent = name.charAt(0).toUpperCase();
   document.getElementById('callStatus').textContent = 'Calling...';
-  document.getElementById('STATE.callTimer').textContent = '00:00';
+  document.getElementById('callTimer').textContent = '00:00';
   STATE.callSeconds = 0;
 
   // Simulate connection after 2s
@@ -290,7 +290,7 @@ function _startCallFallback(name) {
       STATE.callSeconds++;
       const m = String(Math.floor(STATE.callSeconds / 60)).padStart(2, '0');
       const s = String(STATE.callSeconds % 60).padStart(2, '0');
-      document.getElementById('STATE.callTimer').textContent = m + ':' + s;
+      document.getElementById('callTimer').textContent = m + ':' + s;
     }, 1000);
   }, 2000);
 }

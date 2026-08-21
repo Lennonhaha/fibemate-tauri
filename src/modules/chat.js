@@ -167,7 +167,8 @@ function appendMessage(sent, text, timestamp, isEncrypted = false, encryptionLab
 async function sendMessage() {
   const input = document.getElementById('messageInput');
   const text = input.value.trim();
-  if (!text || !STATE.currentPeerId) return;
+  if (!STATE.currentPeerId) { showToast('请先选择一个联系人', 'info'); return; }
+  if (!text) return;
 
   if (!STATE.currentConversationId) {
     await ensureConversation(STATE.currentPeerId);
