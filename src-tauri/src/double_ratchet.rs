@@ -59,6 +59,16 @@ pub struct RatchetState {
     pub recv_message_num: u32,
     pub previous_send_keys: HashMap<u32, [u8; 32]>,
     pub skipped_messages: u32,
+    // ── DH ratchet state (v2) ──
+    /// Our current DH ratchet private key (X25519, 32 bytes)
+    #[serde(default)]
+    pub dh_private: [u8; 32],
+    /// Root key for the DH ratchet (chain-updated on each ratchet step)
+    #[serde(default)]
+    pub root_key: [u8; 32],
+    /// Role marker: true = initiator (Alice), false = responder (Bob)
+    #[serde(default)]
+    pub is_initiator: bool,
     // ── Identity binding (for Safety Number) ──
     /// The identity key we used during X3DH (KeyStore identifier)
     #[serde(default)]
@@ -70,21 +80,30 @@ pub struct RatchetState {
 
 impl RatchetState {
     pub fn init_from_shared_secret(shared_secret: &[u8; 32], is_initiator: bool) -> Result<Self, String> {
+        // Symmetric chain-key derivation from the X3DH shared secret.
+        // The info strings are role-swapped so that:
+        //   initiator.send_chain == responder.recv_chain
+        //   initiator.recv_chain == responder.send_chain
+        // This makes message 1 decryptable before any DH ratchet has run.
         let hkdf = Hkdf::<Sha256>::new(None, shared_secret);
-        let mut send_key = [0u8; 32];
-        let mut recv_key = [0u8; 32];
-        hkdf.expand(b"send_chain_key", &mut send_key).map_err(|e| e.to_string())?;
-        hkdf.expand(b"recv_chain_key", &mut recv_key).map_err(|e| e.to_string())?;
+        let mut initiator_send = [0u8; 32];
+        let mut initiator_recv = [0u8; 32];
+        hkdf.expand(b"initiator_send", &mut initiator_send).map_err(|e| e.to_string())?;
+        hkdf.expand(b"initiator_recv", &mut initiator_recv).map_err(|e| e.to_string())?;
+
         let keypair = RatchetKeyPair::generate();
         Ok(Self {
-            send_chain_key: if is_initiator { send_key } else { recv_key },
-            recv_chain_key: if is_initiator { recv_key } else { send_key },
+            send_chain_key: if is_initiator { initiator_send } else { initiator_recv },
+            recv_chain_key: if is_initiator { initiator_recv } else { initiator_send },
             send_public_key: keypair.public_key,
             recv_public_key: [0u8; 32],
             send_message_num: 0,
             recv_message_num: 0,
             previous_send_keys: HashMap::new(),
             skipped_messages: 0,
+            dh_private: keypair.private_key,
+            root_key: *shared_secret,
+            is_initiator,
             our_identity_id: None,
             peer_identity_pk: None,
         })
@@ -92,17 +111,38 @@ impl RatchetState {
 
     pub fn ratchet_step(&mut self, their_public_key: [u8; 32]) -> Result<(), String> {
         self.previous_send_keys.insert(self.send_message_num, self.send_chain_key);
+        // 1. Derive a new recv chain from (current dh_private, their new pub)
+        let shared = RatchetKeyPair::from_private_key(self.dh_private)
+            .diffie_hellman(&their_public_key)?;
+        let (new_rk, recv_ck) = kdf_rk(&self.root_key, &shared);
+        self.root_key = new_rk;
+        self.recv_chain_key = recv_ck;
+        // 2. Generate a fresh DH keypair for our sending side
         let new_keypair = RatchetKeyPair::generate();
-        let shared = new_keypair.diffie_hellman(&their_public_key)?;
-        let hkdf = Hkdf::<Sha256>::new(None, &shared);
-        hkdf.expand(b"chain_key", &mut self.send_chain_key).map_err(|e| e.to_string())?;
-        hkdf.expand(b"next_chain", &mut self.recv_chain_key).map_err(|e| e.to_string())?;
+        let shared2 = new_keypair.diffie_hellman(&their_public_key)?;
+        let (new_rk2, send_ck) = kdf_rk(&self.root_key, &shared2);
+        self.root_key = new_rk2;
+        self.send_chain_key = send_ck;
+        self.dh_private = new_keypair.private_key;
         self.send_public_key = new_keypair.public_key;
         self.recv_public_key = their_public_key;
         self.send_message_num = 0;
         self.skipped_messages = 0;
         Ok(())
     }
+}
+
+/// Signal KDF_RK: derive (new_root_key, chain_key) from (root_key, dh_output).
+fn kdf_rk(root_key: &[u8; 32], dh_output: &[u8; 32]) -> ([u8; 32], [u8; 32]) {
+    let hkdf = Hkdf::<Sha256>::new(Some(root_key), dh_output);
+    let mut okm = [0u8; 64];
+    hkdf.expand(b"fibemate-dr-rk-v1", &mut okm)
+        .expect("HKDF expand should never fail for 64 bytes");
+    let mut new_rk = [0u8; 32];
+    let mut chain = [0u8; 32];
+    new_rk.copy_from_slice(&okm[..32]);
+    chain.copy_from_slice(&okm[32..]);
+    (new_rk, chain)
 }
 
 /// KDF chain for deriving message keys
@@ -223,11 +263,57 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Set the peer's public key for a session.
+    ///
+    /// If recv_public_key is currently all-zero (initial state), this means we are
+    /// receiving the peer's first DH public key after X3DH. In that case we must
+    /// perform a ratchet step immediately so both sides derive the same chain keys.
+    ///
+    /// Background:
+    ///   - Alice (initiator) creates session with send_chain=K1, recv_chain=K1'
+    ///   - Bob (responder) receives init message, ratchets immediately: recv_chain=K1',
+    ///     send_chain=K2', send_public_key=P_B2
+    ///   - Bob sends x3dh_accept_rust carrying P_B2
+    ///   - Alice receives P_B2 → setPeerKey(P_B2) with zero recv_public_key
+    ///   - Without ratchet_step here, Alice's send_chain stays K1 but Bob's recv_chain
+    ///     is K1' → AEAD fails on message 2
+    ///   - With ratchet_step: Alice derives K2, Bob's recv_chain=K2' → symmetric ✅
     pub fn set_peer_key(&self, session_id: &str, peer_public_key: [u8; 32]) -> Result<(), String> {
         let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
         let state = sessions.get_mut(session_id).ok_or("Session not found")?;
-        state.recv_public_key = peer_public_key;
+
+        if state.recv_public_key == [0u8; 32] {
+            // First peer key received — just store it. Chain keys were already
+            // derived symmetrically at init, so both sides' message 1 decrypts.
+            // A DH ratchet step is triggered later by decrypt_message only when
+            // the peer rotates their DH public key.
+            state.recv_public_key = peer_public_key;
+        } else {
+            // Subsequent key update — just store it.
+            state.recv_public_key = peer_public_key;
+        }
+
         Ok(())
+    }
+
+    /// Get current recv_public_key for a session (for diagnostics).
+    pub fn get_session_recv_pk(&self, session_id: &str) -> Result<[u8; 32], String> {
+        let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
+        let state = sessions.get(session_id).ok_or("Session not found")?;
+        Ok(state.recv_public_key)
+    }
+
+    /// Check if a session exists.
+    pub fn has_session(&self, session_id: &str) -> Result<bool, String> {
+        let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
+        Ok(sessions.contains_key(session_id))
+    }
+
+    /// Check if decrypt_message would trigger a ratchet step (for diagnostics).
+    pub fn will_ratchet_on_decrypt(&self, session_id: &str, message: &EncryptedMessage) -> Result<bool, String> {
+        let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
+        let state = sessions.get(session_id).ok_or("Session not found")?;
+        Ok(message.public_key != state.recv_public_key)
     }
 
     /// Bind identity keys to this session (for Safety Number display).
@@ -273,7 +359,13 @@ impl SessionManager {
     pub fn decrypt_message(&self, session_id: &str, message: &EncryptedMessage) -> Result<Vec<u8>, String> {
         let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
         let state = sessions.get_mut(session_id).ok_or("Session not found")?;
-        if message.public_key != state.recv_public_key {
+        if state.recv_public_key == [0u8; 32] {
+            // Handshake not yet complete (setPeerKey hasn't run, or arrived
+            // after this message). Adopt the peer's initial DH public key
+            // WITHOUT ratcheting — chain keys were already derived symmetrically
+            // at init, so ratcheting here would diverge the two sides.
+            state.recv_public_key = message.public_key;
+        } else if message.public_key != state.recv_public_key {
             state.ratchet_step(message.public_key)?;
         }
         let mut chain = KdfChain::new(state.recv_chain_key);
@@ -330,7 +422,11 @@ impl SessionManager {
 // ════════════════════════════════════════════════════════════════
 
 /// Session storage format version tag.
-const SESSION_FILE_VERSION: &str = "1";
+/// Bump this when the RatchetState schema or chain-key derivation changes,
+/// so old (potentially diverged) on-disk sessions are discarded and both
+/// sides are forced to re-handshake. v1 → v2: symmetric chain-key derivation
+/// rewrite (v3.15) — all v1 sessions had asymmetric/diverged chain keys.
+const SESSION_FILE_VERSION: &str = "2";
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct SessionFile {
@@ -361,7 +457,16 @@ pub fn load_sessions_from_disk(path: &std::path::Path) -> HashMap<String, Ratche
         Err(_) => return HashMap::new(),
     };
     match serde_json::from_str::<SessionFile>(&data) {
-        Ok(file) => file.sessions,
+        Ok(file) => {
+            if file.v != SESSION_FILE_VERSION {
+                eprintln!(
+                    "[SessionManager] Session file version {} != {} — discarding old sessions (re-handshake required)",
+                    file.v, SESSION_FILE_VERSION
+                );
+                return HashMap::new();
+            }
+            file.sessions
+        }
         Err(e) => {
             eprintln!("[SessionManager] Corrupted session file, starting fresh: {e}");
             // Don't delete the corrupted file — user may want to recover it

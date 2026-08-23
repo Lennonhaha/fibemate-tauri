@@ -103,6 +103,15 @@ body {
   flex: 1;
 }
 
+.sidebar-version {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  color: var(--text-muted, #888);
+  opacity: 0.7;
+  user-select: none;
+}
+
 .sidebar-actions {
   display: flex;
   gap: 4px;

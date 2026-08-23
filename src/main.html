@@ -132,6 +132,7 @@
           </svg>
         </div>
         <h2 class="sidebar-title">FIBEMATE</h2>
+        <span class="sidebar-version" id="appVersion" title="应用版本">v3.0.0</span>
       </div>
 
       <!-- 导航标签页 -->
@@ -470,6 +471,14 @@
   <!-- 退出按钮逻辑（已移除Matrix动画） -->
   <script>
     document.addEventListener('DOMContentLoaded', () => {
+      // 应用版本号显示（从 Tauri 后端读取 package_info().version）
+      const verEl = document.getElementById('appVersion');
+      if (verEl && window.__TAURI__ && window.__TAURI__.core) {
+        window.__TAURI__.core.invoke('get_version')
+          .then(v => { verEl.textContent = 'v' + v; })
+          .catch(() => { /* 保持默认占位 */ });
+      }
+
       const logoutBtn = document.getElementById('btnLogout');
       if (logoutBtn) {
         logoutBtn.addEventListener('click', (e) => {

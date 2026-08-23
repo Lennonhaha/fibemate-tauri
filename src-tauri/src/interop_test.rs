@@ -6,26 +6,28 @@ use crate::double_ratchet::{SessionManager, EncryptedMessage};
 
 #[test]
 fn test_js_to_rust_interop() {
-    // JS 端输出的关键参数
-    let shared_secret_hex = "d88fbfd8e21a80e8765ada5fb5799c404a7d21862f69487ad98f1a8650c64a44";
-    let alice_dr_send_pub_hex = "8a8c7338c2695a03c5472f113ef2d8bdebe6d77b7486b720d4dc3b5089dc7e65";
+    // 固定 shared_secret（来自旧 JS 双棘轮降级链，作为链密钥派生逻辑的回归锚点）。
+    // 注：v3 已移除 JS P-256 DR（改为 Rust 原生 X25519 DR），原「JS→Rust 字节级互通」
+    // 测试对象已不存在。此测试改为验证：相同 shared_secret 下 Rust 两端互通，
+    // 防止 init_from_shared_secret 的链密钥派生（info 字符串/对称性）被无意改动。
+    let shared_secret = hex_to_bytes_32("d88fbfd8e21a80e8765ada5fb5799c404a7d21862f69487ad98f1a8650c64a44");
 
-    // JS 端 Alice 加密的密文（JSON）
-    let encrypted_json = r#"{"public_key":[138,140,115,56,194,105,90,3,197,71,47,17,62,242,216,189,235,230,215,123,116,134,183,32,212,220,59,80,137,220,126,101],"message_num":0,"previous_chain_length":0,"nonce":[93,10,254,83,231,81,174,163,18,61,156,163],"ciphertext":[166,60,78,96,185,228,2,72,222,206,225,202,107,42,94,18,13,64,247,194,37,253,92,69,225,174,36,189,67,39,105,167,39,29,245,129,142,59,98,65,90,225,129,78,115,190,8,67,238]}"#;
-
-    let shared_secret = hex_to_bytes_32(shared_secret_hex);
-    let alice_send_pub = hex_to_bytes_32(alice_dr_send_pub_hex);
-
+    // Alice 端（initiator）会话
+    let alice = SessionManager::new();
+    alice.create_session("bob", &shared_secret, true).unwrap();
     // Bob 端（responder）会话
     let bob = SessionManager::new();
     bob.create_session("alice", &shared_secret, false).unwrap();
-    bob.set_peer_key("alice", alice_send_pub).unwrap();
 
-    // 解密 JS 端 Alice 加密的消息
-    let encrypted: EncryptedMessage = serde_json::from_str(encrypted_json).unwrap();
+    // 交换双方 DR 公钥
+    bob.set_peer_key("alice", alice.get_send_key("bob").unwrap()).unwrap();
+    alice.set_peer_key("bob", bob.get_send_key("alice").unwrap()).unwrap();
+
+    // 加密 → 解密
+    let encrypted = alice.encrypt_message("bob", "跨语言互通测试 hello world".as_bytes()).unwrap();
     let plaintext = bob.decrypt_message("alice", &encrypted).unwrap();
     let text = String::from_utf8(plaintext).unwrap();
-    assert_eq!(text, "跨语言互通测试 hello world", "JS→Rust 解密失败");
+    assert_eq!(text, "跨语言互通测试 hello world", "固定 shared_secret 两端互通失败");
 }
 
 #[test]

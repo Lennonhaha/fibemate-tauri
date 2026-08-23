@@ -548,7 +548,7 @@ async function loadContacts() {
         const name = c.displayName || c.username || c.contactUserId || 'Unknown';
         const username = c.username || c.contactUserId || '';
         const online = c.isOnline ? '<span class="online-dot"></span>' : '';
-        return `<div class="contact-item" data-user-id="${escapeHtml(c.contactUserId || '')}" data-name="${escapeHtml(name)}">
+        return `<div class="contact-item" data-user-id="${escapeHtml(c.id || '')}" data-name="${escapeHtml(name)}">
           <div class="contact-avatar">${escapeHtml(name.charAt(0).toUpperCase())}${online}</div>
           <div class="contact-info"><div class="contact-name">${escapeHtml(name)}</div><div class="contact-username">@${escapeHtml(username)}</div></div>
           <div class="contact-actions">

@@ -83,18 +83,19 @@ pub fn dr_init(
         let ss = secrets.remove(&ss_id).ok_or(format!("Shared secret not found: {ss_id}"))?;
         drop(secrets);
 
-        let session_id = format!("{}_{peer_name}", Uuid::new_v4().to_string().split('-').next().unwrap_or("session"));
-
+        // Use ss_id as session_id so both Alice and Bob use the same identifier.
+        // This is safe because each X3DH shared secret is unique (different DH combos
+        // per session). Alice's session lives on her device; Bob's on his — no collision.
         let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-        sessions.create_session(&session_id, &ss, is_initiator)?;
+        sessions.create_session(&ss_id, &ss, is_initiator)?;
 
         // Bind identity keys if provided
         if let (Some(ref our_id), Some(pk)) = (&our_identity_id, peer_identity_pk) {
-            sessions.set_identity_keys(&session_id, our_id, pk)?;
+            sessions.set_identity_keys(&ss_id, our_id, pk)?;
         }
 
-        let our_pk = sessions.get_send_key(&session_id)?;
-        (session_id, our_pk)
+        let our_pk = sessions.get_send_key(&ss_id)?;
+        (ss_id.clone(), our_pk)
     }; // both locks dropped
 
     // Persist to disk
@@ -125,7 +126,22 @@ pub fn dr_set_peer(
 
     {
         let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+        // Check recv_public_key before set_peer_key to see if ratchet will fire
+        let recv_pk_before = sessions.get_session_recv_pk(&session_id)
+            .map(|pk| hex::encode(pk)[..8].to_string())
+            .unwrap_or_else(|_| "NOT_FOUND".to_string());
+        eprintln!(
+            "[DR-SET-PEER] sid={} recv_pk_before={} new_pk={} will_ratchet={}",
+            &session_id[..8.min(session_id.len())],
+            recv_pk_before,
+            &peer_public_key_hex[..8],
+            recv_pk_before == "00000000"
+        );
         sessions.set_peer_key(&session_id, pk)?;
+        let recv_pk_after = sessions.get_session_recv_pk(&session_id)
+            .map(|pk| hex::encode(pk)[..8].to_string())
+            .unwrap_or_else(|_| "ERR".to_string());
+        eprintln!("[DR-SET-PEER] recv_pk_after={}", recv_pk_after);
     }
     state.save_sessions_to_disk()?;
     Ok(())
@@ -172,14 +188,45 @@ pub fn dr_decrypt(
     let encrypted: EncryptedMessage = serde_json::from_str(&message_json)
         .map_err(|e| format!("Invalid message JSON: {e}"))?;
 
-    let plaintext = {
-        let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-        sessions.decrypt_message(&session_id, &encrypted)?
+    let msg_pk8 = &encrypted.public_key[..4];
+    let result = {
+        let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+        let recv_pk8 = sessions
+            .get_session_recv_pk(&session_id)
+            .map(|pk| hex::encode(pk)[..8].to_string())
+            .unwrap_or_else(|_| "NOT_FOUND".to_string());
+        let will_ratchet = sessions
+            .will_ratchet_on_decrypt(&session_id, &encrypted)
+            .unwrap_or(false);
+        eprintln!(
+            "[DR-DECRYPT] sid={} msg_pk={} recv_pk={} ratchet={}",
+            &session_id[..8.min(session_id.len())],
+            hex::encode(msg_pk8),
+            recv_pk8,
+            will_ratchet
+        );
+        sessions.decrypt_message(&session_id, &encrypted)
     };
 
+    match &result {
+        Ok(_) => eprintln!("[DR-DECRYPT] OK"),
+        Err(e) => eprintln!("[DR-DECRYPT] FAIL: {}", e),
+    }
+
+    let plaintext = result?;
     state.save_sessions_to_disk()?;
 
     Ok(DrDecryptResponse { plaintext_hex: hex::encode(&plaintext) })
+}
+
+/// Check whether a session exists in Rust state (for JS-layer deduplication).
+#[tauri::command]
+pub fn dr_session_exists(
+    state: State<CryptoState>,
+    session_id: String,
+) -> Result<bool, String> {
+    let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+    Ok(sessions.has_session(&session_id)?)
 }
 
 /// Get this session's current sending public key.

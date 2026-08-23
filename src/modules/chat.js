@@ -109,7 +109,22 @@ async function loadMessages(conversationId) {
       const Crypto = typeof MessageCryptoV2 !== 'undefined' ? MessageCryptoV2 : MessageCrypto;
       if (m.envelope && typeof Crypto !== 'undefined') {
         try {
-          const envelope = JSON.parse(m.envelope);
+          let wire = JSON.parse(m.envelope);
+
+          // 首次 X3DH 握手：envelope 里带 initMessage（发送方附加），
+          // 必须先 receiveSession 建立会话，再解密真正消息。
+          // （与 websocket.js 实时接收逻辑对齐；缺失会导致历史首条消息无法解密）
+          if (wire && wire.initMessage && Crypto.receiveSession) {
+            try {
+              await Crypto.receiveSession(m.senderUserId, wire.initMessage);
+              console.log('[Messages v5] X3DH session established from history initMessage');
+            } catch (initErr) {
+              console.error('[Messages v5] receiveSession failed:', initErr.message);
+            }
+            wire = wire.message; // 取真正加密的消息
+          }
+
+          const envelope = wire;
           // 检测 GM 加密信封（Phase 2.4+）
           if (envelope.encryption === 'sm2-sm4-sm3' && window.encryptWithGM) {
             text = await window.encryptWithGM.decrypt(m.senderUserId, envelope);

@@ -391,6 +391,10 @@ const VoiceMessage = (() => {
       // 转为 base64
       const base64Audio = await _blobToBase64(audioBlob);
 
+      // Ensure E2EE session exists before encrypting, otherwise voice encryption fails
+      const sessionReady = await _ensureSecureSession();
+      if (!sessionReady) return;
+
       // E2EE 加密
       const Crypto = typeof MessageCryptoV2 !== 'undefined' ? MessageCryptoV2 : (typeof MessageCrypto !== 'undefined' ? MessageCrypto : null);
       let payload;
@@ -398,9 +402,14 @@ const VoiceMessage = (() => {
       if (Crypto) {
         try {
           const envelope = await Crypto.encrypt(STATE.currentPeerId, base64Audio);
+          // 若有 pending initMessage（首次 X3DH），附加到 envelope，让对方能 establish 会话（与文字消息一致）
+          const wireEnvelope = STATE.pendingInitMessage
+            ? { initMessage: STATE.pendingInitMessage, message: envelope }
+            : envelope;
+          STATE.pendingInitMessage = null;
           payload = {
             conversationId: STATE.currentConversationId,
-            envelope: JSON.stringify(envelope),
+            envelope: JSON.stringify(wireEnvelope),
             protocol: envelope.protocol || 'double-ratchet',
             version: envelope.version || 1,
             messageType: 'voice',
@@ -419,13 +428,13 @@ const VoiceMessage = (() => {
         return;
       }
 
-      // WebSocket 发送
+      // WebSocket 发送（带流量混淆）
       if (STATE.ws && STATE.ws.readyState === WebSocket.OPEN) {
-        STATE.ws.send(JSON.stringify({
+        _wsSend({
           type: 'message',
           to: STATE.currentPeerId,
           ...payload
-        }));
+        });
       } else {
         // REST 备选
         const token = localStorage.getItem('fk_token');
@@ -668,14 +677,28 @@ const VoiceMessage = (() => {
   }
 
   // ── 处理收到的语音消息 ──
-  function handleIncomingVoiceMessage(msg) {
+  // ── 处理收到的语音消息 ──
+  async function handleIncomingVoiceMessage(msg) {
     let audioData;
     const Crypto = typeof MessageCryptoV2 !== 'undefined' ? MessageCryptoV2 : (typeof MessageCrypto !== 'undefined' ? MessageCrypto : null);
 
     if (msg.envelope && Crypto) {
       try {
-        const envelope = JSON.parse(msg.envelope);
-        audioData = Crypto.decrypt(msg.from, envelope);
+        let envelope = JSON.parse(msg.envelope);
+
+        // 首次 X3DH 握手：envelope 里带 initMessage（Alice 附加，与文字消息一致）
+        if (envelope && envelope.initMessage && Crypto.receiveSession) {
+          try {
+            await Crypto.receiveSession(msg.from, envelope.initMessage);
+            console.log('[VoiceMsg] X3DH session established from init message');
+          } catch (initErr) {
+            console.error('[VoiceMsg] receiveSession failed:', initErr.message);
+          }
+          envelope = envelope.message;
+        }
+
+        // 关键修复：decrypt 是 async，必须 await，否则 audioData 是 Promise 对象
+        audioData = await Crypto.decrypt(msg.from, envelope);
       } catch (e) {
         console.error('[VoiceMsg] Decrypt failed:', e.message);
         appendMessage(false, '⚠️ 语音解密失败', msg.createdAt || Date.now());
@@ -712,6 +735,75 @@ const VoiceMessage = (() => {
     const m = Math.floor(seconds / 60);
     const s = Math.floor(seconds % 60);
     return `${m}:${String(s).padStart(2, '0')}`;
+  }
+
+  // ================================================
+  // Ensure an E2EE secure session (X3DH) exists with the current peer.
+  // Mirrors the logic in chat.js sendMessage(). Without this, Crypto.encrypt()
+  // throws "No secure session" and voice messages fail to send.
+  // ================================================
+  async function _ensureSecureSession() {
+    const Crypto = typeof MessageCryptoV2 !== 'undefined' ? MessageCryptoV2 : (typeof MessageCrypto !== 'undefined' ? MessageCrypto : null);
+    if (!Crypto || typeof Crypto.hasSession !== 'function') return true;
+
+    try {
+      const hasSession = await Crypto.hasSession(STATE.currentPeerId);
+      if (hasSession) return true;
+
+      console.log(`[VoiceMsg] No session with ${STATE.currentPeerId}, attempting X3DH initiation...`);
+      showToast('正在建立安全会话...', 'info');
+
+      const token = localStorage.getItem('fk_token');
+      const response = await fetch(`${API_BASE}/users/${STATE.currentPeerId}/keys`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          showToast('对方尚未注册加密密钥，无法发送加密消息', 'warning');
+        } else {
+          showToast('获取加密密钥失败', 'error');
+        }
+        return false;
+      }
+
+      const keysResp = await response.json();
+      const bundle = {
+        identityKey: keysResp.identityKey,
+        signedPreKey: keysResp.signedPrekey || keysResp.identityKey,
+        signedPreKeyId: 0,
+        oneTimePreKeys: []
+      };
+
+      if (!bundle || !bundle.identityKey) {
+        showToast('对方尚未上传密钥，无法建立加密会话', 'warning');
+        return false;
+      }
+
+      let sessionResult;
+      if (typeof PQIntegration !== 'undefined' && PQIntegration.isAvailable && PQIntegration.isAvailable() && bundle.kemPublicKey) {
+        sessionResult = await Crypto.initiateHybridSession(STATE.currentPeerId, bundle);
+      } else {
+        sessionResult = await Crypto.initiateSession(STATE.currentPeerId, bundle);
+      }
+
+      if (sessionResult && (sessionResult.sessionEstablished || sessionResult.sessionReady)) {
+        const isHybrid = sessionResult.hybrid || false;
+        console.log(`[VoiceMsg] X3DH session established with ${STATE.currentPeerId} (${isHybrid ? 'hybrid' : 'classical'})`);
+        showToast(`安全会话已建立${isHybrid ? ' (后量子)' : ''}`, 'success');
+        if (sessionResult.initialMessage) {
+          STATE.pendingInitMessage = sessionResult.initialMessage;
+        }
+        return true;
+      }
+
+      showToast('建立加密会话失败', 'error');
+      return false;
+    } catch (e) {
+      console.warn('[VoiceMsg] Session ensure failed:', e.message);
+      showToast('建立加密会话失败: ' + e.message, 'error');
+      return false;
+    }
   }
 
   function _blobToBase64(blob) {

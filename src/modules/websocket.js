@@ -1,6 +1,51 @@
 // ================================================
 // WebSocket  — v3 改为 ws://localhost:3001/ws
 // ================================================
+
+// ════════════════════════════════════════════════════════════════
+// 会话自愈：解密失败时自动重建 X3DH 会话，避免永久卡死
+// ════════════════════════════════════════════════════════════════
+const _recoveryGuard = {};
+async function trySessionRecovery(peerId, conversationId) {
+  const now = Date.now();
+  if (_recoveryGuard[peerId] && now - _recoveryGuard[peerId] < 10000) return false;
+  _recoveryGuard[peerId] = now;
+  try {
+    const Crypto = (typeof MessageCryptoV2 !== 'undefined') ? MessageCryptoV2 : MessageCrypto;
+    if (!Crypto || !Crypto.initiateSession) return false;
+    const token = localStorage.getItem('fk_token');
+    const resp = await fetch(`${API_BASE}/users/${peerId}/keys`, { headers: { 'Authorization': 'Bearer ' + token } });
+    if (!resp.ok) return false;
+    const keys = await resp.json();
+    const bundle = {
+      identityKey: keys.identityKey,
+      signedPreKey: keys.signedPrekey || keys.identityKey,
+      signedPreKeyId: 0,
+      oneTimePreKeys: []
+    };
+    const sr = await Crypto.initiateSession(peerId, bundle);
+    if (!sr || !sr.initialMessage) return false;
+    const dummy = await Crypto.encrypt(peerId, '🔄 安全会话已重建');
+    const wire = { initMessage: sr.initialMessage, message: dummy };
+    _wsSend({
+      type: 'message', context: 'recovery',
+      to: peerId,
+      conversationId: conversationId,
+      envelope: JSON.stringify(wire),
+      protocol: 'double-ratchet',
+      version: 3,
+      messageType: 'e2ee',
+      burnAfterRead: false,
+      sessionRecovery: true
+    });
+    console.log('[Recovery] Re-established session with ' + peerId);
+    return true;
+  } catch (err) {
+    console.error('[Recovery] failed:', err && err.message ? err.message : err);
+    return false;
+  }
+}
+
 function connectWebSocket() {
   const token = localStorage.getItem('fk_token');
   if (!token) return;
@@ -38,11 +83,33 @@ function connectWebSocket() {
         if (raw == null) return; // cover traffic 丢弃
         const msg = JSON.parse(raw);
         console.log('[WS v4] Received:', msg.type);
-        
+
+        const Crypto = typeof MessageCryptoV2 !== 'undefined' ? MessageCryptoV2 : MessageCrypto;
+
+        // ═══ 治本：X3DH 握手必须在全局处理，而非仅当前打开窗口 ═══
+        // 首条消息可能带 initMessage（发送方附加）。若接收方未打开该聊天窗口，
+        // 旧逻辑会忽略 initMessage → 不回传 key_exchange_response →
+        // 发起方 confirmSession 永远不来 → recv_public_key 全零 → 后续互发全部乱码。
+        if (msg.type === 'new_message') {
+          try {
+            if (msg.envelope && Crypto && Crypto.receiveSession) {
+              const wire = JSON.parse(msg.envelope);
+              if (wire && wire.initMessage) {
+                const result = await Crypto.receiveSession(msg.from, wire.initMessage);
+                if (result && result.responseMessage) {
+                  _wsSend({ type: 'key_exchange_response', to: msg.from, responsePayload: { responseMessage: result.responseMessage } });
+                  console.log('[WS v8] X3DH session established (global) + response sent');
+                }
+              }
+            }
+          } catch (initErr) {
+            console.error('[WS v8] Global X3DH receiveSession failed:', initErr && initErr.message);
+          }
+        }
+
         if (msg.type === 'new_message' && msg.from === STATE.currentPeerId) {
           let text;
-          // v6: 前向保密解密 — 支持 hybrid PQ + v2 envelope + v1 兼容
-          const Crypto = typeof MessageCryptoV2 !== 'undefined' ? MessageCryptoV2 : MessageCrypto;
+          console.log('[WS-DEBUG] msg.from:', msg.from, 'currentPeerId:', STATE.currentPeerId)// v6: 前向保密解密 — 支持 hybrid PQ + v2 envelope + v1 兼容
           if (msg.envelope && typeof Crypto !== 'undefined') {
             // v6 opaque envelope 格式
             try {
@@ -51,12 +118,7 @@ function connectWebSocket() {
               // 首次 X3DH 握手：envelope 里带 initMessage（Alice 附加）
               if (wire && wire.initMessage && Crypto.receiveSession) {
                 try {
-                  const result = await Crypto.receiveSession(msg.from, wire.initMessage);
-                  if (result.responseMessage) {
-                    // 回传 responseMessage 给发起方，让其 confirmSession
-                    _wsSend({ type: 'key_exchange_response', to: msg.from, responsePayload: { responseMessage: result.responseMessage } });
-                    console.log('[WS v7] X3DH session established + response sent');
-                  }
+                  await Crypto.receiveSession(msg.from, wire.initMessage);
                 } catch (initErr) {
                   console.error('[WS v7] X3DH receiveSession failed:', initErr.message);
                 }
@@ -91,9 +153,14 @@ function connectWebSocket() {
               console.log(`[WS v6] E2EE message decrypted (protocol=${envelope.protocol})`);
             } catch (decryptErr) {
               // 断裂点 #3 修复：不静默降级，明确告警
-              console.error('[WS v6] DECRYPT FAILED:', decryptErr.message);
-              appendMessage(false, `⚠️ 解密失败\n${decryptErr.message}`, msg.createdAt || Date.now());
-              showToast('🔒 安全警告: 消息解密失败，可能安全受损', 'error', 8000);
+              console.error('[WS v6] DECRYPT FAILED:', decryptErr && decryptErr.message ? decryptErr.message : decryptErr);
+              const recovered = await trySessionRecovery(msg.from, msg.conversationId);
+              if (recovered) {
+                appendMessage(false, '🔄 正在重建安全会话…', Date.now());
+                return;
+              }
+              appendMessage(false, `⚠️ 解密失败\n${decryptErr && decryptErr.message ? decryptErr.message : decryptErr}`, msg.createdAt || Date.now());
+              showToast('🔒 安全警告: 消息解密失败', 'error', 8000);
               return;  // 不显示假消息
             }
           } else if (msg.encryptedContent && typeof MessageCrypto !== 'undefined') {
@@ -122,14 +189,17 @@ function connectWebSocket() {
           showToast(`New message from ${msg.from}`, 'info');
           loadConversations();
         } else if (msg.type === 'key_exchange_response') {
-          // Alice 收到 Bob 的 X3DH responseMessage → confirmSession
+          // Alice 收到 Bob 的 x3dh_accept_rust → receiveSession (sets peer DR key)
           const Crypto = typeof MessageCryptoV2 !== 'undefined' ? MessageCryptoV2 : MessageCrypto;
-          if (Crypto && Crypto.confirmSession && msg.payload && msg.payload.responseMessage) {
+          if (Crypto && msg.payload) {
             try {
-              await Crypto.confirmSession(msg.from, msg.payload.responseMessage);
-              console.log('[WS v7] X3DH session confirmed (response from ' + msg.from + ')');
+              const acceptRust = msg.payload.responseMessage || msg.payload;
+              if (acceptRust && acceptRust.type === 'x3dh_accept_rust') {
+                const result = await Crypto.receiveSession(msg.from, acceptRust);
+                console.log('[WS v9] Session confirmed from x3dh_accept_rust (from ' + msg.from + ')');
+              }
             } catch (e) {
-              console.error('[WS v7] confirmSession failed:', e.message);
+              console.error('[WS v9] receiveSession failed:', e.message);
             }
           }
         } else if (msg.type === 'message_recall') {

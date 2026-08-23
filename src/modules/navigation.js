@@ -44,3 +44,29 @@ function hideAllMainViews() {
 
 function capitalize(s) { return s.charAt(0).toUpperCase() + s.slice(1); }
 
+// ================================================
+// selectPeer — 选中联系人并打开聊天窗口
+// 供 contacts.js / calls.js / notifications.js 调用。
+// 重构拆模块时该全局函数曾丢失，导致「点完联系人仍提示请先选择」。
+// ================================================
+function selectPeer(peer) {
+  if (!peer || !peer.id) return;
+  const userId = peer.id;
+  const name = peer.displayName || peer.name || userId;
+  // 优先走 openChat（会设置 currentPeerId / currentConversationId 并加载历史）
+  if (typeof openChat === 'function') {
+    switchTab('messages');
+    openChat(userId, name);
+    return;
+  }
+  // 降级兜底：openChat 尚未加载时直接设置状态
+  STATE.currentPeerId = userId;
+  STATE.currentPeerName = name;
+  switchTab('messages');
+  hideAllMainViews();
+  const win = document.getElementById('chatWindow');
+  if (win) win.style.display = 'flex';
+  const nameEl = document.getElementById('chatPeerName');
+  if (nameEl) nameEl.textContent = name;
+}
+

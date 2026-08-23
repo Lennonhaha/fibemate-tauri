@@ -305,6 +305,28 @@
     },
 
     /**
+     * Check whether a Rust DR session actually exists.
+     * Used by the adapter to validate JS-side session mappings against the
+     * real Rust session store (e.g. after on-disk sessions were discarded).
+     */
+    async sessionExists(sessionId) {
+      if (!this.initialized) this.init();
+      return await invoke()('dr_session_exists', { sessionId });
+    },
+
+    /**
+     * List all active Rust DR session IDs.
+     * session_id format: `{uuid8}_{peerName}` (peerName = peerId from adapter).
+     *
+     * @returns {Promise<string[]>}
+     */
+    async listSessions() {
+      if (!this.initialized) this.init();
+      const result = await invoke()('dr_list_sessions');
+      return Array.isArray(result) ? result : [];
+    },
+
+    /**
      * Get the Safety Number for a session.
      *
      * Requires the session to have been initialized with identity key

@@ -90,6 +90,7 @@ pub fn run() {
             commands::ratchet::dr_get_send_key,
             commands::ratchet::dr_delete_session,
             commands::ratchet::dr_list_sessions,
+            commands::ratchet::dr_session_exists,
             // Safety Number
             commands::safety_number::dr_safety_number,
             // SM2 Elliptic Curve Cryptography (GB/T 32918)

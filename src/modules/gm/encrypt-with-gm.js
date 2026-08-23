@@ -143,25 +143,14 @@ const EncryptWithGM = (() => {
     }
 
     try {
-      // 先获取现有 bundle，追加/更新 gmPublicKey
-      let bundle = { gmPublicKey: pubKey };
-      
-      try {
-        const existingRes = await fetch(`/api/pre-keys/${userId}`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        if (existingRes.ok) {
-          bundle = { ...(await existingRes.json()), gmPublicKey: pubKey };
-        }
-      } catch { /* 没有现有 bundle，就用仅含 gmPublicKey 的新 bundle */ }
-
-      const res = await fetch(`/api/pre-keys/${userId}`, {
+      // 后端 /api/auth/update-keys 支持 gmPublicKey 字段（与 X3DH publicKey 并存）
+      const res = await fetch(`${API_BASE}/auth/update-keys`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`
         },
-        body: JSON.stringify(bundle)
+        body: JSON.stringify({ gmPublicKey: pubKey })
       });
 
       if (res.ok) {
@@ -185,12 +174,12 @@ const EncryptWithGM = (() => {
       return cached;
     }
 
-    // 2. 从服务器预密钥 bundle 获取
+    // 2. 从服务器获取对端 SM2 公钥（与 X3DH 预密钥 bundle 同端点）
     const token = localStorage.getItem('fk_token');
     if (!token) return null;
 
     try {
-      const res = await fetch(`/api/pre-keys/${peerId}`, {
+      const res = await fetch(`${API_BASE}/users/${peerId}/keys`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (!res.ok) return null;

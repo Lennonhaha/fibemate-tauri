@@ -17,11 +17,11 @@
 const E2EEDisplay = (() => {
   // ── 加密状态枚举 ──
   const STATUS = {
-    NONE:           { level: 0, icon: '🔓', label: 'NO E2EE',    color: 'var(--danger)',  desc: 'Messages are not encrypted' },
-    HANDSHAKE:      { level: 1, icon: '⏳', label: 'HANDSHAKE',  color: '#FFA502',       desc: 'Establishing secure session...' },
-    ENCRYPTED:      { level: 2, icon: '🔒', label: 'E2EE',       color: 'var(--accent)',  desc: 'End-to-end encrypted (X3DH + Double Ratchet)' },
-    POST_QUANTUM:   { level: 3, icon: '🛡️', label: 'PQ-E2EE',   color: '#6C5CE7',       desc: 'Post-quantum E2EE (ML-KEM-768 + X3DH)' },
-    QUANTUM_ENHANCED: { level: 4, icon: '⚛️', label: 'Q-E2EE',  color: '#00CEC9',       desc: 'Quantum-enhanced E2EE (QKD + ML-KEM-768 + X3DH)' }
+    NONE:           { level: 0, icon: '', label: 'NO E2EE',    color: 'var(--danger)',  desc: 'Messages are not encrypted' },
+    HANDSHAKE:      { level: 1, icon: '', label: 'HANDSHAKE',  color: '#FFA502',       desc: 'Establishing secure session...' },
+    ENCRYPTED:      { level: 2, icon: '', label: 'E2EE',       color: 'var(--accent)',  desc: 'End-to-end encrypted (X3DH + Double Ratchet)' },
+    POST_QUANTUM:   { level: 3, icon: '', label: 'PQ-E2EE',   color: '#6C5CE7',       desc: 'Post-quantum E2EE (ML-KEM-768 + X3DH)' },
+    QUANTUM_ENHANCED: { level: 4, icon: '', label: 'Q-E2EE',  color: '#00CEC9',       desc: 'Quantum-enhanced E2EE (QKD + ML-KEM-768 + X3DH)' }
   };
 
   // ── 初始化 ──
@@ -459,7 +459,6 @@ const E2EEDisplay = (() => {
 
     panel.innerHTML = `
       <div class="e2ee-detail-header">
-        <span class="e2ee-detail-icon">${e2eeStatus.icon}</span>
         <div>
           <div class="e2ee-detail-title">${e2eeStatus.label}</div>
           <div class="e2ee-detail-subtitle">${e2eeStatus.desc}</div>
@@ -496,27 +495,23 @@ const E2EEDisplay = (() => {
         <div class="e2ee-safety-number-label">Safety Number</div>
         <div class="e2ee-safety-number-value">${formattedSN}</div>
         <div class="e2ee-safety-number-hint">Verify with your contact offline to confirm security</div>
-        <button class="e2ee-verify-btn" id="btnCopySafetyNumber">📋 Copy Safety Number</button>
+        <button class="e2ee-verify-btn" id="btnCopySafetyNumber">Copy Safety Number</button>
       </div>
 
       <div class="e2ee-protocol-layers">
         <div class="e2ee-protocol-layer">
-          <span class="e2ee-protocol-layer-icon">🔐</span>
           <span class="e2ee-protocol-layer-name">Double Ratchet</span>
           <span class="e2ee-protocol-layer-status active">ACTIVE</span>
         </div>
         <div class="e2ee-protocol-layer">
-          <span class="e2ee-protocol-layer-icon">🔑</span>
           <span class="e2ee-protocol-layer-name">X3DH Key Exchange</span>
           <span class="e2ee-protocol-layer-status active">ACTIVE</span>
         </div>
         <div class="e2ee-protocol-layer">
-          <span class="e2ee-protocol-layer-icon">🛡️</span>
           <span class="e2ee-protocol-layer-name">ML-KEM-768 (PQ)</span>
           <span class="e2ee-protocol-layer-status ${PQ?.isAvailable?.() ? 'active' : 'inactive'}">${PQ?.isAvailable?.() ? 'ACTIVE' : 'INACTIVE'}</span>
         </div>
         <div class="e2ee-protocol-layer">
-          <span class="e2ee-protocol-layer-icon">⚛️</span>
           <span class="e2ee-protocol-layer-name">Quantum Enhanced</span>
           <span class="e2ee-protocol-layer-status ${Quantum?.isEnabled?.() ? 'active' : 'inactive'}">${Quantum?.isEnabled?.() ? 'ACTIVE' : 'INACTIVE'}</span>
         </div>

@@ -288,6 +288,12 @@
     async receiveSession(peerId, initMessage) {
       if (!_initialized) await this.init();
 
+      // Bob receives Alice's x3dh_accept_rust — set peer DR key on existing session
+      // MUST be checked BEFORE version check, since x3dh_accept_rust carries version:3
+      if (initMessage.type === 'x3dh_accept_rust') {
+        return this._receiveAcceptRust(peerId, initMessage);
+      }
+
       // Detect protocol version
       if (initMessage.type === 'x3dh_init_rust' || initMessage.version === 3) {
         return this._receiveRustSession(peerId, initMessage);
@@ -297,9 +303,78 @@
       throw new Error(`[DR Adapter] Legacy X3DH init from ${peerId} (version ${initMessage.version || '?'}). Please ask your contact to update to FIBEMATE v3.`);
     },
 
+    /** Handle Bob's x3dh_accept_rust on Alice's side — sets peer DR key on existing session. */
+    async _receiveAcceptRust(peerId, initMessage) {
+      const bridge = _getRatchetBridge();
+      if (!bridge) throw new Error('Rust DR backend not available');
+
+      const sessionInfo = _sessionMap.get(peerId);
+      if (!sessionInfo) {
+        // No existing session — create one (fallback)
+        let myId = localStorage.getItem('fibemate_rust_identity_id');
+        if (!myId) throw new Error('No identity — call getMyPreKeyBundle() first');
+        const syntheticSsId = 'confirm_' + peerId;
+        const dr = await bridge.initSession(syntheticSsId, peerId, false);
+        if (initMessage.drPublicKey) {
+          await bridge.setPeerKey(dr.sessionId, initMessage.drPublicKey);
+        }
+        _sessionMap.set(peerId, { sessionId: dr.sessionId, identityId: myId, version: DR_VERSION, createdAt: Date.now() });
+        _saveSessionMap();
+        console.log('[DR Adapter] Created session from x3dh_accept_rust for ' + peerId);
+        return { confirmed: true, sessionEstablished: true, sessionReady: true, rustSession: true };
+      }
+
+      // Existing session — set peer DR key
+      if (initMessage.drPublicKey) {
+        await bridge.setPeerKey(sessionInfo.sessionId, initMessage.drPublicKey);
+      }
+      console.log('[DR Adapter] Session confirmed (x3dh_accept_rust) for ' + peerId);
+      return { confirmed: true, sessionEstablished: true, sessionReady: true, rustSession: true };
+    },
+
     async _receiveRustSession(peerId, initMessage) {
       const bridge = _getRatchetBridge();
       if (!bridge) throw new Error('Rust DR backend not available');
+
+      const peerDrPublicKeyHex = initMessage.drPublicKey;
+
+      // ── 幂等保护（核心修复）──
+      // 同一条 initMessage 会被 3 个路径重复调用（websocket 全局块 / 当前窗口块 /
+      // 历史消息加载块）。若每次调用都重新 x3dhRespond + initSession，会重新随机生成
+      // DH 公钥，导致 Alice 用旧的 peer DH 公钥解密 Bob 新消息时触发 ratchet 发散 →
+      // AEAD 失败。
+      // 幂等键：initMessage.ephemeralKey（每次 initiateSession 随机生成）。
+      //   - 相同 ephemeralKey → 同一条 initMessage 重复到达 → 复用旧 session
+      //   - 不同 ephemeralKey → Alice 重新发起握手 → 重建新 session
+      const existing = _sessionMap.get(peerId);
+      const sameHandshake = existing && existing.initEphemeralKey && initMessage.ephemeralKey
+        && existing.initEphemeralKey === initMessage.ephemeralKey;
+      if (existing && existing.sessionId && sameHandshake) {
+        if (peerDrPublicKeyHex) {
+          try {
+            await bridge.setPeerKey(existing.sessionId, peerDrPublicKeyHex);
+          } catch (e) {
+            console.warn('[DR Adapter] setPeerKey (idempotent) failed:', e && e.message);
+          }
+        }
+        const ourSendKey = await bridge.getSendKey(existing.sessionId);
+        console.log(`[DR Adapter] Reusing existing session ${existing.sessionId} for ${peerId}`);
+        return {
+          responseMessage: {
+            type: 'x3dh_accept_rust',
+            version: DR_VERSION,
+            protocol: DR_PROTOCOL,
+            identityKey: initMessage.identityKey,
+            signedPrekeyPk: ourSendKey,
+            drPublicKey: ourSendKey,
+            sessionId: existing.sessionId,
+            accepted: true
+          },
+          sessionEstablished: true,
+          sessionReady: true,
+          rustSession: true
+        };
+      }
 
       let myId = localStorage.getItem('fibemate_rust_identity_id');
       if (!myId) throw new Error('No identity generated — call getMyPreKeyBundle() first');
@@ -307,7 +382,6 @@
       // Parse initiator's keys (hex strings)
       const peerIdentityPkHex = initMessage.identityKey;
       const peerEphemeralPkHex = initMessage.ephemeralKey;
-      const peerDrPublicKeyHex = initMessage.drPublicKey || peerEphemeralPkHex;
 
       console.log(`[DR Adapter] X3DH respond to ${peerId} (X25519)`);
 
@@ -318,14 +392,15 @@
       const dr = await bridge.initSession(x3dh.ssId, peerId, false);
 
       // Set peer DR key
-      await bridge.setPeerKey(dr.sessionId, peerDrPublicKeyHex);
+      await bridge.setPeerKey(dr.sessionId, peerDrPublicKeyHex || peerEphemeralPkHex);
 
       // Store mapping
       _sessionMap.set(peerId, {
         sessionId: dr.sessionId,
         identityId: myId,
         version: DR_VERSION,
-        createdAt: Date.now()
+        createdAt: Date.now(),
+        initEphemeralKey: initMessage.ephemeralKey
       });
       _saveSessionMap();
 
@@ -337,6 +412,7 @@
           identityKey: x3dh.ourIdentityPkHex,
           signedPrekeyPk: x3dh.ourSignedPrekeyPkHex,
           drPublicKey: dr.ourPublicKeyHex,
+          sessionId: dr.sessionId,
           accepted: true
         },
         sessionEstablished: true,
@@ -353,8 +429,15 @@
       }
 
       const bridge = _getRatchetBridge();
-      if (bobResponse.drPublicKey) {
-        await bridge.setPeerKey(sessionInfo.sessionId, bobResponse.drPublicKey);
+      // Support both wrapped {responseMessage: x3dh_accept_rust} and raw x3dh_accept_rust
+      const accept = (bobResponse && bobResponse.responseMessage) ? bobResponse.responseMessage : bobResponse;
+      if (accept && accept.drPublicKey) {
+        // CRITICAL: session is device-local. Our session lives under OUR sessionId;
+        // Bob's sessionId (accept.sessionId) points to a session on Bob's device,
+        // which does NOT exist here. We must set the peer's DR key on OUR session.
+        const ourSessionId = sessionInfo.sessionId;
+        console.error(`[DR-CONFIRM] ourSessionId=${ourSessionId} drPublicKey=${accept.drPublicKey.slice(0,8)}`);
+        await bridge.setPeerKey(ourSessionId, accept.drPublicKey);
       }
       console.log(`[DR Adapter] Session confirmed with ${peerId}`);
       return { confirmed: true };
@@ -419,15 +502,22 @@
       const bridge = _getRatchetBridge();
       if (!bridge) throw new Error('Rust DR backend not available');
 
-      // If we already have a session, use it
       let sessionInfo = _sessionMap.get(peerId);
       if (sessionInfo && sessionInfo.version >= DR_VERSION) {
         try {
           return await bridge.decrypt(sessionInfo.sessionId, envelope.messageJson);
         } catch (e) {
-          console.error(`[DR Adapter] Rust decrypt failed (stale session?):`, e.message);
-          // Don't fall through — ratchet state mismatch is fatal
-          throw new Error(`Decrypt failed: ${e.message}`);
+          // 解密失败 → 自动重试一次（可能对方也刚做了 session 恢复）
+          console.warn(`[DR Adapter] Decrypt failed (first attempt) for ${peerId}:`, e && e.message);
+          try {
+            const retryResult = await bridge.decrypt(sessionInfo.sessionId, envelope.messageJson);
+            console.log(`[DR Adapter] Decrypt succeeded on retry for ${peerId}`);
+            return retryResult;
+          } catch (retryErr) {
+            console.error(`[DR Adapter] Decrypt failed on retry for ${peerId}:`, retryErr && retryErr.message);
+            const errMsg = (e && e.message) ? e.message : JSON.stringify(e);
+            throw new Error('Decrypt failed: ' + errMsg);
+          }
         }
       }
 
@@ -438,9 +528,27 @@
     // Session Management
     // ════════════════════════════════════════════════════════════
 
-    /** Check if a session exists. */
+    /** Check if a session exists (and is actually usable in the Rust store). */
     async hasSession(peerId) {
-      return _sessionMap.has(peerId);
+      const sessionInfo = _sessionMap.get(peerId);
+      if (!sessionInfo || !sessionInfo.sessionId) return false;
+      // Validate against the real Rust session store — the JS mapping may be
+      // stale (e.g. on-disk sessions discarded after a format-version bump).
+      try {
+        const bridge = _getRatchetBridge();
+        if (bridge && bridge.sessionExists) {
+          const ok = await bridge.sessionExists(sessionInfo.sessionId);
+          if (!ok) {
+            console.warn(`[DR Adapter] Stale session mapping for ${peerId} — clearing`);
+            _sessionMap.delete(peerId);
+            _saveSessionMap();
+            return false;
+          }
+        }
+      } catch (e) {
+        console.warn('[DR Adapter] hasSession validation failed:', e && e.message);
+      }
+      return true;
     },
 
     async deleteSession(peerId) {
