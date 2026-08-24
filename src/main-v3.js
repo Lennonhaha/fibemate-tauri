@@ -11,12 +11,17 @@ const API_BASE = (() => {
   // 尝试从 localStorage 读取自定义配置（用于开发和测试）
   const customApi = localStorage.getItem('fk_api_base');
   if (customApi) return customApi;
-  
+
   // 尝试从运行时配置读取（Electron preload 注入）
   if (typeof window !== 'undefined' && window.__FIBEMATE_CONFIG__?.apiBase) {
     return window.__FIBEMATE_CONFIG__.apiBase;
   }
-  
+
+  // Tauri 桌面端自动切换到本地服务器
+  if (typeof window !== 'undefined' && window.__TAURI__) {
+    return 'http://127.0.0.1:3001';
+  }
+
   // 默认：生产环境 HTTPS 域名
   return 'https://fibemate.net/api';
 })();
@@ -304,6 +309,22 @@ function bindEvents() {
       showToast('Key verification: Compare safety numbers in person', 'info');
     }
   });
+  document.getElementById('btnVoiceCall')?.addEventListener('click', () => {
+    if (!currentPeerId) { showToast('Open a chat first', 'warn'); return; }
+    if (typeof window.WebRTCModule !== 'undefined') {
+      window.WebRTCModule.startCall(currentPeerId, 'voice');
+    } else {
+      showToast('WebRTC not available', 'error');
+    }
+  });
+  document.getElementById('btnVideoCall')?.addEventListener('click', () => {
+    if (!currentPeerId) { showToast('Open a chat first', 'warn'); return; }
+    if (typeof window.WebRTCModule !== 'undefined') {
+      window.WebRTCModule.startCall(currentPeerId, 'video');
+    } else {
+      showToast('WebRTC not available', 'error');
+    }
+  });
   document.getElementById('btnBurn')?.addEventListener('click', toggleBurnMode);
   document.getElementById('searchInput')?.addEventListener('input', (e) => handleSearch(e.target.value));
 
@@ -564,17 +585,27 @@ async function loadMessages(conversationId) {
       if (m.envelope && typeof Crypto !== 'undefined') {
         try {
           const envelope = JSON.parse(m.envelope);
-          text = await Crypto.decrypt(m.senderUserId, envelope);
+          if (isSent) {
+            // 自己发的消息：DR 会话 key 是对端，不是自己的 userId
+            // 优先用后端返回的明文，否则占位显示
+            text = m.content || m.plaintext || '[已发送]';
+          } else {
+            text = await Crypto.decrypt(m.senderUserId, envelope);
+          }
         } catch (e) {
           console.error('[Messages v5] Decrypt failed:', e.message);
-          text = `⚠️ 解密失败: ${e.message}`;
+          text = isSent ? '[已发送]' : `⚠️ 解密失败: ${e.message}`;
         }
       } else if (m.encryptedContent && typeof MessageCrypto !== 'undefined') {
         try {
-          text = await MessageCrypto.decrypt(m.senderUserId, m.encryptedContent);
+          if (isSent) {
+            text = m.content || m.plaintext || '[已发送]';
+          } else {
+            text = await MessageCrypto.decrypt(m.senderUserId, m.encryptedContent);
+          }
         } catch (e) {
           console.error('[Messages v5] Legacy decrypt failed:', e);
-          text = '[⚠️ 无法解密（旧格式）]';
+          text = isSent ? '[已发送]' : '[⚠️ 无法解密（旧格式）]';
         }
       } else {
         text = decodeCiphertext(m.ciphertext);
@@ -658,8 +689,7 @@ async function sendMessage() {
               sessionResult = await Crypto.initiateHybridSession(currentPeerId, bundle);
             } else {
               sessionResult = await Crypto.initiateSession(currentPeerId, bundle);
-            }
-              
+
               if (sessionResult.sessionEstablished || sessionResult.sessionReady) {
                 const isHybrid = sessionResult.hybrid || false;
                 const isRust = sessionResult.rustSession || false;
@@ -667,9 +697,6 @@ async function sendMessage() {
                 console.log(`[Send v7] X3DH session established with ${currentPeerId} (${label})`);
                 showToast(`安全会话已建立${isRust ? ' (Rust X25519)' : isHybrid ? ' (后量子)' : ''}`, 'success');
               }
-            } else {
-              console.warn(`[Send v7] Pre-key bundle has no identityKey for ${currentPeerId}`);
-              showToast('对方密钥格式异常，无法建立加密会话', 'warning');
             }
           }
           // Note: 404/not-found is handled in inner try/catch above
@@ -1033,7 +1060,7 @@ function uploadVaultFile() {
 // ================================================
 // Key Management (unchanged from v2)
 // ================================================
-function renderKeyManagement() {
+async function renderKeyManagement() {
   const container = document.getElementById('keyCards');
   const keys = await getKeyInfo();
   container.innerHTML = keys.map(k => `
@@ -1103,12 +1130,12 @@ async function getKeyInfo() {
   return keys;
 }
 
-function rotateKeys() {
+async function rotateKeys() {
   showToast('All active keys rotated. New key pairs generated via WebCrypto.', 'success');
-  renderKeyManagement();
+  await renderKeyManagement();
 }
 
-function exportPublicKeys() {
+async function exportPublicKeys() {
   const keys = (await getKeyInfo()).filter(k => k.active);
   const text = keys.map(k => `${k.type} (${k.algo})\n  Fingerprint: ${k.fingerprint}\n  Created: ${k.created}`).join('\n\n');
   const blob = new Blob([`FIBEMATE Public Key Export\nGenerated: ${new Date().toISOString()}\n\n${text}`], { type: 'text/plain' });
@@ -1605,13 +1632,34 @@ async function verifyContactSafetyNumbers(contactId) {
     let safetyNumbers = null;
     let verificationStatus = null;
     let keySource = 'none';
-    
+
+    // Priority 0: Use Rust RatchetBridge (Tauri native) for authoritative Safety Number
+    if (typeof window.RatchetBridge !== 'undefined') {
+      try {
+        const sessions = await window.RatchetBridge.listSessions();
+        const session = sessions.find(s => s && (s.includes(contactId) || (typeof s === 'string' && s.endsWith('_' + contactId))));
+        if (session) {
+          const sn = await window.RatchetBridge.getSafetyNumber(session);
+          if (sn && sn.safetyNumber) {
+            // Parse "12345 67890 12345 67890 12345" into 12 groups of 5 digits
+            safetyNumbers = sn.safetyNumber.split(' ').filter(s => /^\d{5}$/.test(s));
+            if (safetyNumbers.length === 12) {
+              keySource = 'rust_dr_safety_number';
+              console.log('[Safety] Generated from Rust dr_safety_number');
+            }
+          }
+        }
+      } catch (rustErr) {
+        console.warn('[Safety] Rust getSafetyNumber failed:', rustErr);
+      }
+    }
+
     // Priority 1: Use MessageCryptoV2 with real X3DH identity keys
-    if (typeof MessageCryptoV2 !== 'undefined' && MessageCryptoV2.getSafetyNumberFingerprint) {
+    if (!safetyNumbers && typeof MessageCryptoV2 !== 'undefined' && MessageCryptoV2.getSafetyNumberFingerprint) {
       try {
         // Get contact's identity key from session
         const session = await MessageCryptoV2._getSession(contactId);
-        
+
         if (session && session.theirIdentityKey) {
           // Use real X3DH identity keys to generate safety numbers
           const fingerprint = await MessageCryptoV2.getSafetyNumberFingerprint(
@@ -1619,7 +1667,7 @@ async function verifyContactSafetyNumbers(contactId) {
             contactId,
             session.theirIdentityKey
           );
-          
+
           // Parse fingerprint string into array of 5-digit numbers
           safetyNumbers = fingerprint.split(' ').filter(s => s.length === 5);
           keySource = 'x3dh_session';

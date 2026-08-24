@@ -419,11 +419,22 @@ class P2PNetwork {
   }
   
   setGMPeerPublicKey(peerId, publicKey) {
+    if (!publicKey || publicKey === 'null' || publicKey === 'undefined' || (typeof publicKey === 'string' && publicKey.length < 64)) {
+      console.warn('[p2p-core] Refusing to cache invalid GM peer key for', peerId);
+      localStorage.removeItem(`p2p_gm_peer_${peerId}`);
+      return;
+    }
     localStorage.setItem(`p2p_gm_peer_${peerId}`, publicKey);
   }
-  
+
   getGMPeerPublicKey(peerId) {
-    return localStorage.getItem(`p2p_gm_peer_${peerId}`);
+    // 兼容旧裸字符串格式：遇到坏值/null/未定义/长度不足时清除缓存
+    const v = localStorage.getItem(`p2p_gm_peer_${peerId}`);
+    if (!v || v === 'null' || v === 'undefined' || v.length < 64) {
+      if (v) localStorage.removeItem(`p2p_gm_peer_${peerId}`);
+      return null;
+    }
+    return v;
   }
   
   setEncryptionMode(mode) {

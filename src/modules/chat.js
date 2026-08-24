@@ -127,21 +127,35 @@ async function loadMessages(conversationId) {
           const envelope = wire;
           // 检测 GM 加密信封（Phase 2.4+）
           if (envelope.encryption === 'sm2-sm4-sm3' && window.encryptWithGM) {
-            text = await window.encryptWithGM.decrypt(m.senderUserId, envelope);
+            if (isSent) {
+              text = m.content || m.plaintext || '[已发送]';
+            } else {
+              text = await window.encryptWithGM.decrypt(m.senderUserId, envelope);
+            }
             appendMessage(isSent, text, m.createdAt, true, 'SM4');
             continue;
           }
-          text = await Crypto.decrypt(m.senderUserId, envelope);
+          if (isSent) {
+            // 自己发的消息：DR 会话 key 是对端，不是自己的 userId
+            // 优先用后端返回的明文，否则占位显示
+            text = m.content || m.plaintext || '[已发送]';
+          } else {
+            text = await Crypto.decrypt(m.senderUserId, envelope);
+          }
         } catch (e) {
           console.error('[Messages v5] Decrypt failed:', e.message);
-          text = `⚠️ 解密失败: ${e.message}`;
+          text = isSent ? '[已发送]' : `⚠️ 解密失败: ${e.message}`;
         }
       } else if (m.encryptedContent && typeof MessageCrypto !== 'undefined') {
         try {
-          text = await MessageCrypto.decrypt(m.senderUserId, m.encryptedContent);
+          if (isSent) {
+            text = m.content || m.plaintext || '[已发送]';
+          } else {
+            text = await MessageCrypto.decrypt(m.senderUserId, m.encryptedContent);
+          }
         } catch (e) {
           console.error('[Messages v5] Legacy decrypt failed:', e);
-          text = '[⚠️ 无法解密（旧格式）]';
+          text = isSent ? '[已发送]' : '[⚠️ 无法解密（旧格式）]';
         }
       } else {
         text = decodeCiphertext(m.ciphertext);

@@ -86,7 +86,20 @@ pub fn dr_init(
         // Use ss_id as session_id so both Alice and Bob use the same identifier.
         // This is safe because each X3DH shared secret is unique (different DH combos
         // per session). Alice's session lives on her device; Bob's on his — no collision.
+        //
+        // ── 幂等保护（2026-08-24 修复）──
+        // 同一条 initMessage 被 WS/历史重复投递时，dr_init 可能被多次调用。
+        // 若会话已存在，直接返回不覆盖（避免重建=新 DH 公钥=对端 ratchet 发散）
         let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+        if sessions.has_session(&ss_id)? {
+            // 幂等：会话已存在，复用（不覆盖）
+            eprintln!("[DR-INIT] Session {} already exists, reusing (idempotent)", ss_id);
+            let our_pk = sessions.get_send_key(&ss_id)?;
+            return Ok(DrInitResponse {
+                session_id: ss_id,
+                our_public_key: hex::encode(our_pk),
+            });
+        }
         sessions.create_session(&ss_id, &ss, is_initiator)?;
 
         // Bind identity keys if provided

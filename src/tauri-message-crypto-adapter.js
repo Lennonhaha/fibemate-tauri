@@ -338,7 +338,7 @@
 
       const peerDrPublicKeyHex = initMessage.drPublicKey;
 
-      // ── 幂等保护（核心修复）──
+      // ── 幂等保护（修复版：旧会话无 initEphemeralKey 也复用）──
       // 同一条 initMessage 会被 3 个路径重复调用（websocket 全局块 / 当前窗口块 /
       // 历史消息加载块）。若每次调用都重新 x3dhRespond + initSession，会重新随机生成
       // DH 公钥，导致 Alice 用旧的 peer DH 公钥解密 Bob 新消息时触发 ratchet 发散 →
@@ -346,10 +346,22 @@
       // 幂等键：initMessage.ephemeralKey（每次 initiateSession 随机生成）。
       //   - 相同 ephemeralKey → 同一条 initMessage 重复到达 → 复用旧 session
       //   - 不同 ephemeralKey → Alice 重新发起握手 → 重建新 session
+      // ⚠️ 2026-08-24 修复：旧会话映射（v3.15 格式，只有 peerEphemeralKey）无 initEphemeralKey
+      //    → sameHandshake 恒 false → 重复 init 重建 → DR 发散 → aead::Error
+      //    → 改为：Rust 侧 session 真实存在即复用，不要求 initEphemeralKey 字段
       const existing = _sessionMap.get(peerId);
+      let existingValid = false;
+      if (existing && existing.sessionId) {
+        try {
+          existingValid = await bridge.sessionExists(existing.sessionId);
+        } catch {
+          existingValid = false;
+        }
+      }
       const sameHandshake = existing && existing.initEphemeralKey && initMessage.ephemeralKey
         && existing.initEphemeralKey === initMessage.ephemeralKey;
-      if (existing && existing.sessionId && sameHandshake) {
+      // 只要 Rust 侧 session 还在就复用（不要求 initEphemeralKey 匹配）
+      if (existing && existing.sessionId && existingValid) {
         if (peerDrPublicKeyHex) {
           try {
             await bridge.setPeerKey(existing.sessionId, peerDrPublicKeyHex);

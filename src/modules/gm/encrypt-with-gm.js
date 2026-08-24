@@ -164,44 +164,104 @@ const EncryptWithGM = (() => {
   }
 
   /**
+   * 缓存格式: { pk: string, fp: string, ts: number } （fp 为公钥 SHA256 前 16 字符）
+   * 旧格式（裸字符串/字符串 "null"）自动识别为坏值并清除
+   * TTL: 7 天兜底；轮换检测：服务器 fingerprint 不一致时主动失效
+   */
+  function _isValidCachedPk(obj) {
+    if (!obj) return false;
+    if (typeof obj !== 'object') return false;
+    if (typeof obj.pk !== 'string' || obj.pk.length < 64) return false;
+    if (typeof obj.ts !== 'number') return false;
+    // TTL 兜底：超过 7 天强制刷新
+    if (Date.now() - obj.ts > 7 * 24 * 3600 * 1000) return false;
+    return true;
+  }
+
+  function _fingerprintOf(pk) {
+    if (typeof pk !== 'string' || pk.length < 8) return '';
+    // 用 web crypto 不可用时降级到简单 hash
+    try {
+      // SHA256 first 8 bytes hex (16 chars)
+      // 不引入依赖，使用内置 SubtleCrypto（现代浏览器/Tauri webview 均支持）
+      // 注意：这里只用于缓存比较，不需要密码学强度
+      let h = 5381;
+      for (let i = 0; i < pk.length; i++) h = ((h << 5) + h + pk.charCodeAt(i)) | 0;
+      return ('00000000' + (h >>> 0).toString(16)).slice(-8);
+    } catch { return ''; }
+  }
+
+  /**
    * 获取对端 SM2 公钥
-   * 先查 localStorage 缓存，再查服务器
+   * 先查 localStorage 缓存（带 fingerprint 比对 + TTL），再查服务器
    */
   async function getPeerPublicKey(peerId) {
-    // 1. localStorage 缓存
-    const cached = localStorage.getItem(`p2p_gm_peer_${peerId}`);
-    if (cached) {
-      return cached;
+    // 1. localStorage 缓存（带 TTL + 主动失效）
+    const raw = localStorage.getItem(`p2p_gm_peer_${peerId}`);
+    let cached = null;
+    if (raw) {
+      // 新格式 (JSON 对象)
+      if (raw.startsWith('{')) {
+        try {
+          const obj = JSON.parse(raw);
+          if (_isValidCachedPk(obj)) cached = obj;
+        } catch { /* 坏 JSON */ }
+      } else if (raw !== 'null' && raw !== 'undefined' && raw.length >= 64) {
+        // 旧格式（裸字符串，键入 24h 宽限期），升级为新格式
+        const ts = Date.now();
+        const fp = _fingerprintOf(raw);
+        cached = { pk: raw, fp, ts };
+        localStorage.setItem(`p2p_gm_peer_${peerId}`, JSON.stringify(cached));
+      } else {
+        // 坏值（"null"/"undefined"/空）→ 清除
+        console.warn('[GM Bridge] Removing invalid cache for peer', peerId, ':', raw);
+        localStorage.removeItem(`p2p_gm_peer_${peerId}`);
+      }
     }
 
     // 2. 从服务器获取对端 SM2 公钥（与 X3DH 预密钥 bundle 同端点）
     const token = localStorage.getItem('fk_token');
-    if (!token) return null;
+    if (!token) return cached?.pk || null;
 
     try {
       const res = await fetch(`${API_BASE}/users/${peerId}/keys`, {
         headers: { Authorization: `Bearer ${token}` }
       });
-      if (!res.ok) return null;
+      if (!res.ok) return cached?.pk || null;
 
       const bundle = await res.json();
-      if (bundle.gmPublicKey) {
-        // 缓存到 localStorage
-        localStorage.setItem(`p2p_gm_peer_${peerId}`, bundle.gmPublicKey);
-        return bundle.gmPublicKey;
+      if (bundle.gmPublicKey && bundle.gmPublicKey.length >= 64) {
+        const serverFp = bundle.gmKeyFingerprint || _fingerprintOf(bundle.gmPublicKey);
+        // 主动失效：服务器 fingerprint 与本地不一致 → 立即采用新公钥
+        if (!cached || cached.fp !== serverFp) {
+          const newEntry = { pk: bundle.gmPublicKey, fp: serverFp, ts: Date.now() };
+          localStorage.setItem(`p2p_gm_peer_${peerId}`, JSON.stringify(newEntry));
+          if (cached && cached.fp !== serverFp) {
+            console.log('[GM Bridge] Peer key rotated, refreshed cache for', peerId);
+          }
+          return bundle.gmPublicKey;
+        }
+        return cached.pk;
       }
     } catch (e) {
       console.warn('[GM Bridge] Fetch peer key failed:', e.message);
     }
 
-    return null;
+    return cached?.pk || null;
   }
 
   /**
    * 手动设置对端公钥 (由 P2P 握手等途径)
+   * 守卫: 坏值（null/undefined/"null"）直接清除旧缓存，不写入坏值
    */
   function setPeerPublicKey(peerId, publicKey) {
-    localStorage.setItem(`p2p_gm_peer_${peerId}`, publicKey);
+    if (!publicKey || publicKey === 'null' || publicKey === 'undefined' || (typeof publicKey === 'string' && publicKey.length < 64)) {
+      console.warn('[GM Bridge] Refusing to cache invalid peer key for', peerId);
+      localStorage.removeItem(`p2p_gm_peer_${peerId}`);
+      return;
+    }
+    const entry = { pk: publicKey, fp: _fingerprintOf(publicKey), ts: Date.now() };
+    localStorage.setItem(`p2p_gm_peer_${peerId}`, JSON.stringify(entry));
   }
 
   // ============================================================

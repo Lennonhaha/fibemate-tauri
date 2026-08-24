@@ -60,7 +60,7 @@ function connectWebSocket() {
       if (STATE.ws.readyState === 1) {
         _wsSend({ type: 'auth', token });
       }
-      // Initialize WebRTC module
+      // Re-init WebRTC module in case it was loaded after WS connected
       if (typeof WebRTCModule !== 'undefined') {
         WebRTCModule.init(STATE.ws);
         console.log('[WebRTC] Module initialized');
