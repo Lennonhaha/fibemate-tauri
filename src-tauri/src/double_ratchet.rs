@@ -20,6 +20,10 @@ use sha2::Sha256;
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroize;
 
+/// Maximum number of messages that may be skipped in a single ratchet step.
+/// Bounds the skipped-key pool to prevent memory-exhaustion DoS.
+const MAX_SKIP: u32 = 1000;
+
 /// Ratchet key pair (X25519)
 #[derive(Clone, Zeroize)]
 pub struct RatchetKeyPair {
@@ -59,6 +63,11 @@ pub struct RatchetState {
     pub recv_message_num: u32,
     pub previous_send_keys: HashMap<u32, [u8; 32]>,
     pub skipped_messages: u32,
+    /// Skipped message keys pool (Signal spec). When messages arrive out of
+    /// order, the keys of skipped-over messages are stored here so they can
+    /// be decrypted when they eventually arrive. Indexed by message number.
+    #[serde(default)]
+    pub skipped_keys: HashMap<u32, [u8; 32]>,
     // ── DH ratchet state (v2) ──
     /// Our current DH ratchet private key (X25519, 32 bytes)
     #[serde(default)]
@@ -101,6 +110,7 @@ impl RatchetState {
             recv_message_num: 0,
             previous_send_keys: HashMap::new(),
             skipped_messages: 0,
+            skipped_keys: HashMap::new(),
             dh_private: keypair.private_key,
             root_key: *shared_secret,
             is_initiator,
@@ -359,26 +369,69 @@ impl SessionManager {
     pub fn decrypt_message(&self, session_id: &str, message: &EncryptedMessage) -> Result<Vec<u8>, String> {
         let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
         let state = sessions.get_mut(session_id).ok_or("Session not found")?;
+
+        // 1. Handshake / DH ratchet
         if state.recv_public_key == [0u8; 32] {
-            // Handshake not yet complete (setPeerKey hasn't run, or arrived
-            // after this message). Adopt the peer's initial DH public key
-            // WITHOUT ratcheting — chain keys were already derived symmetrically
-            // at init, so ratcheting here would diverge the two sides.
+            // Handshake not yet complete. Adopt the peer's initial DH public
+            // key WITHOUT ratcheting — chain keys were already derived
+            // symmetrically at init, so ratcheting here would diverge.
             state.recv_public_key = message.public_key;
         } else if message.public_key != state.recv_public_key {
+            // Peer rotated their DH public key → ratchet our recv chain.
             state.ratchet_step(message.public_key)?;
         }
+
+        // 2. Message-key derivation (Signal spec: skipped-key pool)
         let mut chain = KdfChain::new(state.recv_chain_key);
-        if message.message_num > state.recv_message_num {
+        let message_key = if message.message_num == state.recv_message_num {
+            // Expected next message in order.
+            chain.next_message_key()
+        } else if message.message_num > state.recv_message_num {
+            // Out-of-order (jump forward). Derive the skipped-over message
+            // keys and stash them in the skipped-key pool so they can be
+            // decrypted when they eventually arrive.
             let skip_count = message.message_num - state.recv_message_num;
-            let _ = chain.skip_messages(skip_count);
-            state.skipped_messages += skip_count;
+            if skip_count > MAX_SKIP {
+                return Err(format!(
+                    "Too many skipped messages: {} (MAX_SKIP={})",
+                    skip_count, MAX_SKIP
+                ));
+            }
+            let skipped = chain.skip_messages(skip_count);
+            for (i, k) in skipped.iter().enumerate() {
+                state.skipped_keys.insert(state.recv_message_num + i as u32, *k);
+            }
+            // Derive the key for the current message (one past the skips).
+            chain.next_message_key()
+        } else {
+            // message_num < recv_message_num: a previously-skipped (late)
+            // message arrived. Try the skipped-key pool; otherwise it is a
+            // replay and must be rejected.
+            match state.skipped_keys.remove(&message.message_num) {
+                Some(k) => k,
+                None => {
+                    return Err(format!(
+                        "Replay or stale message: num={} already advanced past {} (no skipped key)",
+                        message.message_num, state.recv_message_num
+                    ));
+                }
+            }
+        };
+
+        // 3. Advance chain state only when the message moved the window forward.
+        if message.message_num >= state.recv_message_num {
+            state.recv_chain_key = chain.chain_key;
+            state.recv_message_num = message.message_num + 1;
         }
-        let message_key = chain.next_message_key();
-        state.recv_chain_key = chain.chain_key;
+
+        // 4. Decrypt
         let associated_data = &message.public_key;
-        let plaintext = AesGcmEncryptor::decrypt(&message_key, &message.nonce, &message.ciphertext, associated_data)?;
-        state.recv_message_num = message.message_num + 1;
+        let plaintext = AesGcmEncryptor::decrypt(
+            &message_key,
+            &message.nonce,
+            &message.ciphertext,
+            associated_data,
+        )?;
         Ok(plaintext)
     }
 
@@ -513,6 +566,41 @@ mod tests {
     }
 
     #[test]
+    fn test_full_handshake_roundtrip_realistic() {
+        // 模拟真实命令：Bob 的 SPK = IK（identity.rs x3dh_respond 用 my_identity.clone()）
+        let ik_a = RatchetKeyPair::generate();
+        let ek_a = RatchetKeyPair::generate();
+        let ik_b = RatchetKeyPair::generate();
+
+        // Alice: x3dhInitiate(IK_A, EK_A, IK_B, SPK_B=IK_B)
+        let initiator_ss = X3DH::initiator(&ik_a, &ek_a, &ik_b.public_key, &ik_b.public_key).unwrap();
+        // Bob: x3dhRespond(IK_B, SPK_B=IK_B, IK_A, EK_A)
+        let responder_ss = X3DH::responder(&ik_b, &ik_b, &ik_a.public_key, &ek_a.public_key).unwrap();
+        assert_eq!(initiator_ss, responder_ss, "X3DH 双方共享密钥不对称（SPK=IK 退化）");
+
+        let sm = SessionManager::new();
+        sm.create_session("alice", &initiator_ss, true).unwrap();
+        sm.create_session("bob", &responder_ss, false).unwrap();
+
+        // Alice → Bob
+        let msg1 = sm.encrypt_message("alice", b"hello bob").unwrap();
+        let pt1 = sm.decrypt_message("bob", &msg1).unwrap();
+        assert_eq!(pt1, b"hello bob");
+
+        // Bob → Alice
+        let msg2 = sm.encrypt_message("bob", b"hello alice").unwrap();
+        let pt2 = sm.decrypt_message("alice", &msg2).unwrap();
+        assert_eq!(pt2, b"hello alice");
+
+        // 多轮 Alice → Bob
+        for i in 0..10 {
+            let m = sm.encrypt_message("alice", format!("m{}", i).as_bytes()).unwrap();
+            let p = sm.decrypt_message("bob", &m).unwrap();
+            assert_eq!(p, format!("m{}", i).as_bytes());
+        }
+    }
+
+    #[test]
     fn test_hkdf_golden_vectors() {
         use hkdf::Hkdf;
         use sha2::Sha256;
@@ -563,5 +651,56 @@ mod tests {
         let enc = alice.encrypt_message("bob", b"Test").unwrap();
         let dec = bob.decrypt_message("alice", &enc).unwrap();
         assert_eq!(dec, b"Test");
+    }
+
+    #[test]
+    fn test_out_of_order_with_skipped_keys() {
+        // 工业级双棘轮核心：乱序消息 + 跳钥池
+        let secret = [42u8; 32];
+        let alice = SessionManager::new();
+        let bob = SessionManager::new();
+        alice.create_session("bob", &secret, true).unwrap();
+        bob.create_session("alice", &secret, false).unwrap();
+        bob.set_peer_key("alice", alice.get_send_key("bob").unwrap()).unwrap();
+        alice.set_peer_key("bob", bob.get_send_key("alice").unwrap()).unwrap();
+
+        // Alice 连发 5 条
+        let msgs: Vec<_> = (0..5)
+            .map(|i| alice.encrypt_message("bob", format!("m{}", i).as_bytes()).unwrap())
+            .collect();
+
+        // Bob 乱序接收：3, 1, 4, 0, 2
+        let order = [3usize, 1, 4, 0, 2];
+        for &idx in &order {
+            let pt = bob.decrypt_message("alice", &msgs[idx]).unwrap();
+            assert_eq!(pt, format!("m{}", idx).as_bytes(), "乱序消息 {} 解密失败", idx);
+        }
+
+        // 全部解密后，skipped 池应已清空
+        let sessions = bob.list_session_ids();
+        assert_eq!(sessions.len(), 1);
+    }
+
+    #[test]
+    fn test_replay_rejected() {
+        // 重放/过期消息必须被拒绝（不在跳钥池中）
+        let secret = [42u8; 32];
+        let alice = SessionManager::new();
+        let bob = SessionManager::new();
+        alice.create_session("bob", &secret, true).unwrap();
+        bob.create_session("alice", &secret, false).unwrap();
+        bob.set_peer_key("alice", alice.get_send_key("bob").unwrap()).unwrap();
+        alice.set_peer_key("bob", bob.get_send_key("alice").unwrap()).unwrap();
+
+        let m0 = alice.encrypt_message("bob", b"first").unwrap();
+        let m1 = alice.encrypt_message("bob", b"second").unwrap();
+        let m2 = alice.encrypt_message("bob", b"third").unwrap();
+
+        assert_eq!(bob.decrypt_message("alice", &m0).unwrap(), b"first");
+        assert_eq!(bob.decrypt_message("alice", &m1).unwrap(), b"second");
+        assert_eq!(bob.decrypt_message("alice", &m2).unwrap(), b"third");
+
+        // 重放 m0（已消费，不在池中）→ 拒绝
+        assert!(bob.decrypt_message("alice", &m0).is_err());
     }
 }
