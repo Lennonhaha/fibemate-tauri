@@ -126,8 +126,12 @@
         throw new Error('[DR Adapter] Rust DR backend not available');
       }
 
+      // Per-user identity isolation: 同机双账号时各用独立 identity
+      const currentUserId = localStorage.getItem('fk_uid') || 'default';
+      const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
+
       // Ensure we have an identity
-      let identityId = localStorage.getItem('fibemate_rust_identity_id');
+      let identityId = localStorage.getItem(identityKey);
       let identity;
       if (identityId) {
         try {
@@ -140,7 +144,7 @@
       if (!identityId) {
         identity = await bridge.generateIdentity();
         identityId = identity.identityId;
-        localStorage.setItem('fibemate_rust_identity_id', identityId);
+        localStorage.setItem(identityKey, identityId);
       }
       _identityBundles[identityId] = identity;
 
@@ -215,8 +219,9 @@
         throw new Error('[DR Adapter] Rust DR backend not available — Tauri required');
       }
 
-      // Get our identity
-      let myId = localStorage.getItem('fibemate_rust_identity_id');
+      const currentUserId = localStorage.getItem('fk_uid') || 'default';
+      const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
+      let myId = localStorage.getItem(identityKey);
       if (!myId) throw new Error('No identity generated — call getMyPreKeyBundle() first');
 
       // Extract peer's identity key from bundle
@@ -311,7 +316,9 @@
       const sessionInfo = _sessionMap.get(peerId);
       if (!sessionInfo) {
         // No existing session — create one (fallback)
-        let myId = localStorage.getItem('fibemate_rust_identity_id');
+        const currentUserId = localStorage.getItem('fk_uid') || 'default';
+        const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
+        let myId = localStorage.getItem(identityKey);
         if (!myId) throw new Error('No identity — call getMyPreKeyBundle() first');
         const syntheticSsId = 'confirm_' + peerId;
         const dr = await bridge.initSession(syntheticSsId, peerId, false);
@@ -388,7 +395,9 @@
         };
       }
 
-      let myId = localStorage.getItem('fibemate_rust_identity_id');
+      const currentUserId = localStorage.getItem('fk_uid') || 'default';
+      const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
+      let myId = localStorage.getItem(identityKey);
       if (!myId) throw new Error('No identity generated — call getMyPreKeyBundle() first');
 
       // Parse initiator's keys (hex strings)
