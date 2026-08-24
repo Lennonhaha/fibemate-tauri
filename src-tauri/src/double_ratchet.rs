@@ -23,6 +23,9 @@ use zeroize::Zeroize;
 /// Maximum number of messages that may be skipped in a single ratchet step.
 /// Bounds the skipped-key pool to prevent memory-exhaustion DoS.
 const MAX_SKIP: u32 = 1000;
+/// Maximum entries kept in previous_send_keys to bound memory growth.
+/// On insertion, if the map exceeds this size the oldest key (lowest message_num) is evicted.
+const MAX_PREVIOUS_SEND_KEYS: usize = 100;
 
 /// Ratchet key pair (X25519)
 #[derive(Clone, Zeroize)]
@@ -120,7 +123,17 @@ impl RatchetState {
     }
 
     pub fn ratchet_step(&mut self, their_public_key: [u8; 32]) -> Result<(), String> {
+        // Clear skipped_keys pool: these are derived from the OLD chain and
+        // become invalid after a DH ratchet. Draining the pool here also
+        // prevents unbounded memory growth on long-running sessions.
+        self.skipped_keys.clear();
         self.previous_send_keys.insert(self.send_message_num, self.send_chain_key);
+        // Evict oldest entry if map grew beyond the cap (FIFO).
+        if self.previous_send_keys.len() > MAX_PREVIOUS_SEND_KEYS {
+            if let Some(&min_key) = self.previous_send_keys.keys().min() {
+                self.previous_send_keys.remove(&min_key);
+            }
+        }
         // 1. Derive a new recv chain from (current dh_private, their new pub)
         let shared = RatchetKeyPair::from_private_key(self.dh_private)
             .diffie_hellman(&their_public_key)?;

@@ -26,9 +26,13 @@
   let _opkUploadCallback = null;
 
   // Session persistence key
-  const STORAGE_KEY = 'fibemate_rust_sessions';
+  // Per-user session storage key to isolate same-machine multi-account sessions.
+  const STORAGE_KEY = () => 'fibemate_rust_sessions_' + (localStorage.getItem('fk_uid') || 'default');
   const DR_PROTOCOL = 'double-ratchet-x25519';
   const DR_VERSION = 3;
+
+  // Track logged-in user to detect account switches
+  let _currentUserId = localStorage.getItem('fk_uid') || 'default';
 
   // ── Persistence ──────────────────────────────────────────────
 
@@ -38,7 +42,7 @@
       for (const [peerId, info] of _sessionMap) {
         data[peerId] = info;
       }
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+      localStorage.setItem(STORAGE_KEY(), JSON.stringify(data));
     } catch (e) {
       console.warn('[DR Adapter] Failed to persist session map:', e.message);
     }
@@ -46,7 +50,7 @@
 
   function _loadSessionMap() {
     try {
-      const raw = localStorage.getItem(STORAGE_KEY);
+      const raw = localStorage.getItem(STORAGE_KEY());
       if (raw) {
         const data = JSON.parse(raw);
         for (const [peerId, info] of Object.entries(data)) {
@@ -126,8 +130,15 @@
         throw new Error('[DR Adapter] Rust DR backend not available');
       }
 
-      // Per-user identity isolation: 同机双账号时各用独立 identity
+      // Detect account switch — clear session/identity state for the new user
       const currentUserId = localStorage.getItem('fk_uid') || 'default';
+      if (currentUserId !== _currentUserId) {
+        _sessionMap.clear();
+        _identityBundles = {};
+        _currentUserId = currentUserId;
+      }
+
+      // Per-user identity isolation: 同机双账号时各用独立 identity
       const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
 
       // Ensure we have an identity
@@ -220,6 +231,12 @@
       }
 
       const currentUserId = localStorage.getItem('fk_uid') || 'default';
+
+      if (currentUserId !== _currentUserId) {
+        _sessionMap.clear();
+        _identityBundles = {};
+        _currentUserId = currentUserId;
+      }
       const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
       let myId = localStorage.getItem(identityKey);
       if (!myId) throw new Error('No identity generated — call getMyPreKeyBundle() first');
@@ -317,6 +334,12 @@
       if (!sessionInfo) {
         // No existing session — create one (fallback)
         const currentUserId = localStorage.getItem('fk_uid') || 'default';
+
+      if (currentUserId !== _currentUserId) {
+        _sessionMap.clear();
+        _identityBundles = {};
+        _currentUserId = currentUserId;
+      }
         const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
         let myId = localStorage.getItem(identityKey);
         if (!myId) throw new Error('No identity — call getMyPreKeyBundle() first');
@@ -396,6 +419,12 @@
       }
 
       const currentUserId = localStorage.getItem('fk_uid') || 'default';
+
+      if (currentUserId !== _currentUserId) {
+        _sessionMap.clear();
+        _identityBundles = {};
+        _currentUserId = currentUserId;
+      }
       const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
       let myId = localStorage.getItem(identityKey);
       if (!myId) throw new Error('No identity generated — call getMyPreKeyBundle() first');
