@@ -131,6 +131,10 @@ async function loadMessages(conversationId) {
               text = m.content || m.plaintext || '[已发送]';
             } else {
               text = await window.encryptWithGM.decrypt(m.senderUserId, envelope);
+              if (text === null) {
+                console.debug('[Messages v5] Skipping duplicate GM message:', m.id || m._id);
+                continue;
+              }
             }
             appendMessage(isSent, text, m.createdAt, true, 'SM4');
             continue;
@@ -141,6 +145,11 @@ async function loadMessages(conversationId) {
             text = m.content || m.plaintext || '[已发送]';
           } else {
             text = await Crypto.decrypt(m.senderUserId, envelope);
+            // null = duplicate / replay → silently skip this message
+            if (text === null) {
+              console.debug('[Messages v5] Skipping duplicate message:', m.id || m._id);
+              continue;
+            }
           }
         } catch (e) {
           console.error('[Messages v5] Decrypt failed:', e.message);
@@ -152,6 +161,10 @@ async function loadMessages(conversationId) {
             text = m.content || m.plaintext || '[已发送]';
           } else {
             text = await MessageCrypto.decrypt(m.senderUserId, m.encryptedContent);
+            if (text === null) {
+              console.debug('[Messages v5] Skipping duplicate legacy message:', m.id || m._id);
+              continue;
+            }
           }
         } catch (e) {
           console.error('[Messages v5] Legacy decrypt failed:', e);

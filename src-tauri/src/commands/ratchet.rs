@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use tauri::State;
-use uuid::Uuid;
+// use uuid::Uuid; // TODO: re-enable if session IDs need UUID generation
 
 use crate::commands::CryptoState;
 use crate::double_ratchet::EncryptedMessage;
@@ -39,8 +39,9 @@ pub struct DrDecryptRequest {
 
 #[derive(Serialize, Clone)]
 pub struct DrDecryptResponse {
-    /// Decrypted plaintext as hex string
-    pub plaintext_hex: String,
+    /// Decrypted plaintext as hex string, or null if the message was a
+    /// duplicate/replay and should be silently dropped.
+    pub plaintext_hex: Option<String>,
 }
 
 // ── Commands ────────────────────────────────────────────────────
@@ -203,7 +204,7 @@ pub fn dr_decrypt(
 
     let msg_pk8 = &encrypted.public_key[..4];
     let result = {
-        let mut sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+        let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
         let recv_pk8 = sessions
             .get_session_recv_pk(&session_id)
             .map(|pk| hex::encode(pk)[..8].to_string())
@@ -222,14 +223,21 @@ pub fn dr_decrypt(
     };
 
     match &result {
-        Ok(_) => eprintln!("[DR-DECRYPT] OK"),
+        Ok(Some(_)) => eprintln!("[DR-DECRYPT] OK"),
+        Ok(None) => eprintln!("[DR-DECRYPT] DROP (replay)"),
         Err(e) => eprintln!("[DR-DECRYPT] FAIL: {}", e),
     }
 
-    let plaintext = result?;
+    // Save state even on DROP (replay) so recv_message_num advances
     state.save_sessions_to_disk()?;
 
-    Ok(DrDecryptResponse { plaintext_hex: hex::encode(&plaintext) })
+    let plaintext_hex = match result {
+        Ok(Some(p)) => Some(hex::encode(&p)),
+        Ok(None) => None,          // duplicate / replay — silent drop
+        Err(e) => return Err(e),   // propagate real errors
+    };
+
+    Ok(DrDecryptResponse { plaintext_hex })
 }
 
 /// Check whether a session exists in Rust state (for JS-layer deduplication).

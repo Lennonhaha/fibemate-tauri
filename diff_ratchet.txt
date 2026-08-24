@@ -1,0 +1,23 @@
+﻿diff --git a/src-tauri/src/commands/ratchet.rs b/src-tauri/src/commands/ratchet.rs
+index 08eb3f5..24f977d 100644
+--- a/src-tauri/src/commands/ratchet.rs
++++ b/src-tauri/src/commands/ratchet.rs
+@@ -86,7 +86,20 @@ pub fn dr_init(
+         // Use ss_id as session_id so both Alice and Bob use the same identifier.
+         // This is safe because each X3DH shared secret is unique (different DH combos
+         // per session). Alice's session lives on her device; Bob's on his 鈥?no collision.
++        //
++        // 鈹€鈹€ 骞傜瓑淇濇姢锛?026-08-24 淇锛夆攢鈹€
++        // 鍚屼竴鏉?initMessage 琚?WS/鍘嗗彶閲嶅鎶曢€掓椂锛宒r_init 鍙兘琚娆¤皟鐢ㄣ€?+        // 鑻ヤ細璇濆凡瀛樺湪锛岀洿鎺ヨ繑鍥炰笉瑕嗙洊锛堥伩鍏嶉噸寤?鏂?DH 鍏挜=瀵圭 ratchet 鍙戞暎锛?         let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
++        if sessions.has_session(&ss_id)? {
++            // 骞傜瓑锛氫細璇濆凡瀛樺湪锛屽鐢紙涓嶈鐩栵級
++            eprintln!("[DR-INIT] Session {} already exists, reusing (idempotent)", ss_id);
++            let our_pk = sessions.get_send_key(&ss_id)?;
++            return Ok(DrInitResponse {
++                session_id: ss_id,
++                our_public_key: hex::encode(our_pk),
++            });
++        }
+         sessions.create_session(&ss_id, &ss, is_initiator)?;
+ 
+         // Bind identity keys if provided

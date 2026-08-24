@@ -366,7 +366,11 @@ impl SessionManager {
         Ok(message)
     }
 
-    pub fn decrypt_message(&self, session_id: &str, message: &EncryptedMessage) -> Result<Vec<u8>, String> {
+    /// Decrypt a message. Returns:
+    ///   Ok(Some(plaintext))  — successful decryption
+    ///   Ok(None)            — duplicate / replay, silently drop
+    ///   Err(e)              — real decryption failure
+    pub fn decrypt_message(&self, session_id: &str, message: &EncryptedMessage) -> Result<Option<Vec<u8>>, String> {
         let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
         let state = sessions.get_mut(session_id).ok_or("Session not found")?;
 
@@ -407,13 +411,19 @@ impl SessionManager {
             // message_num < recv_message_num: a previously-skipped (late)
             // message arrived. Try the skipped-key pool; otherwise it is a
             // replay and must be rejected.
-            match state.skipped_keys.remove(&message.message_num) {
-                Some(k) => k,
-                None => {
-                    return Err(format!(
-                        "Replay or stale message: num={} already advanced past {} (no skipped key)",
-                        message.message_num, state.recv_message_num
-                    ));
+            // Try skipped_keys pool first (within current chain).
+            if let Some(k) = state.skipped_keys.remove(&message.message_num) {
+                k
+            } else {
+                // Cross-chain: try previous_send_keys (Signal spec "skipped message keys
+                // from a previous chain"). Handles the case where peer performed a DH ratchet
+                // between sending two messages.
+                if let Some(prev_key) = state.previous_send_keys.get(&message.message_num) {
+                    prev_key.clone()
+                } else {
+                    // No key found — genuine duplicate / replay.
+                    // Return Ok(None) so the adapter silently drops it.
+                    return Ok(None);
                 }
             }
         };
@@ -432,7 +442,7 @@ impl SessionManager {
             &message.ciphertext,
             associated_data,
         )?;
-        Ok(plaintext)
+        Ok(Some(plaintext))
     }
 
     pub fn delete_session(&self, session_id: &str) {
@@ -584,19 +594,19 @@ mod tests {
 
         // Alice → Bob
         let msg1 = sm.encrypt_message("alice", b"hello bob").unwrap();
-        let pt1 = sm.decrypt_message("bob", &msg1).unwrap();
+        let pt1 = sm.decrypt_message("bob", &msg1).unwrap().unwrap();
         assert_eq!(pt1, b"hello bob");
 
         // Bob → Alice
         let msg2 = sm.encrypt_message("bob", b"hello alice").unwrap();
-        let pt2 = sm.decrypt_message("alice", &msg2).unwrap();
+        let pt2 = sm.decrypt_message("alice", &msg2).unwrap().unwrap();
         assert_eq!(pt2, b"hello alice");
 
         // 多轮 Alice → Bob
         for i in 0..10 {
             let m = sm.encrypt_message("alice", format!("m{}", i).as_bytes()).unwrap();
-            let p = sm.decrypt_message("bob", &m).unwrap();
-            assert_eq!(p, format!("m{}", i).as_bytes());
+            let p = sm.decrypt_message("bob", &m).unwrap().unwrap();
+            assert_eq!(p, format!("m{}", i).into_bytes());
         }
     }
 
@@ -649,7 +659,7 @@ mod tests {
         bob.set_peer_key("alice", alice.get_send_key("bob").unwrap()).unwrap();
         alice.set_peer_key("bob", bob.get_send_key("alice").unwrap()).unwrap();
         let enc = alice.encrypt_message("bob", b"Test").unwrap();
-        let dec = bob.decrypt_message("alice", &enc).unwrap();
+        let dec = bob.decrypt_message("alice", &enc).unwrap().unwrap();
         assert_eq!(dec, b"Test");
     }
 
@@ -672,8 +682,8 @@ mod tests {
         // Bob 乱序接收：3, 1, 4, 0, 2
         let order = [3usize, 1, 4, 0, 2];
         for &idx in &order {
-            let pt = bob.decrypt_message("alice", &msgs[idx]).unwrap();
-            assert_eq!(pt, format!("m{}", idx).as_bytes(), "乱序消息 {} 解密失败", idx);
+            let pt = bob.decrypt_message("alice", &msgs[idx]).unwrap().unwrap();
+            assert_eq!(pt, format!("m{}", idx).into_bytes(), "乱序消息 {} 解密失败", idx);
         }
 
         // 全部解密后，skipped 池应已清空
@@ -696,11 +706,11 @@ mod tests {
         let m1 = alice.encrypt_message("bob", b"second").unwrap();
         let m2 = alice.encrypt_message("bob", b"third").unwrap();
 
-        assert_eq!(bob.decrypt_message("alice", &m0).unwrap(), b"first");
-        assert_eq!(bob.decrypt_message("alice", &m1).unwrap(), b"second");
-        assert_eq!(bob.decrypt_message("alice", &m2).unwrap(), b"third");
+        assert_eq!(bob.decrypt_message("alice", &m0).unwrap().unwrap(), b"first");
+        assert_eq!(bob.decrypt_message("alice", &m1).unwrap().unwrap(), b"second");
+        assert_eq!(bob.decrypt_message("alice", &m2).unwrap().unwrap(), b"third");
 
-        // 重放 m0（已消费，不在池中）→ 拒绝
-        assert!(bob.decrypt_message("alice", &m0).is_err());
+        // 重放 m0（已消费）→ Ok(None) = silent drop
+        assert_eq!(bob.decrypt_message("alice", &m0).unwrap(), None);
     }
 }

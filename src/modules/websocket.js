@@ -134,6 +134,11 @@ function connectWebSocket() {
               // 检测 GM 加密信封（Phase 2.4+）
               if (envelope.encryption === 'sm2-sm4-sm3' && window.encryptWithGM) {
                 text = await window.encryptWithGM.decrypt(msg.from, envelope);
+                // null = duplicate / replay → silently drop
+                if (text === null) {
+                  console.debug('[WS v2.4] Skipping duplicate GM message from', msg.from);
+                  return;
+                }
                 console.log('[WS v2.4] GM SM2+SM4+SM3 message decrypted');
                 appendMessage(false, text, msg.createdAt || Date.now(), true, 'SM4');
                 return;
@@ -150,6 +155,11 @@ function connectWebSocket() {
               }
               
               text = await Crypto.decrypt(msg.from, envelope);
+              // null = duplicate / replay → silently drop (WebSocket reconnection sends dupes)
+              if (text === null) {
+                console.debug('[WS v6] Skipping duplicate message from', msg.from);
+                return;
+              }
               console.log(`[WS v6] E2EE message decrypted (protocol=${envelope.protocol})`);
             } catch (decryptErr) {
               // 断裂点 #3 修复：不静默降级，明确告警
@@ -167,6 +177,11 @@ function connectWebSocket() {
             // v4 兼容格式（旧版客户端）
             try {
               text = await MessageCrypto.decrypt(msg.from, msg.encryptedContent);
+              // null = duplicate / replay → silently drop
+              if (text === null) {
+                console.debug('[WS v5] Skipping duplicate legacy message from', msg.from);
+                return;
+              }
               console.log('[WS v5] Legacy decrypt (v1 format)');
             } catch (legacyErr) {
               console.error('[WS v5] Legacy decrypt failed:', legacyErr);

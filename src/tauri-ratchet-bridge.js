@@ -282,6 +282,10 @@
     async decrypt(sessionId, messageJson) {
       if (!this.initialized) this.init();
       const result = await invoke()('dr_decrypt', { sessionId, messageJson });
+      // null plaintext_hex means duplicate/replay — signal silent drop to adapter
+      if (result.plaintext_hex === null) {
+        throw new Error('MESSAGE_DROP');
+      }
       return hexToText(result.plaintext_hex);
     },
 

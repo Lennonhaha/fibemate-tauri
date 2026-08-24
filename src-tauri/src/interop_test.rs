@@ -25,7 +25,7 @@ fn test_js_to_rust_interop() {
 
     // 加密 → 解密
     let encrypted = alice.encrypt_message("bob", "跨语言互通测试 hello world".as_bytes()).unwrap();
-    let plaintext = bob.decrypt_message("alice", &encrypted).unwrap();
+    let plaintext = bob.decrypt_message("alice", &encrypted).unwrap().unwrap();
     let text = String::from_utf8(plaintext).unwrap();
     assert_eq!(text, "跨语言互通测试 hello world", "固定 shared_secret 两端互通失败");
 }
