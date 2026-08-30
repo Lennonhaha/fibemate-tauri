@@ -20,7 +20,7 @@
   --danger: #FF4757;
   --success: #00E5C3;
   --sidebar-width: 280px;
-  --font-sans: 'Inter', 'PingFang SC', 'Microsoft YaHei', system-ui, -apple-system, sans-serif;
+  --font-sans: 'Inter', system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', 'Microsoft JhengHei', 'Source Han Sans SC', 'Noto Sans CJK SC', 'WenQuanYi Micro Hei', sans-serif;
   --font-serif: 'Georgia', 'Songti SC', 'STSong', 'SimSun', 'Times New Roman', serif;
   /* 莫兰迪低饱和色系（灰绿/灰蓝/暖米/淡玫瑰） */
   --morandi-sage: #9CAF88;
