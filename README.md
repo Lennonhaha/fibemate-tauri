@@ -94,8 +94,8 @@ Private keys are stored encrypted on disk, decrypted on-demand, and zeroized aft
 
 ```bash
 # Clone
-git clone https://github.com/your-org/fibemate.git
-cd fibemate
+git clone https://github.com/Lennonhaha/fibemate-tauri.git
+cd fibemate-tauri
 
 # Install frontend dependencies
 npm install
