@@ -59,12 +59,20 @@ pub(crate) mod field {
     #[inline]
     pub fn add(a: &BigUint, b: &BigUint) -> BigUint {
         let s = a + b;
-        if s >= *SM2_P { s - &*SM2_P } else { s }
+        if s >= *SM2_P {
+            s - &*SM2_P
+        } else {
+            s
+        }
     }
 
     #[inline]
     pub fn sub(a: &BigUint, b: &BigUint) -> BigUint {
-        if a >= b { a - b } else { a + &*SM2_P - b }
+        if a >= b {
+            a - b
+        } else {
+            a + &*SM2_P - b
+        }
     }
 
     #[inline]
@@ -103,7 +111,11 @@ pub(crate) mod field {
     #[inline]
     pub fn add_n(a: &BigUint, b: &BigUint) -> BigUint {
         let s = a + b;
-        if s >= *SM2_N { s - &*SM2_N } else { s }
+        if s >= *SM2_N {
+            s - &*SM2_N
+        } else {
+            s
+        }
     }
 }
 
@@ -130,7 +142,10 @@ struct JacobianPoint {
 
 impl AffinePoint {
     pub fn new(x: BigUint, y: BigUint) -> Self {
-        Self { x: Some(x), y: Some(y) }
+        Self {
+            x: Some(x),
+            y: Some(y),
+        }
     }
 
     pub fn infinity() -> Self {
@@ -144,7 +159,11 @@ impl AffinePoint {
 
 impl JacobianPoint {
     fn zero() -> Self {
-        Self { x: BigUint::zero(), y: BigUint::zero(), z: BigUint::zero() }
+        Self {
+            x: BigUint::zero(),
+            y: BigUint::zero(),
+            z: BigUint::zero(),
+        }
     }
 
     fn is_inf(&self) -> bool {
@@ -185,7 +204,9 @@ lazy_static::lazy_static! {
 
 /// Point doubling in Jacobian coordinates.
 fn jacobian_dbl(p: &JacobianPoint) -> JacobianPoint {
-    if p.is_inf() { return p.clone(); }
+    if p.is_inf() {
+        return p.clone();
+    }
 
     let yy = field::sqr(&p.y);
     let y4 = field::sqr(&yy);
@@ -195,23 +216,35 @@ fn jacobian_dbl(p: &JacobianPoint) -> JacobianPoint {
     let zz = field::sqr(&p.z);
     let z4 = field::sqr(&zz);
     let three = BigUint::from(3u32);
-    let m = field::sub(&field::mul(&three, &field::sqr(&p.x)),
-                       &field::mul(&three, &z4));
+    let m = field::sub(
+        &field::mul(&three, &field::sqr(&p.x)),
+        &field::mul(&three, &z4),
+    );
 
     let two = BigUint::from(2u32);
     let eight = BigUint::from(8u32);
     let x3 = field::sub(&field::sqr(&m), &field::mul(&s, &two));
-    let y3 = field::sub(&field::mul(&m, &field::sub(&s, &x3)),
-                        &field::mul(&y4, &eight));
+    let y3 = field::sub(
+        &field::mul(&m, &field::sub(&s, &x3)),
+        &field::mul(&y4, &eight),
+    );
     let z3 = field::mul(&field::mul(&p.y, &p.z), &two);
 
-    JacobianPoint { x: x3, y: y3, z: z3 }
+    JacobianPoint {
+        x: x3,
+        y: y3,
+        z: z3,
+    }
 }
 
 /// Mixed addition: affine A + Jacobian Q → Jacobian.
 fn jacobian_add_mixed(a: &AffinePoint, q: &JacobianPoint) -> JacobianPoint {
-    if q.is_inf() { return JacobianPoint::from_affine(a); }
-    if a.is_infinity() { return q.clone(); }
+    if q.is_inf() {
+        return JacobianPoint::from_affine(a);
+    }
+    if a.is_infinity() {
+        return q.clone();
+    }
 
     let ax = a.x.as_ref().unwrap();
     let ay = a.y.as_ref().unwrap();
@@ -234,20 +267,28 @@ fn jacobian_add_mixed(a: &AffinePoint, q: &JacobianPoint) -> JacobianPoint {
     let r = field::mul(&field::sub(&s2, &q.y), &two);
     let v = field::mul(&q.x, &i);
 
-    let x3 = field::sub(&field::sub(&field::sqr(&r), &j),
-                        &field::mul(&v, &two));
-    let y3 = field::sub(&field::mul(&r, &field::sub(&v, &x3)),
-                        &field::mul(&field::mul(&q.y, &two), &j));
-    let z3_f = field::sub(&field::sqr(&field::add(&h, &q.z)),
-                          &field::add(&zz, &hh));
+    let x3 = field::sub(&field::sub(&field::sqr(&r), &j), &field::mul(&v, &two));
+    let y3 = field::sub(
+        &field::mul(&r, &field::sub(&v, &x3)),
+        &field::mul(&field::mul(&q.y, &two), &j),
+    );
+    let z3_f = field::sub(&field::sqr(&field::add(&h, &q.z)), &field::add(&zz, &hh));
 
-    JacobianPoint { x: x3, y: y3, z: z3_f }
+    JacobianPoint {
+        x: x3,
+        y: y3,
+        z: z3_f,
+    }
 }
 
 /// Full Jacobian addition: P + Q → Jacobian.
 fn jacobian_add(p: &JacobianPoint, q: &JacobianPoint) -> JacobianPoint {
-    if p.is_inf() { return q.clone(); }
-    if q.is_inf() { return p.clone(); }
+    if p.is_inf() {
+        return q.clone();
+    }
+    if q.is_inf() {
+        return p.clone();
+    }
 
     let z1z1 = field::sqr(&p.z);
     let z2z2 = field::sqr(&q.z);
@@ -257,7 +298,9 @@ fn jacobian_add(p: &JacobianPoint, q: &JacobianPoint) -> JacobianPoint {
     let s2 = field::mul(&q.y, &field::mul(&z1z1, &p.z));
 
     if u1 == u2 {
-        if s1 != s2 { return JacobianPoint::zero(); }
+        if s1 != s2 {
+            return JacobianPoint::zero();
+        }
         return jacobian_dbl(p);
     }
 
@@ -268,17 +311,24 @@ fn jacobian_add(p: &JacobianPoint, q: &JacobianPoint) -> JacobianPoint {
     let r = field::sub(&field::mul(&s2, &two), &field::mul(&s1, &two));
     let v = field::mul(&u1, &i);
 
-    let x3 = field::sub(&field::sub(&field::sqr(&r), &j),
-                        &field::mul(&v, &two));
-    let y3 = field::sub(&field::mul(&r, &field::sub(&v, &x3)),
-                        &field::mul(&field::mul(&s1, &two), &j));
+    let x3 = field::sub(&field::sub(&field::sqr(&r), &j), &field::mul(&v, &two));
+    let y3 = field::sub(
+        &field::mul(&r, &field::sub(&v, &x3)),
+        &field::mul(&field::mul(&s1, &two), &j),
+    );
     let z3 = field::mul(
-        &field::sub(&field::sqr(&field::add(&p.z, &q.z)),
-                    &field::add(&z1z1, &z2z2)),
+        &field::sub(
+            &field::sqr(&field::add(&p.z, &q.z)),
+            &field::add(&z1z1, &z2z2),
+        ),
         &h,
     );
 
-    JacobianPoint { x: x3, y: y3, z: z3 }
+    JacobianPoint {
+        x: x3,
+        y: y3,
+        z: z3,
+    }
 }
 
 // ════════════════════════════════════════════════════════════
@@ -298,7 +348,11 @@ fn point_mul(k: &BigUint, p: &AffinePoint) -> AffinePoint {
     // --- 1. Scalar masking ---
     let mut rng = OsRng;
     let r = rng.gen_biguint(64); // 64-bit random mask
-    let k_masked = if r.is_zero() { k.clone() } else { k + &r * &*SM2_N };
+    let k_masked = if r.is_zero() {
+        k.clone()
+    } else {
+        k + &r * &*SM2_N
+    };
 
     // --- 2. Projective randomization ---
     let rz = rng.gen_biguint(64) % &*SM2_P;
@@ -330,7 +384,9 @@ fn point_mul(k: &BigUint, p: &AffinePoint) -> AffinePoint {
 /// Convert BigUint to bit vector (LSB first).
 /// Matches the JS reference: `while (kk > ZERO) { kBits.push(kk & ONE); kk >>= ONE; }`
 fn to_bits_lsb(n: &BigUint) -> Vec<bool> {
-    if n.is_zero() { return vec![false]; }
+    if n.is_zero() {
+        return vec![false];
+    }
     let mut bits = Vec::new();
     let mut k = n.clone();
     while !k.is_zero() {
@@ -357,10 +413,16 @@ pub fn generate_key_pair() -> Sm2KeyPair {
     let d;
     loop {
         let candidate = rng.gen_biguint(256) % &*SM2_N;
-        if !candidate.is_zero() { d = candidate; break; }
+        if !candidate.is_zero() {
+            d = candidate;
+            break;
+        }
     }
     let public_key = mul_g(&d);
-    Sm2KeyPair { private_key: d, public_key }
+    Sm2KeyPair {
+        private_key: d,
+        public_key,
+    }
 }
 
 /// Derive the public key from a private key (for verification).
@@ -391,7 +453,10 @@ pub fn pk_to_hex(pk: &AffinePoint) -> String {
 /// Deserialize a 130-char hex string to an affine point.
 pub fn hex_to_pk(hex: &str) -> Result<AffinePoint, String> {
     if hex.len() != 130 || !hex.starts_with("04") {
-        return Err(format!("Invalid public key hex: expected 130-char uncompressed (04||x||y), got len={}", hex.len()));
+        return Err(format!(
+            "Invalid public key hex: expected 130-char uncompressed (04||x||y), got len={}",
+            hex.len()
+        ));
     }
     let x = BigUint::parse_bytes(&hex.as_bytes()[2..66], 16)
         .ok_or_else(|| "Invalid x coordinate hex".to_string())?;
@@ -417,14 +482,17 @@ fn hex_to_bi(hex: &str) -> Result<BigUint, String> {
     } else {
         hex.to_string()
     };
-    BigUint::parse_bytes(padded.as_bytes(), 16)
-        .ok_or_else(|| format!("Invalid hex: {}", hex))
+    BigUint::parse_bytes(padded.as_bytes(), 16).ok_or_else(|| format!("Invalid hex: {}", hex))
 }
 
 /// BigUint to even-length hex string.
 fn bi_to_hex(x: &BigUint) -> String {
     let s = x.to_str_radix(16);
-    if s.len() % 2 == 1 { format!("0{}", s) } else { s }
+    if s.len() % 2 == 1 {
+        format!("0{}", s)
+    } else {
+        s
+    }
 }
 
 /// BigUint to 64-char padded hex (for coordinates).
@@ -439,7 +507,10 @@ fn bi_to_hex64(x: &BigUint) -> String {
 /// Compute the ECDH shared secret: d · peerPublicKey → x||y (64 bytes).
 ///
 /// Returns the raw 64-byte shared secret as hex.
-pub fn compute_shared_secret(private_key: &BigUint, peer_pub_hex: &str) -> Result<[u8; 64], String> {
+pub fn compute_shared_secret(
+    private_key: &BigUint,
+    peer_pub_hex: &str,
+) -> Result<[u8; 64], String> {
     let peer_pk = hex_to_pk(peer_pub_hex)?;
     let s = point_mul(private_key, &peer_pk);
     if s.is_infinity() {
@@ -450,8 +521,7 @@ pub fn compute_shared_secret(private_key: &BigUint, peer_pub_hex: &str) -> Resul
     let x_hex = bi_to_hex64(&x);
     let y_hex = bi_to_hex64(&y);
     let combined = format!("{}{}", x_hex, y_hex);
-    let bytes = hex::decode(&combined)
-        .map_err(|e| format!("Hex decode failed: {}", e))?;
+    let bytes = hex::decode(&combined).map_err(|e| format!("Hex decode failed: {}", e))?;
     let mut arr = [0u8; 64];
     arr.copy_from_slice(&bytes);
     Ok(arr)
@@ -501,7 +571,10 @@ pub fn sign(private_key: &BigUint, msg_hash: &BigUint) -> Sm2Signature {
         let k;
         loop {
             let candidate = rng.gen_biguint(256) % &*SM2_N;
-            if !candidate.is_zero() { k = candidate; break; }
+            if !candidate.is_zero() {
+                k = candidate;
+                break;
+            }
         }
 
         // Q = k·G, x1 = Q.x mod n
@@ -517,7 +590,11 @@ pub fn sign(private_key: &BigUint, msg_hash: &BigUint) -> Sm2Signature {
         let da1 = field::add_n(d_a, &BigUint::one());
         let da1_inv = ext_euclid_inv(&da1, &SM2_N);
         let rda = (&r * d_a) % &*SM2_N;
-        let k_minus_rda = if k >= rda { &k - &rda } else { &k + &*SM2_N - &rda };
+        let k_minus_rda = if k >= rda {
+            &k - &rda
+        } else {
+            &k + &*SM2_N - &rda
+        };
         let s = (&da1_inv * &k_minus_rda) % &*SM2_N;
 
         if !s.is_zero() {
@@ -636,8 +713,8 @@ pub fn verify_with_za(
 /// SM2 ciphertext: C1 (public key hex) + C2 (xor-ciphertext hex).
 #[derive(Debug, Clone)]
 pub struct Sm2Ciphertext {
-    pub c1: String,  // ephemeral public key (130-char hex)
-    pub c2: String,  // XOR ciphertext (hex)
+    pub c1: String, // ephemeral public key (130-char hex)
+    pub c2: String, // XOR ciphertext (hex)
 }
 
 /// Encrypt plaintext with SM2 public key (simplified C1C2 mode).
@@ -647,15 +724,18 @@ pub fn encrypt(pub_hex: &str, plaintext: &[u8]) -> Result<Sm2Ciphertext, String>
 
     loop {
         let k = rng.gen_biguint(256) % &*SM2_N;
-        if k.is_zero() { continue; }
+        if k.is_zero() {
+            continue;
+        }
 
         let c1 = mul_g(&k);
-        if c1.is_infinity() { continue; }
+        if c1.is_infinity() {
+            continue;
+        }
 
         let kpb = point_mul(&k, &pb);
         let key_hex = bi_to_hex(kpb.x.as_ref().unwrap());
-        let key = hex::decode(&key_hex)
-            .map_err(|e| format!("Key hex decode failed: {}", e))?;
+        let key = hex::decode(&key_hex).map_err(|e| format!("Key hex decode failed: {}", e))?;
 
         // XOR plaintext with repeated key bytes
         let mut ct = vec![0u8; plaintext.len()];
@@ -679,10 +759,8 @@ pub fn decrypt(private_key: &BigUint, c1_hex: &str, c2_hex: &str) -> Result<Vec<
     }
 
     let key_hex = bi_to_hex(dc1.x.as_ref().unwrap());
-    let key = hex::decode(&key_hex)
-        .map_err(|e| format!("Key hex decode failed: {}", e))?;
-    let ct = hex::decode(c2_hex)
-        .map_err(|e| format!("C2 hex decode failed: {}", e))?;
+    let key = hex::decode(&key_hex).map_err(|e| format!("Key hex decode failed: {}", e))?;
+    let ct = hex::decode(c2_hex).map_err(|e| format!("C2 hex decode failed: {}", e))?;
 
     let mut pt = vec![0u8; ct.len()];
     for i in 0..ct.len() {
@@ -770,7 +848,10 @@ impl Sm2StandardCipher {
 ///
 /// `public_key_hex` must be uncompressed (`04||x||y`, 130 hex chars).
 /// The shared point is `k · PB`, where `k` is a fresh ephemeral scalar.
-pub fn encrypt_standard(public_key_hex: &str, plaintext: &[u8]) -> Result<Sm2StandardCipher, String> {
+pub fn encrypt_standard(
+    public_key_hex: &str,
+    plaintext: &[u8],
+) -> Result<Sm2StandardCipher, String> {
     let pb = hex_to_pk(public_key_hex)?;
     let mut rng = OsRng;
 
@@ -874,7 +955,7 @@ pub fn decrypt_standard(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
 
     fn hash_msg(msg: &[u8]) -> BigUint {
         let digest = Sha256::digest(msg);
@@ -899,7 +980,10 @@ mod tests {
         let kp = generate_key_pair();
         assert!(!kp.private_key.is_zero(), "Private key should not be zero");
         assert!(kp.private_key < *SM2_N, "Private key must be < n");
-        assert!(!kp.public_key.is_infinity(), "Public key should not be infinity");
+        assert!(
+            !kp.public_key.is_infinity(),
+            "Public key should not be infinity"
+        );
 
         // Verify: publicKey == d·G
         let recomputed = public_key_from_private(&kp.private_key);
@@ -920,10 +1004,16 @@ mod tests {
     #[test]
     fn test_invalid_pk_rejected() {
         assert!(hex_to_pk("04").is_err());
-        assert!(hex_to_pk(&format!("03{}", "00".repeat(64))).is_err(), "compressed key should fail curve check");
+        assert!(
+            hex_to_pk(&format!("03{}", "00".repeat(64))).is_err(),
+            "compressed key should fail curve check"
+        );
         // All-zeros is not a valid point on the curve
         let zeros = format!("04{}00{}", "00".repeat(63), "00".repeat(63));
-        assert!(hex_to_pk(&zeros).is_err(), "Off-curve point should be rejected");
+        assert!(
+            hex_to_pk(&zeros).is_err(),
+            "Off-curve point should be rejected"
+        );
     }
 
     #[test]
@@ -934,10 +1024,10 @@ mod tests {
         let alice_hex = pk_to_hex(&alice.public_key);
         let bob_hex = pk_to_hex(&bob.public_key);
 
-        let s1 = compute_shared_secret(&alice.private_key, &bob_hex)
-            .expect("Alice ECDH should succeed");
-        let s2 = compute_shared_secret(&bob.private_key, &alice_hex)
-            .expect("Bob ECDH should succeed");
+        let s1 =
+            compute_shared_secret(&alice.private_key, &bob_hex).expect("Alice ECDH should succeed");
+        let s2 =
+            compute_shared_secret(&bob.private_key, &alice_hex).expect("Bob ECDH should succeed");
 
         assert_eq!(s1, s2, "ECDH shared secrets must be symmetric");
     }
@@ -952,12 +1042,8 @@ mod tests {
         assert_eq!(sig.r.len(), 64, "r should be 64-char hex");
         assert_eq!(sig.s.len(), 64, "s should be 64-char hex");
 
-        let valid = verify(
-            &pk_to_hex(&kp.public_key),
-            &hash,
-            &sig.r,
-            &sig.s,
-        ).expect("Verify should not error");
+        let valid = verify(&pk_to_hex(&kp.public_key), &hash, &sig.r, &sig.s)
+            .expect("Verify should not error");
         assert!(valid, "Signature must verify");
     }
 
@@ -968,12 +1054,8 @@ mod tests {
         let hash2 = hash_msg(b"message two");
 
         let sig = sign(&kp.private_key, &hash1);
-        let valid = verify(
-            &pk_to_hex(&kp.public_key),
-            &hash2,
-            &sig.r,
-            &sig.s,
-        ).expect("Verify should not error");
+        let valid = verify(&pk_to_hex(&kp.public_key), &hash2, &sig.r, &sig.s)
+            .expect("Verify should not error");
         assert!(!valid, "Signature for different message MUST fail");
     }
 
@@ -985,11 +1067,12 @@ mod tests {
 
         let sig = sign(&kp1.private_key, &hash);
         let valid = verify(
-            &pk_to_hex(&kp2.public_key),  // Wrong public key!
+            &pk_to_hex(&kp2.public_key), // Wrong public key!
             &hash,
             &sig.r,
             &sig.s,
-        ).expect("Verify should not error");
+        )
+        .expect("Verify should not error");
         assert!(!valid, "Signature verified with wrong key MUST fail");
     }
 
@@ -1003,8 +1086,7 @@ mod tests {
         assert_eq!(ct.c1.len(), 130, "C1 should be 130-char hex");
         assert!(!ct.c2.is_empty(), "C2 should not be empty");
 
-        let pt = decrypt(&kp.private_key, &ct.c1, &ct.c2)
-            .expect("Decrypt should succeed");
+        let pt = decrypt(&kp.private_key, &ct.c1, &ct.c2).expect("Decrypt should succeed");
         assert_eq!(pt, plaintext, "Decrypted plaintext must match original");
     }
 
@@ -1015,8 +1097,7 @@ mod tests {
         let plaintext = b"";
 
         let ct = encrypt(&pk_hex, plaintext).expect("Encrypt empty should succeed");
-        let pt = decrypt(&kp.private_key, &ct.c1, &ct.c2)
-            .expect("Decrypt empty should succeed");
+        let pt = decrypt(&kp.private_key, &ct.c1, &ct.c2).expect("Decrypt empty should succeed");
         assert_eq!(pt, plaintext);
     }
 
@@ -1027,8 +1108,7 @@ mod tests {
         let plaintext: Vec<u8> = (0u8..=255u8).collect(); // All byte values
 
         let ct = encrypt(&pk_hex, &plaintext).expect("Encrypt binary should succeed");
-        let pt = decrypt(&kp.private_key, &ct.c1, &ct.c2)
-            .expect("Decrypt binary should succeed");
+        let pt = decrypt(&kp.private_key, &ct.c1, &ct.c2).expect("Decrypt binary should succeed");
         assert_eq!(pt, plaintext);
     }
 
@@ -1082,7 +1162,11 @@ mod tests {
 
         let ct = encrypt_standard(&pk_hex, plaintext).expect("encrypt standard");
         // Wire format: C1 (128) + C3 (64) + C2
-        assert_eq!(ct.c1.len(), 128, "C1 should be 128 hex chars (no 04 prefix)");
+        assert_eq!(
+            ct.c1.len(),
+            128,
+            "C1 should be 128 hex chars (no 04 prefix)"
+        );
         assert_eq!(ct.c3.len(), 64, "C3 should be 64 hex chars");
         assert!(!ct.c2.is_empty());
 
@@ -1102,8 +1186,10 @@ mod tests {
         c2_bytes[0] ^= 0xff;
         ct.c2 = hex::encode(&c2_bytes);
 
-        assert!(decrypt_standard(&kp.private_key, &ct).is_err(),
-            "Tampered ciphertext MUST fail C3 integrity check");
+        assert!(
+            decrypt_standard(&kp.private_key, &ct).is_err(),
+            "Tampered ciphertext MUST fail C3 integrity check"
+        );
     }
 
     #[test]
@@ -1161,12 +1247,14 @@ mod tests {
         let private_key = BigUint::from_str_radix(
             "be3dd1fa0d046cc5936737ea5ca22188ef8e76ef53b93187b604408af36920e1",
             16,
-        ).unwrap();
+        )
+        .unwrap();
         // Frontend SM2Browser.encrypt output (C1||C3||C2, mode=1)
         let ciphertext = "3f1ad2999f3bc38da5d55ca0e0f6e4606ce18fb8427a5b747212956106dd25e1071232e796d9ff74bbd33d1142d96f93db966abe7aaba58012da76bc34f5a20e55e15f6e23325900863751713656578115e5dd052e53e6218fed81ef3f94316bde9cd8600567359b6ccd10f62689f533631e8b0e4abd4f4d4a2c673a091b2c";
 
         let parsed = Sm2StandardCipher::from_hex(ciphertext).expect("parse frontend ciphertext");
-        let plaintext = decrypt_standard(&private_key, &parsed).expect("decrypt frontend ciphertext");
+        let plaintext =
+            decrypt_standard(&private_key, &parsed).expect("decrypt frontend ciphertext");
         assert_eq!(
             String::from_utf8(plaintext).unwrap(),
             "FIBEMATE-GM-CROSS-TEST-20260819"
@@ -1186,7 +1274,8 @@ mod tests {
         let d = BigUint::from_str_radix(
             "be3dd1fa0d046cc5936737ea5ca22188ef8e76ef53b93187b604408af36920e1",
             16,
-        ).unwrap();
+        )
+        .unwrap();
         let pk = public_key_from_private(&d);
         let pk_hex = pk_to_hex(&pk);
         // Sanity: derived public key matches the known frontend public key.
@@ -1223,7 +1312,8 @@ mod tests {
         let d = BigUint::from_str_radix(
             "be3dd1fa0d046cc5936737ea5ca22188ef8e76ef53b93187b604408af36920e1",
             16,
-        ).unwrap();
+        )
+        .unwrap();
         let pk_hex = pk_to_hex(&public_key_from_private(&d));
         assert_eq!(
             pk_hex,
@@ -1235,9 +1325,11 @@ mod tests {
         let sig_hex = "0b7274e7fac27df95ce33314de6a1b3889fd2647f23c04b190035134ed10678e215e0ee68abb9139667e502abd929852ff3f6b98e5cf5323bc8c307ee17eb3cf";
         let (r, s) = (&sig_hex[..64], &sig_hex[64..]);
 
-        let valid = verify_with_za(&pk_hex, "1234567812345678", msg, r, s)
-            .expect("verify_with_za");
-        assert!(valid, "Frontend signature MUST verify with ZA-derived digest");
+        let valid = verify_with_za(&pk_hex, "1234567812345678", msg, r, s).expect("verify_with_za");
+        assert!(
+            valid,
+            "Frontend signature MUST verify with ZA-derived digest"
+        );
     }
 
     #[test]
@@ -1246,8 +1338,8 @@ mod tests {
         let pk_hex = pk_to_hex(&kp.public_key);
         let msg = b"ZA roundtrip test message";
 
-        let sig = sign_with_za(&kp.private_key, &pk_hex, "1234567812345678", msg)
-            .expect("sign_with_za");
+        let sig =
+            sign_with_za(&kp.private_key, &pk_hex, "1234567812345678", msg).expect("sign_with_za");
         let valid = verify_with_za(&pk_hex, "1234567812345678", msg, &sig.r, &sig.s)
             .expect("verify_with_za");
         assert!(valid, "ZA signature roundtrip must verify");
@@ -1294,19 +1386,20 @@ mod tests {
         // 4. Sender signs the envelope (ephemeralPK || wrappedKey || hmac).
         //    ephemeralPK is the sender's ephemeral public key; use the C1 point
         //    here for a realistic signature input.
-        let hmac_hex = "aa" .repeat(32); // placeholder 32-byte HMAC hex
+        let hmac_hex = "aa".repeat(32); // placeholder 32-byte HMAC hex
         let sig_input = format!("{}{}{}", sender_pk_hex, wrapped_hex, hmac_hex);
         let sig = sign_with_za(
             &sender_kp.private_key,
             &sender_pk_hex,
             "1234567812345678",
             sig_input.as_bytes(),
-        ).expect("sign_with_za");
+        )
+        .expect("sign_with_za");
 
         // 5. Recipient unwraps SM4 key with their private key.
         let parsed = Sm2StandardCipher::from_hex(&wrapped_hex).expect("parse wrapped");
-        let unwrapped = decrypt_standard(&recipient_kp.private_key, &parsed)
-            .expect("decrypt_standard unwrap");
+        let unwrapped =
+            decrypt_standard(&recipient_kp.private_key, &parsed).expect("decrypt_standard unwrap");
         assert_eq!(
             String::from_utf8(unwrapped).unwrap(),
             sm4_key_hex,
@@ -1320,7 +1413,8 @@ mod tests {
             sig_input.as_bytes(),
             &sig.r,
             &sig.s,
-        ).expect("verify_with_za");
+        )
+        .expect("verify_with_za");
         assert!(valid, "Envelope signature must verify");
 
         // Tampered envelope must fail verification.
@@ -1331,7 +1425,8 @@ mod tests {
             tampered.as_bytes(),
             &sig.r,
             &sig.s,
-        ).expect("verify_with_za");
+        )
+        .expect("verify_with_za");
         assert!(!bad, "Tampered envelope MUST fail verification");
     }
 }

@@ -8,8 +8,7 @@
 //! assignment, which are overridden — the effective computation is standard).
 
 const IV: [u32; 8] = [
-    0x7380166f, 0x4914b2b9, 0x172442d7, 0xda8a0600,
-    0xa96f30bc, 0x163138aa, 0xe38dee4d, 0xb0fb0e4e,
+    0x7380166f, 0x4914b2b9, 0x172442d7, 0xda8a0600, 0xa96f30bc, 0x163138aa, 0xe38dee4d, 0xb0fb0e4e,
 ];
 
 /// T_j constants: T[0] for 0..=15, T[1] for 16..=63.
@@ -17,12 +16,20 @@ const T: [u32; 2] = [0x79cc4519, 0x7a879d8a];
 
 #[inline]
 fn ff(x: u32, y: u32, z: u32, j: usize) -> u32 {
-    if j < 16 { x ^ y ^ z } else { (x & y) | (x & z) | (y & z) }
+    if j < 16 {
+        x ^ y ^ z
+    } else {
+        (x & y) | (x & z) | (y & z)
+    }
 }
 
 #[inline]
 fn gg(x: u32, y: u32, z: u32, j: usize) -> u32 {
-    if j < 16 { x ^ y ^ z } else { (x & y) | ((!x) & z) }
+    if j < 16 {
+        x ^ y ^ z
+    } else {
+        (x & y) | ((!x) & z)
+    }
 }
 
 #[inline]
@@ -43,7 +50,10 @@ fn compress(v: &mut [u32; 8], block: &[u8]) {
     let mut w1 = [0u32; 64];
     for i in 0..16 {
         w[i] = u32::from_be_bytes([
-            block[i * 4], block[i * 4 + 1], block[i * 4 + 2], block[i * 4 + 3],
+            block[i * 4],
+            block[i * 4 + 1],
+            block[i * 4 + 2],
+            block[i * 4 + 3],
         ]);
     }
     for i in 16..68 {
@@ -65,13 +75,20 @@ fn compress(v: &mut [u32; 8], block: &[u8]) {
 
     for j in 0..64 {
         let tj = if j < 16 { T[0] } else { T[1] };
-        let ss1 = (a.rotate_left(12)
+        let ss1 = (a
+            .rotate_left(12)
             .wrapping_add(e)
             .wrapping_add(tj.rotate_left((j % 32) as u32)))
-            .rotate_left(7);
+        .rotate_left(7);
         let ss2 = ss1 ^ a.rotate_left(12);
-        let tt1 = ff(a, b, c, j).wrapping_add(d).wrapping_add(ss2).wrapping_add(w1[j]);
-        let tt2 = gg(e, f, g, j).wrapping_add(h).wrapping_add(ss1).wrapping_add(w[j]);
+        let tt1 = ff(a, b, c, j)
+            .wrapping_add(d)
+            .wrapping_add(ss2)
+            .wrapping_add(w1[j]);
+        let tt2 = gg(e, f, g, j)
+            .wrapping_add(h)
+            .wrapping_add(ss1)
+            .wrapping_add(w[j]);
 
         d = c;
         c = b.rotate_left(9);

@@ -10,14 +10,13 @@
 //! Migrated from: D:\FIBEMATE\01_Rust源码_E盘\src\pq\hybrid.rs
 
 use hkdf::Hkdf;
-use sha3::Sha3_512;
 use sha2::Sha256;
+use sha3::Sha3_512;
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 use crate::pq::{
-    MlKem768KeyPair, MlKem768Encapsulation,
-    MlKem768PublicKey, MlKem768SecretKey, MlKem768Ciphertext,
-    MLKEM768_PK_SIZE, MLKEM768_SK_SIZE, MLKEM768_CT_SIZE, MLKEM768_SS_SIZE,
+    MlKem768Ciphertext, MlKem768Encapsulation, MlKem768KeyPair, MlKem768PublicKey,
+    MlKem768SecretKey, MLKEM768_CT_SIZE, MLKEM768_PK_SIZE, MLKEM768_SK_SIZE, MLKEM768_SS_SIZE,
 };
 
 // ── Hybrid Mode ─────────────────────────────────────────────────
@@ -59,7 +58,12 @@ impl HybridKeyPair {
         x25519_public.copy_from_slice(x25519_pk.as_bytes());
         x25519_secret.copy_from_slice(x25519_sk.as_bytes());
         let mlkem = MlKem768KeyPair::generate();
-        Self { x25519_public, x25519_secret, mlkem_public: mlkem.public_key, mlkem_secret: mlkem.secret_key }
+        Self {
+            x25519_public,
+            x25519_secret,
+            mlkem_public: mlkem.public_key,
+            mlkem_secret: mlkem.secret_key,
+        }
     }
 
     pub fn generate_classic() -> Self {
@@ -69,17 +73,30 @@ impl HybridKeyPair {
         let mut x25519_secret = [0u8; 32];
         x25519_public.copy_from_slice(x25519_pk.as_bytes());
         x25519_secret.copy_from_slice(x25519_sk.as_bytes());
-        Self { x25519_public, x25519_secret, mlkem_public: [0u8; MLKEM768_PK_SIZE], mlkem_secret: [0u8; MLKEM768_SK_SIZE] }
+        Self {
+            x25519_public,
+            x25519_secret,
+            mlkem_public: [0u8; MLKEM768_PK_SIZE],
+            mlkem_secret: [0u8; MLKEM768_SK_SIZE],
+        }
     }
 
     pub fn public_bundle(&self, mode: HybridMode) -> HybridPublicBundle {
         match mode {
-            HybridMode::Classic => HybridPublicBundle::Classic { x25519: self.x25519_public },
-            HybridMode::Hybrid => HybridPublicBundle::Hybrid { x25519: self.x25519_public, mlkem: self.mlkem_public },
+            HybridMode::Classic => HybridPublicBundle::Classic {
+                x25519: self.x25519_public,
+            },
+            HybridMode::Hybrid => HybridPublicBundle::Hybrid {
+                x25519: self.x25519_public,
+                mlkem: self.mlkem_public,
+            },
         }
     }
 
-    pub fn exchange_initiator(&self, their_bundle: &HybridPublicBundle) -> Result<HybridSharedSecret, String> {
+    pub fn exchange_initiator(
+        &self,
+        their_bundle: &HybridPublicBundle,
+    ) -> Result<HybridSharedSecret, String> {
         match their_bundle {
             HybridPublicBundle::Classic { x25519 } => {
                 let their_pk = x25519_dalek::PublicKey::from(*x25519);
@@ -87,7 +104,10 @@ impl HybridKeyPair {
                 let shared = our_sk.diffie_hellman(&their_pk);
                 let mut secret = [0u8; 64];
                 secret[..32].copy_from_slice(shared.as_bytes());
-                Ok(HybridSharedSecret { mode: HybridMode::Classic, secret })
+                Ok(HybridSharedSecret {
+                    mode: HybridMode::Classic,
+                    secret,
+                })
             }
             HybridPublicBundle::Hybrid { x25519, mlkem } => {
                 let their_mlkem_pk = MlKem768PublicKey::from_bytes(mlkem)
@@ -97,7 +117,10 @@ impl HybridKeyPair {
                 let ecdh_ss = our_x25519_sk.diffie_hellman(&their_x25519_pk);
                 let enc = MlKem768Encapsulation::encapsulate(&their_mlkem_pk);
                 let combined = combine_secrets(ecdh_ss.as_bytes(), &enc.shared_secret)?;
-                Ok(HybridSharedSecret { mode: HybridMode::Hybrid, secret: combined })
+                Ok(HybridSharedSecret {
+                    mode: HybridMode::Hybrid,
+                    secret: combined,
+                })
             }
         }
     }
@@ -117,14 +140,20 @@ impl HybridKeyPair {
                 .map_err(|e| format!("Invalid ML-KEM CT: {e}"))?;
             let mlkem_ss = crate::pq::mlkem768_decapsulate(&sk, &ct);
             let combined = combine_secrets(ecdh_ss.as_bytes(), &mlkem_ss)?;
-            Ok(HybridSharedSecret { mode: HybridMode::Hybrid, secret: combined })
+            Ok(HybridSharedSecret {
+                mode: HybridMode::Hybrid,
+                secret: combined,
+            })
         } else {
             let their_pk = x25519_dalek::PublicKey::from(*their_x25519);
             let our_sk = x25519_dalek::StaticSecret::from(self.x25519_secret);
             let shared = our_sk.diffie_hellman(&their_pk);
             let mut secret = [0u8; 64];
             secret[..32].copy_from_slice(shared.as_bytes());
-            Ok(HybridSharedSecret { mode: HybridMode::Classic, secret })
+            Ok(HybridSharedSecret {
+                mode: HybridMode::Classic,
+                secret,
+            })
         }
     }
 }
@@ -133,15 +162,29 @@ impl HybridKeyPair {
 
 #[derive(Clone, Debug)]
 pub enum HybridPublicBundle {
-    Classic { x25519: [u8; 32] },
-    Hybrid { x25519: [u8; 32], mlkem: [u8; MLKEM768_PK_SIZE] },
+    Classic {
+        x25519: [u8; 32],
+    },
+    Hybrid {
+        x25519: [u8; 32],
+        mlkem: [u8; MLKEM768_PK_SIZE],
+    },
 }
 
 impl HybridPublicBundle {
     pub fn to_bytes(&self) -> Vec<u8> {
         match self {
-            Self::Classic { x25519 } => { let mut b = vec![0x01]; b.extend_from_slice(x25519); b }
-            Self::Hybrid { x25519, mlkem } => { let mut b = vec![0x02]; b.extend_from_slice(x25519); b.extend_from_slice(mlkem); b }
+            Self::Classic { x25519 } => {
+                let mut b = vec![0x01];
+                b.extend_from_slice(x25519);
+                b
+            }
+            Self::Hybrid { x25519, mlkem } => {
+                let mut b = vec![0x02];
+                b.extend_from_slice(x25519);
+                b.extend_from_slice(mlkem);
+                b
+            }
         }
     }
 
@@ -149,14 +192,21 @@ impl HybridPublicBundle {
         let version = b.first().copied().ok_or("empty bytes")?;
         match version {
             0x01 => {
-                if b.len() != 33 { return Err(format!("Classic bundle: expected 33, got {}", b.len())); }
-                let mut x25519 = [0u8; 32]; x25519.copy_from_slice(&b[1..33]);
+                if b.len() != 33 {
+                    return Err(format!("Classic bundle: expected 33, got {}", b.len()));
+                }
+                let mut x25519 = [0u8; 32];
+                x25519.copy_from_slice(&b[1..33]);
                 Ok(Self::Classic { x25519 })
             }
             0x02 => {
-                if b.len() != 33 + MLKEM768_PK_SIZE { return Err(format!("Hybrid bundle: expected {}", 33 + MLKEM768_PK_SIZE)); }
-                let mut x25519 = [0u8; 32]; let mut mlkem = [0u8; MLKEM768_PK_SIZE];
-                x25519.copy_from_slice(&b[1..33]); mlkem.copy_from_slice(&b[33..]);
+                if b.len() != 33 + MLKEM768_PK_SIZE {
+                    return Err(format!("Hybrid bundle: expected {}", 33 + MLKEM768_PK_SIZE));
+                }
+                let mut x25519 = [0u8; 32];
+                let mut mlkem = [0u8; MLKEM768_PK_SIZE];
+                x25519.copy_from_slice(&b[1..33]);
+                mlkem.copy_from_slice(&b[33..]);
                 Ok(Self::Hybrid { x25519, mlkem })
             }
             v => Err(format!("Unknown bundle version: {v}")),
@@ -164,7 +214,10 @@ impl HybridPublicBundle {
     }
 
     pub fn mode(&self) -> HybridMode {
-        match self { Self::Classic { .. } => HybridMode::Classic, Self::Hybrid { .. } => HybridMode::Hybrid }
+        match self {
+            Self::Classic { .. } => HybridMode::Classic,
+            Self::Hybrid { .. } => HybridMode::Hybrid,
+        }
     }
 }
 
@@ -177,26 +230,38 @@ pub struct HybridSharedSecret {
 }
 
 impl HybridSharedSecret {
-    pub fn as_bytes_32(&self) -> [u8; 32] { self.secret[..32].try_into().unwrap() }
-    pub fn as_bytes_64(&self) -> [u8; 64] { self.secret }
+    pub fn as_bytes_32(&self) -> [u8; 32] {
+        self.secret[..32].try_into().unwrap()
+    }
+    pub fn as_bytes_64(&self) -> [u8; 64] {
+        self.secret
+    }
 
     pub fn derive_ratchet_keys(&self) -> Result<([u8; 32], [u8; 32]), String> {
         let hk = Hkdf::<Sha256>::new(None, &self.secret);
-        let mut send = [0u8; 32]; let mut recv = [0u8; 32];
-        hk.expand(b"send_chain_key", &mut send).map_err(|e| format!("HKDF: {e}"))?;
-        hk.expand(b"recv_chain_key", &mut recv).map_err(|e| format!("HKDF: {e}"))?;
+        let mut send = [0u8; 32];
+        let mut recv = [0u8; 32];
+        hk.expand(b"send_chain_key", &mut send)
+            .map_err(|e| format!("HKDF: {e}"))?;
+        hk.expand(b"recv_chain_key", &mut recv)
+            .map_err(|e| format!("HKDF: {e}"))?;
         Ok((send, recv))
     }
 }
 
 // ── Internal ─────────────────────────────────────────────────────
 
-pub(crate) fn combine_secrets(ecdh: &[u8; 32], mlkem: &[u8; MLKEM768_SS_SIZE]) -> Result<[u8; 64], String> {
+pub(crate) fn combine_secrets(
+    ecdh: &[u8; 32],
+    mlkem: &[u8; MLKEM768_SS_SIZE],
+) -> Result<[u8; 64], String> {
     let mut concat = Vec::with_capacity(64);
-    concat.extend_from_slice(ecdh); concat.extend_from_slice(mlkem);
+    concat.extend_from_slice(ecdh);
+    concat.extend_from_slice(mlkem);
     let hk = Hkdf::<Sha3_512>::new(Some(b"fibemate-hybrid-v1"), &concat);
     let mut okm = [0u8; 64];
-    hk.expand(b"shared-secret", &mut okm).map_err(|e| format!("HKDF-SHA3-512: {e}"))?;
+    hk.expand(b"shared-secret", &mut okm)
+        .map_err(|e| format!("HKDF-SHA3-512: {e}"))?;
     Ok(okm)
 }
 
@@ -212,8 +277,17 @@ pub struct HybridEncapsulation {
 impl HybridEncapsulation {
     pub fn to_bytes(&self) -> Vec<u8> {
         match self.mlkem_ciphertext {
-            None => { let mut b = vec![0x01]; b.extend_from_slice(&self.x25519_public); b }
-            Some(ct) => { let mut b = vec![0x02]; b.extend_from_slice(&self.x25519_public); b.extend_from_slice(&ct); b }
+            None => {
+                let mut b = vec![0x01];
+                b.extend_from_slice(&self.x25519_public);
+                b
+            }
+            Some(ct) => {
+                let mut b = vec![0x02];
+                b.extend_from_slice(&self.x25519_public);
+                b.extend_from_slice(&ct);
+                b
+            }
         }
     }
 
@@ -221,15 +295,33 @@ impl HybridEncapsulation {
         let version = b.first().copied().ok_or("empty bytes")?;
         match version {
             0x01 => {
-                if b.len() != 33 { return Err("Classic encapsulation: expected 33 bytes".into()); }
-                let mut x25519 = [0u8; 32]; x25519.copy_from_slice(&b[1..33]);
-                Ok(Self { mode: HybridMode::Classic, x25519_public: x25519, mlkem_ciphertext: None })
+                if b.len() != 33 {
+                    return Err("Classic encapsulation: expected 33 bytes".into());
+                }
+                let mut x25519 = [0u8; 32];
+                x25519.copy_from_slice(&b[1..33]);
+                Ok(Self {
+                    mode: HybridMode::Classic,
+                    x25519_public: x25519,
+                    mlkem_ciphertext: None,
+                })
             }
             0x02 => {
-                if b.len() != 33 + MLKEM768_CT_SIZE { return Err(format!("Hybrid encapsulation: expected {}", 33 + MLKEM768_CT_SIZE)); }
-                let mut x25519 = [0u8; 32]; let mut ct = [0u8; MLKEM768_CT_SIZE];
-                x25519.copy_from_slice(&b[1..33]); ct.copy_from_slice(&b[33..]);
-                Ok(Self { mode: HybridMode::Hybrid, x25519_public: x25519, mlkem_ciphertext: Some(ct) })
+                if b.len() != 33 + MLKEM768_CT_SIZE {
+                    return Err(format!(
+                        "Hybrid encapsulation: expected {}",
+                        33 + MLKEM768_CT_SIZE
+                    ));
+                }
+                let mut x25519 = [0u8; 32];
+                let mut ct = [0u8; MLKEM768_CT_SIZE];
+                x25519.copy_from_slice(&b[1..33]);
+                ct.copy_from_slice(&b[33..]);
+                Ok(Self {
+                    mode: HybridMode::Hybrid,
+                    x25519_public: x25519,
+                    mlkem_ciphertext: Some(ct),
+                })
             }
             v => Err(format!("Unknown encapsulation version: {v}")),
         }
@@ -260,8 +352,13 @@ mod tests {
         let our_x25519_sk = x25519_dalek::StaticSecret::from(alice.x25519_secret);
         let ecdh_ss = our_x25519_sk.diffie_hellman(&their_x25519_pk);
         let alice_combined = combine_secrets(ecdh_ss.as_bytes(), &enc.shared_secret).unwrap();
-        let alice_ss = HybridSharedSecret { mode: HybridMode::Hybrid, secret: alice_combined };
-        let bob_ss = bob.exchange_responder(&alice.x25519_public, Some(&enc.ciphertext)).unwrap();
+        let alice_ss = HybridSharedSecret {
+            mode: HybridMode::Hybrid,
+            secret: alice_combined,
+        };
+        let bob_ss = bob
+            .exchange_responder(&alice.x25519_public, Some(&enc.ciphertext))
+            .unwrap();
         assert_eq!(alice_ss.secret, bob_ss.secret);
     }
 }

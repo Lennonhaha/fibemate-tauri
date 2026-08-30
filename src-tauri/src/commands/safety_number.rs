@@ -9,8 +9,8 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use tauri::State;
 
-use crate::commands::CryptoState;
 use crate::commands::identity;
+use crate::commands::CryptoState;
 
 /// Generate a deterministic 25-digit Safety Number from two identity keys.
 ///
@@ -83,14 +83,18 @@ pub fn dr_safety_number(
     // Load our identity public key from KeyStore (only loads meta, not secret)
     let store = state.key_store.lock().map_err(|e| e.to_string())?;
     let ik_id = identity::ik_key_id(&our_identity_id);
-    let meta = store.get_meta(&ik_id)
-        .ok_or(format!("Identity key not found in KeyStore: {our_identity_id}"))?;
+    let meta = store.get_meta(&ik_id).ok_or(format!(
+        "Identity key not found in KeyStore: {our_identity_id}"
+    ))?;
 
     // Convert public key Vec<u8> → [u8; 32]
     let our_public_key: [u8; 32] = {
         let pk = &meta.public_key;
         if pk.len() != 32 {
-            return Err(format!("Identity key corrupt: expected 32 bytes, got {}", pk.len()));
+            return Err(format!(
+                "Identity key corrupt: expected 32 bytes, got {}",
+                pk.len()
+            ));
         }
         let mut arr = [0u8; 32];
         arr.copy_from_slice(pk);
@@ -132,7 +136,10 @@ mod tests {
             if (i + 1) % 6 == 0 {
                 assert_eq!(ch, ' ', "Expected space at position {i}");
             } else {
-                assert!(ch.is_ascii_digit(), "Expected digit at position {i}, got '{ch}'");
+                assert!(
+                    ch.is_ascii_digit(),
+                    "Expected digit at position {i}, got '{ch}'"
+                );
             }
         }
     }

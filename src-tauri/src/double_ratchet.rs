@@ -39,13 +39,19 @@ impl RatchetKeyPair {
     pub fn generate() -> Self {
         let secret = StaticSecret::random_from_rng(rand::thread_rng());
         let public = PublicKey::from(&secret);
-        Self { public_key: *public.as_bytes(), private_key: secret.to_bytes() }
+        Self {
+            public_key: *public.as_bytes(),
+            private_key: secret.to_bytes(),
+        }
     }
 
     pub fn from_private_key(private_key: [u8; 32]) -> Self {
         let secret = StaticSecret::from(private_key);
         let public = PublicKey::from(&secret);
-        Self { public_key: *public.as_bytes(), private_key }
+        Self {
+            public_key: *public.as_bytes(),
+            private_key,
+        }
     }
 
     pub fn diffie_hellman(&self, their_public: &[u8; 32]) -> Result<[u8; 32], String> {
@@ -91,7 +97,10 @@ pub struct RatchetState {
 }
 
 impl RatchetState {
-    pub fn init_from_shared_secret(shared_secret: &[u8; 32], is_initiator: bool) -> Result<Self, String> {
+    pub fn init_from_shared_secret(
+        shared_secret: &[u8; 32],
+        is_initiator: bool,
+    ) -> Result<Self, String> {
         // Symmetric chain-key derivation from the X3DH shared secret.
         // The info strings are role-swapped so that:
         //   initiator.send_chain == responder.recv_chain
@@ -100,13 +109,23 @@ impl RatchetState {
         let hkdf = Hkdf::<Sha256>::new(None, shared_secret);
         let mut initiator_send = [0u8; 32];
         let mut initiator_recv = [0u8; 32];
-        hkdf.expand(b"initiator_send", &mut initiator_send).map_err(|e| e.to_string())?;
-        hkdf.expand(b"initiator_recv", &mut initiator_recv).map_err(|e| e.to_string())?;
+        hkdf.expand(b"initiator_send", &mut initiator_send)
+            .map_err(|e| e.to_string())?;
+        hkdf.expand(b"initiator_recv", &mut initiator_recv)
+            .map_err(|e| e.to_string())?;
 
         let keypair = RatchetKeyPair::generate();
         Ok(Self {
-            send_chain_key: if is_initiator { initiator_send } else { initiator_recv },
-            recv_chain_key: if is_initiator { initiator_recv } else { initiator_send },
+            send_chain_key: if is_initiator {
+                initiator_send
+            } else {
+                initiator_recv
+            },
+            recv_chain_key: if is_initiator {
+                initiator_recv
+            } else {
+                initiator_send
+            },
             send_public_key: keypair.public_key,
             recv_public_key: [0u8; 32],
             send_message_num: 0,
@@ -127,7 +146,8 @@ impl RatchetState {
         // become invalid after a DH ratchet. Draining the pool here also
         // prevents unbounded memory growth on long-running sessions.
         self.skipped_keys.clear();
-        self.previous_send_keys.insert(self.send_message_num, self.send_chain_key);
+        self.previous_send_keys
+            .insert(self.send_message_num, self.send_chain_key);
         // Evict oldest entry if map grew beyond the cap (FIFO).
         if self.previous_send_keys.len() > MAX_PREVIOUS_SEND_KEYS {
             if let Some(&min_key) = self.previous_send_keys.keys().min() {
@@ -135,8 +155,8 @@ impl RatchetState {
             }
         }
         // 1. Derive a new recv chain from (current dh_private, their new pub)
-        let shared = RatchetKeyPair::from_private_key(self.dh_private)
-            .diffie_hellman(&their_public_key)?;
+        let shared =
+            RatchetKeyPair::from_private_key(self.dh_private).diffie_hellman(&their_public_key)?;
         let (new_rk, recv_ck) = kdf_rk(&self.root_key, &shared);
         self.root_key = new_rk;
         self.recv_chain_key = recv_ck;
@@ -174,7 +194,9 @@ pub struct KdfChain {
 }
 
 impl KdfChain {
-    pub fn new(chain_key: [u8; 32]) -> Self { Self { chain_key } }
+    pub fn new(chain_key: [u8; 32]) -> Self {
+        Self { chain_key }
+    }
 
     pub fn next_message_key(&mut self) -> [u8; 32] {
         let hkdf = Hkdf::<Sha256>::new(None, &self.chain_key);
@@ -188,7 +210,9 @@ impl KdfChain {
 
     pub fn skip_messages(&mut self, count: u32) -> Vec<[u8; 32]> {
         let mut keys = Vec::new();
-        for _ in 0..count { keys.push(self.next_message_key()); }
+        for _ in 0..count {
+            keys.push(self.next_message_key());
+        }
         keys
     }
 }
@@ -197,20 +221,43 @@ impl KdfChain {
 pub struct AesGcmEncryptor;
 
 impl AesGcmEncryptor {
-    pub fn encrypt(key: &[u8; 32], plaintext: &[u8], associated_data: &[u8]) -> Result<(Vec<u8>, [u8; 12]), String> {
+    pub fn encrypt(
+        key: &[u8; 32],
+        plaintext: &[u8],
+        associated_data: &[u8],
+    ) -> Result<(Vec<u8>, [u8; 12]), String> {
         let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| e.to_string())?;
         let mut nonce_bytes = [0u8; 12];
         rand::thread_rng().fill_bytes(&mut nonce_bytes);
         let nonce = Nonce::from_slice(&nonce_bytes);
-        let ciphertext = cipher.encrypt(nonce, aes_gcm::aead::Payload { msg: plaintext, aad: associated_data })
+        let ciphertext = cipher
+            .encrypt(
+                nonce,
+                aes_gcm::aead::Payload {
+                    msg: plaintext,
+                    aad: associated_data,
+                },
+            )
             .map_err(|e| e.to_string())?;
         Ok((ciphertext, nonce_bytes))
     }
 
-    pub fn decrypt(key: &[u8; 32], nonce: &[u8; 12], ciphertext: &[u8], associated_data: &[u8]) -> Result<Vec<u8>, String> {
+    pub fn decrypt(
+        key: &[u8; 32],
+        nonce: &[u8; 12],
+        ciphertext: &[u8],
+        associated_data: &[u8],
+    ) -> Result<Vec<u8>, String> {
         let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| e.to_string())?;
         let nonce = Nonce::from_slice(nonce);
-        cipher.decrypt(nonce, aes_gcm::aead::Payload { msg: ciphertext, aad: associated_data })
+        cipher
+            .decrypt(
+                nonce,
+                aes_gcm::aead::Payload {
+                    msg: ciphertext,
+                    aad: associated_data,
+                },
+            )
             .map_err(|e| e.to_string())
     }
 }
@@ -235,7 +282,8 @@ impl X3DH {
         combined[64..].copy_from_slice(&dh3);
         let hkdf = Hkdf::<Sha256>::new(None, &combined);
         let mut shared_secret = [0u8; 32];
-        hkdf.expand(b"shared_secret", &mut shared_secret).map_err(|e| e.to_string())?;
+        hkdf.expand(b"shared_secret", &mut shared_secret)
+            .map_err(|e| e.to_string())?;
         Ok(shared_secret)
     }
 
@@ -254,7 +302,8 @@ impl X3DH {
         combined[64..].copy_from_slice(&dh3);
         let hkdf = Hkdf::<Sha256>::new(None, &combined);
         let mut shared_secret = [0u8; 32];
-        hkdf.expand(b"shared_secret", &mut shared_secret).map_err(|e| e.to_string())?;
+        hkdf.expand(b"shared_secret", &mut shared_secret)
+            .map_err(|e| e.to_string())?;
         Ok(shared_secret)
     }
 }
@@ -276,10 +325,17 @@ pub struct SessionManager {
 
 impl SessionManager {
     pub fn new() -> Self {
-        Self { sessions: Mutex::new(HashMap::new()) }
+        Self {
+            sessions: Mutex::new(HashMap::new()),
+        }
     }
 
-    pub fn create_session(&self, session_id: &str, shared_secret: &[u8; 32], is_initiator: bool) -> Result<(), String> {
+    pub fn create_session(
+        &self,
+        session_id: &str,
+        shared_secret: &[u8; 32],
+        is_initiator: bool,
+    ) -> Result<(), String> {
         let state = RatchetState::init_from_shared_secret(shared_secret, is_initiator)?;
         let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
         sessions.insert(session_id.to_string(), state);
@@ -333,7 +389,11 @@ impl SessionManager {
     }
 
     /// Check if decrypt_message would trigger a ratchet step (for diagnostics).
-    pub fn will_ratchet_on_decrypt(&self, session_id: &str, message: &EncryptedMessage) -> Result<bool, String> {
+    pub fn will_ratchet_on_decrypt(
+        &self,
+        session_id: &str,
+        message: &EncryptedMessage,
+    ) -> Result<bool, String> {
         let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
         let state = sessions.get(session_id).ok_or("Session not found")?;
         Ok(message.public_key != state.recv_public_key)
@@ -360,14 +420,19 @@ impl SessionManager {
         Ok(state.send_public_key)
     }
 
-    pub fn encrypt_message(&self, session_id: &str, plaintext: &[u8]) -> Result<EncryptedMessage, String> {
+    pub fn encrypt_message(
+        &self,
+        session_id: &str,
+        plaintext: &[u8],
+    ) -> Result<EncryptedMessage, String> {
         let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
         let state = sessions.get_mut(session_id).ok_or("Session not found")?;
         let mut chain = KdfChain::new(state.send_chain_key);
         let message_key = chain.next_message_key();
         state.send_chain_key = chain.chain_key;
         let associated_data = &state.send_public_key;
-        let (ciphertext, nonce) = AesGcmEncryptor::encrypt(&message_key, plaintext, associated_data)?;
+        let (ciphertext, nonce) =
+            AesGcmEncryptor::encrypt(&message_key, plaintext, associated_data)?;
         let message = EncryptedMessage {
             public_key: state.send_public_key,
             message_num: state.send_message_num,
@@ -383,7 +448,11 @@ impl SessionManager {
     ///   Ok(Some(plaintext))  — successful decryption
     ///   Ok(None)            — duplicate / replay, silently drop
     ///   Err(e)              — real decryption failure
-    pub fn decrypt_message(&self, session_id: &str, message: &EncryptedMessage) -> Result<Option<Vec<u8>>, String> {
+    pub fn decrypt_message(
+        &self,
+        session_id: &str,
+        message: &EncryptedMessage,
+    ) -> Result<Option<Vec<u8>>, String> {
         let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
         let state = sessions.get_mut(session_id).ok_or("Session not found")?;
 
@@ -416,7 +485,9 @@ impl SessionManager {
             }
             let skipped = chain.skip_messages(skip_count);
             for (i, k) in skipped.iter().enumerate() {
-                state.skipped_keys.insert(state.recv_message_num + i as u32, *k);
+                state
+                    .skipped_keys
+                    .insert(state.recv_message_num + i as u32, *k);
             }
             // Derive the key for the current message (one past the skips).
             chain.next_message_key()
@@ -465,7 +536,9 @@ impl SessionManager {
 
     /// Restore sessions from a pre-loaded HashMap (used after disk load).
     pub fn from_sessions(sessions: HashMap<String, RatchetState>) -> Self {
-        Self { sessions: Mutex::new(sessions) }
+        Self {
+            sessions: Mutex::new(sessions),
+        }
     }
 
     /// Persist all sessions to disk (acquires inner lock).
@@ -484,10 +557,15 @@ impl SessionManager {
     /// Returns (our_identity_id, peer_identity_pk) or error if not bound.
     pub fn get_identity_keys(&self, session_id: &str) -> Result<(String, [u8; 32]), String> {
         let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
-        let state = sessions.get(session_id).ok_or(format!("Session not found: {session_id}"))?;
-        let our_id = state.our_identity_id.as_ref()
+        let state = sessions
+            .get(session_id)
+            .ok_or(format!("Session not found: {session_id}"))?;
+        let our_id = state
+            .our_identity_id
+            .as_ref()
             .ok_or("Safety number unavailable: our identity not bound to this session.")?;
-        let peer_pk = state.peer_identity_pk
+        let peer_pk = state
+            .peer_identity_pk
             .ok_or("Safety number unavailable: peer identity not bound to this session.")?;
         Ok((our_id.clone(), peer_pk))
     }
@@ -511,12 +589,16 @@ struct SessionFile {
 }
 
 /// Write all sessions to disk as JSON (atomic: temp + rename).
-pub fn save_sessions_to_disk(path: &std::path::Path, sessions: &HashMap<String, RatchetState>) -> Result<(), String> {
+pub fn save_sessions_to_disk(
+    path: &std::path::Path,
+    sessions: &HashMap<String, RatchetState>,
+) -> Result<(), String> {
     let file = SessionFile {
         v: SESSION_FILE_VERSION.to_string(),
         sessions: sessions.clone(),
     };
-    let json = serde_json::to_string_pretty(&file).map_err(|e| format!("Session serialization failed: {e}"))?;
+    let json = serde_json::to_string_pretty(&file)
+        .map_err(|e| format!("Session serialization failed: {e}"))?;
 
     // Atomic write: temp file → rename
     let tmp = path.with_extension("tmp");
@@ -552,7 +634,9 @@ pub fn load_sessions_from_disk(path: &std::path::Path) -> HashMap<String, Ratche
 }
 
 impl Default for SessionManager {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 #[cfg(test)]
@@ -583,8 +667,10 @@ mod tests {
         let ik_b = RatchetKeyPair::generate();
         let spk_b = RatchetKeyPair::generate();
 
-        let initiator_ss = X3DH::initiator(&ik_a, &ek_a, &ik_b.public_key, &spk_b.public_key).unwrap();
-        let responder_ss = X3DH::responder(&ik_b, &spk_b, &ik_a.public_key, &ek_a.public_key).unwrap();
+        let initiator_ss =
+            X3DH::initiator(&ik_a, &ek_a, &ik_b.public_key, &spk_b.public_key).unwrap();
+        let responder_ss =
+            X3DH::responder(&ik_b, &spk_b, &ik_a.public_key, &ek_a.public_key).unwrap();
         assert_eq!(initiator_ss, responder_ss, "X3DH 双方共享密钥不对称");
     }
 
@@ -596,10 +682,15 @@ mod tests {
         let ik_b = RatchetKeyPair::generate();
 
         // Alice: x3dhInitiate(IK_A, EK_A, IK_B, SPK_B=IK_B)
-        let initiator_ss = X3DH::initiator(&ik_a, &ek_a, &ik_b.public_key, &ik_b.public_key).unwrap();
+        let initiator_ss =
+            X3DH::initiator(&ik_a, &ek_a, &ik_b.public_key, &ik_b.public_key).unwrap();
         // Bob: x3dhRespond(IK_B, SPK_B=IK_B, IK_A, EK_A)
-        let responder_ss = X3DH::responder(&ik_b, &ik_b, &ik_a.public_key, &ek_a.public_key).unwrap();
-        assert_eq!(initiator_ss, responder_ss, "X3DH 双方共享密钥不对称（SPK=IK 退化）");
+        let responder_ss =
+            X3DH::responder(&ik_b, &ik_b, &ik_a.public_key, &ek_a.public_key).unwrap();
+        assert_eq!(
+            initiator_ss, responder_ss,
+            "X3DH 双方共享密钥不对称（SPK=IK 退化）"
+        );
 
         let sm = SessionManager::new();
         sm.create_session("alice", &initiator_ss, true).unwrap();
@@ -617,7 +708,9 @@ mod tests {
 
         // 多轮 Alice → Bob
         for i in 0..10 {
-            let m = sm.encrypt_message("alice", format!("m{}", i).as_bytes()).unwrap();
+            let m = sm
+                .encrypt_message("alice", format!("m{}", i).as_bytes())
+                .unwrap();
             let p = sm.decrypt_message("bob", &m).unwrap().unwrap();
             assert_eq!(p, format!("m{}", i).into_bytes());
         }
@@ -669,8 +762,11 @@ mod tests {
         let bob = SessionManager::new();
         alice.create_session("bob", &secret, true).unwrap();
         bob.create_session("alice", &secret, false).unwrap();
-        bob.set_peer_key("alice", alice.get_send_key("bob").unwrap()).unwrap();
-        alice.set_peer_key("bob", bob.get_send_key("alice").unwrap()).unwrap();
+        bob.set_peer_key("alice", alice.get_send_key("bob").unwrap())
+            .unwrap();
+        alice
+            .set_peer_key("bob", bob.get_send_key("alice").unwrap())
+            .unwrap();
         let enc = alice.encrypt_message("bob", b"Test").unwrap();
         let dec = bob.decrypt_message("alice", &enc).unwrap().unwrap();
         assert_eq!(dec, b"Test");
@@ -684,19 +780,31 @@ mod tests {
         let bob = SessionManager::new();
         alice.create_session("bob", &secret, true).unwrap();
         bob.create_session("alice", &secret, false).unwrap();
-        bob.set_peer_key("alice", alice.get_send_key("bob").unwrap()).unwrap();
-        alice.set_peer_key("bob", bob.get_send_key("alice").unwrap()).unwrap();
+        bob.set_peer_key("alice", alice.get_send_key("bob").unwrap())
+            .unwrap();
+        alice
+            .set_peer_key("bob", bob.get_send_key("alice").unwrap())
+            .unwrap();
 
         // Alice 连发 5 条
         let msgs: Vec<_> = (0..5)
-            .map(|i| alice.encrypt_message("bob", format!("m{}", i).as_bytes()).unwrap())
+            .map(|i| {
+                alice
+                    .encrypt_message("bob", format!("m{}", i).as_bytes())
+                    .unwrap()
+            })
             .collect();
 
         // Bob 乱序接收：3, 1, 4, 0, 2
         let order = [3usize, 1, 4, 0, 2];
         for &idx in &order {
             let pt = bob.decrypt_message("alice", &msgs[idx]).unwrap().unwrap();
-            assert_eq!(pt, format!("m{}", idx).into_bytes(), "乱序消息 {} 解密失败", idx);
+            assert_eq!(
+                pt,
+                format!("m{}", idx).into_bytes(),
+                "乱序消息 {} 解密失败",
+                idx
+            );
         }
 
         // 全部解密后，skipped 池应已清空
@@ -712,16 +820,28 @@ mod tests {
         let bob = SessionManager::new();
         alice.create_session("bob", &secret, true).unwrap();
         bob.create_session("alice", &secret, false).unwrap();
-        bob.set_peer_key("alice", alice.get_send_key("bob").unwrap()).unwrap();
-        alice.set_peer_key("bob", bob.get_send_key("alice").unwrap()).unwrap();
+        bob.set_peer_key("alice", alice.get_send_key("bob").unwrap())
+            .unwrap();
+        alice
+            .set_peer_key("bob", bob.get_send_key("alice").unwrap())
+            .unwrap();
 
         let m0 = alice.encrypt_message("bob", b"first").unwrap();
         let m1 = alice.encrypt_message("bob", b"second").unwrap();
         let m2 = alice.encrypt_message("bob", b"third").unwrap();
 
-        assert_eq!(bob.decrypt_message("alice", &m0).unwrap().unwrap(), b"first");
-        assert_eq!(bob.decrypt_message("alice", &m1).unwrap().unwrap(), b"second");
-        assert_eq!(bob.decrypt_message("alice", &m2).unwrap().unwrap(), b"third");
+        assert_eq!(
+            bob.decrypt_message("alice", &m0).unwrap().unwrap(),
+            b"first"
+        );
+        assert_eq!(
+            bob.decrypt_message("alice", &m1).unwrap().unwrap(),
+            b"second"
+        );
+        assert_eq!(
+            bob.decrypt_message("alice", &m2).unwrap().unwrap(),
+            b"third"
+        );
 
         // 重放 m0（已消费）→ Ok(None) = silent drop
         assert_eq!(bob.decrypt_message("alice", &m0).unwrap(), None);

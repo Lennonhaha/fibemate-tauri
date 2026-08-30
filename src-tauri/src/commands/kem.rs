@@ -12,9 +12,7 @@ use zeroize::Zeroize;
 
 use crate::commands::CryptoState;
 use crate::pq::{
-    MlKem768PublicKey,
-    MlKem768Encapsulation,
-    MLKEM768_PK_SIZE, MLKEM768_CT_SIZE, MLKEM768_SK_SIZE,
+    MlKem768Encapsulation, MlKem768PublicKey, MLKEM768_CT_SIZE, MLKEM768_PK_SIZE, MLKEM768_SK_SIZE,
 };
 
 // ── Response types ──────────────────────────────────────────────
@@ -64,15 +62,14 @@ pub fn kem_keygen(state: State<CryptoState>) -> Result<KemKeygenResponse, String
     // Store secret key encrypted to disk
     {
         let mut store = state.key_store.lock().map_err(|e| e.to_string())?;
-        store.store_secret_key(
-            &key_id,
-            &kp.public_key,
-            &kp.secret_key,
-            &fingerprint,
-        )?;
+        store.store_secret_key(&key_id, &kp.public_key, &kp.secret_key, &fingerprint)?;
     }
 
-    Ok(KemKeygenResponse { key_id, public_key: public_key_hex, fingerprint })
+    Ok(KemKeygenResponse {
+        key_id,
+        public_key: public_key_hex,
+        fingerprint,
+    })
 }
 
 /// Encapsulate a shared secret to a peer's public key.
@@ -91,7 +88,8 @@ pub fn kem_encapsulate(
     if peer_pk_bytes.len() != MLKEM768_PK_SIZE {
         return Err(format!(
             "Invalid peer public key length: expected {}, got {}",
-            MLKEM768_PK_SIZE, peer_pk_bytes.len()
+            MLKEM768_PK_SIZE,
+            peer_pk_bytes.len()
         ));
     }
     let mut pk_arr = [0u8; MLKEM768_PK_SIZE];
@@ -126,12 +124,13 @@ pub fn kem_decapsulate(
     ciphertext_hex: String,
 ) -> Result<KemDecapsulateResponse, String> {
     // Decode ciphertext
-    let ct_bytes = hex::decode(&ciphertext_hex)
-        .map_err(|e| format!("Invalid hex in ciphertext: {e}"))?;
+    let ct_bytes =
+        hex::decode(&ciphertext_hex).map_err(|e| format!("Invalid hex in ciphertext: {e}"))?;
     if ct_bytes.len() != MLKEM768_CT_SIZE {
         return Err(format!(
             "Invalid ciphertext length: expected {}, got {}",
-            MLKEM768_CT_SIZE, ct_bytes.len()
+            MLKEM768_CT_SIZE,
+            ct_bytes.len()
         ));
     }
     let mut ct_arr = [0u8; MLKEM768_CT_SIZE];
@@ -147,7 +146,8 @@ pub fn kem_decapsulate(
         sk_bytes.zeroize();
         return Err(format!(
             "Invalid secret key length: expected {}, got {}",
-            MLKEM768_SK_SIZE, sk_bytes.len()
+            MLKEM768_SK_SIZE,
+            sk_bytes.len()
         ));
     }
 

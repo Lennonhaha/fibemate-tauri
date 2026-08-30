@@ -10,7 +10,7 @@
 //! Target: Tauri v2 desktop backend
 
 use rand::rngs::OsRng;
-use sha3::{Sha3_256, Digest};
+use sha3::{Digest, Sha3_256};
 use zeroize::{Zeroize, ZeroizeOnDrop};
 
 pub mod hybrid;
@@ -36,12 +36,11 @@ pub const MLDSA65_SIG_SIZE: usize = 3293;
 // ── Re-export rustpq types ──────────────────────────────────────
 
 pub use rustpq::ml_kem::mlkem768::{
-    PublicKey as MlKem768PublicKey,
+    Ciphertext as MlKem768Ciphertext, PublicKey as MlKem768PublicKey,
     SecretKey as MlKem768SecretKey,
-    Ciphertext as MlKem768Ciphertext,
 };
 
-pub use rustpq::ml_dsa::mldsa65 as mldsa65;
+pub use rustpq::ml_dsa::mldsa65;
 
 // ── High-level wrappers ─────────────────────────────────────────
 
@@ -51,21 +50,29 @@ pub fn mlkem768_generate() -> (MlKem768PublicKey, MlKem768SecretKey) {
 }
 
 /// Encapsulate to a public key (returns ciphertext + shared secret)
-pub fn mlkem768_encapsulate(pk: &MlKem768PublicKey) -> (MlKem768Ciphertext, [u8; MLKEM768_SS_SIZE]) {
+pub fn mlkem768_encapsulate(
+    pk: &MlKem768PublicKey,
+) -> (MlKem768Ciphertext, [u8; MLKEM768_SS_SIZE]) {
     let (ct, ss) = rustpq::ml_kem::mlkem768::encapsulate(pk, &mut OsRng);
     let ss_bytes = *ss.as_bytes();
     (ct, ss_bytes)
 }
 
 /// Decapsulate ciphertext to shared secret
-pub fn mlkem768_decapsulate(sk: &MlKem768SecretKey, ct: &MlKem768Ciphertext) -> [u8; MLKEM768_SS_SIZE] {
+pub fn mlkem768_decapsulate(
+    sk: &MlKem768SecretKey,
+    ct: &MlKem768Ciphertext,
+) -> [u8; MLKEM768_SS_SIZE] {
     let ss = rustpq::ml_kem::mlkem768::decapsulate(sk, ct);
     *ss.as_bytes()
 }
 
 /// Byte-level decapsulate — for use with KeyStore loaded raw keys.
 /// Takes raw byte arrays and returns the shared secret.
-pub fn mlkem768_decapsulate_bytes(sk: &[u8; MLKEM768_SK_SIZE], ct: &[u8; MLKEM768_CT_SIZE]) -> [u8; MLKEM768_SS_SIZE] {
+pub fn mlkem768_decapsulate_bytes(
+    sk: &[u8; MLKEM768_SK_SIZE],
+    ct: &[u8; MLKEM768_CT_SIZE],
+) -> [u8; MLKEM768_SS_SIZE] {
     let sk_typed = MlKem768SecretKey::from_bytes(sk)
         .map_err(|e| panic!("Invalid ML-KEM secret key: {e}"))
         .unwrap();
@@ -90,11 +97,17 @@ impl MlKem768KeyPair {
         let mut secret_key = [0u8; MLKEM768_SK_SIZE];
         public_key.copy_from_slice(pk.as_bytes());
         secret_key.copy_from_slice(sk.as_bytes());
-        Self { public_key, secret_key }
+        Self {
+            public_key,
+            secret_key,
+        }
     }
 
     pub fn from_bytes(pk: &[u8; MLKEM768_PK_SIZE], sk: &[u8; MLKEM768_SK_SIZE]) -> Self {
-        Self { public_key: *pk, secret_key: *sk }
+        Self {
+            public_key: *pk,
+            secret_key: *sk,
+        }
     }
 }
 
@@ -110,11 +123,17 @@ impl MlKem768Encapsulation {
         let (ct, ss) = mlkem768_encapsulate(pk);
         let mut ct_bytes = [0u8; MLKEM768_CT_SIZE];
         ct_bytes.copy_from_slice(ct.as_bytes());
-        Self { ciphertext: ct_bytes, shared_secret: ss }
+        Self {
+            ciphertext: ct_bytes,
+            shared_secret: ss,
+        }
     }
 
     pub fn from_bytes(ct: &[u8; MLKEM768_CT_SIZE], ss: &[u8; MLKEM768_SS_SIZE]) -> Self {
-        Self { ciphertext: *ct, shared_secret: *ss }
+        Self {
+            ciphertext: *ct,
+            shared_secret: *ss,
+        }
     }
 }
 
@@ -133,7 +152,10 @@ impl MlDsa65KeyPair {
         let mut secret_key = [0u8; MLDSA65_SK_SIZE];
         public_key.copy_from_slice(pk.as_bytes());
         secret_key.copy_from_slice(sk.as_bytes());
-        Self { public_key, secret_key }
+        Self {
+            public_key,
+            secret_key,
+        }
     }
 
     pub fn sign(&self, message: &[u8], context: &[u8]) -> Result<[u8; MLDSA65_SIG_SIZE], String> {
@@ -146,11 +168,16 @@ impl MlDsa65KeyPair {
         Ok(out)
     }
 
-    pub fn verify(&self, message: &[u8], context: &[u8], sig: &[u8; MLDSA65_SIG_SIZE]) -> Result<bool, String> {
+    pub fn verify(
+        &self,
+        message: &[u8],
+        context: &[u8],
+        sig: &[u8; MLDSA65_SIG_SIZE],
+    ) -> Result<bool, String> {
         let pk = mldsa65::PublicKey::from_bytes(&self.public_key)
             .map_err(|e| format!("Invalid PK: {e}"))?;
-        let sig = mldsa65::Signature::from_bytes(sig)
-            .map_err(|_| "Invalid sig format".to_string())?;
+        let sig =
+            mldsa65::Signature::from_bytes(sig).map_err(|_| "Invalid sig format".to_string())?;
         Ok(mldsa65::verify(&pk, message, context, &sig).is_ok())
     }
 }

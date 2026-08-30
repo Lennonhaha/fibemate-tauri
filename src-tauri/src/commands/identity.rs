@@ -72,7 +72,10 @@ fn load_identity_keypair(state: &CryptoState, identity_id: &str) -> Result<Ratch
     let store = state.key_store.lock().map_err(|e| e.to_string())?;
     let sk_bytes = store.load_secret_key(&ik_key_id(identity_id))?;
     if sk_bytes.len() != 32 {
-        return Err(format!("Identity key corrupt: expected 32 bytes, got {}", sk_bytes.len()));
+        return Err(format!(
+            "Identity key corrupt: expected 32 bytes, got {}",
+            sk_bytes.len()
+        ));
     }
     let mut private_key = [0u8; 32];
     private_key.copy_from_slice(&sk_bytes);
@@ -104,7 +107,8 @@ pub fn ik_generate(
     {
         let store = state.key_store.lock().map_err(|e| e.to_string())?;
         if store.has_key(&ik_key_id(&id)) {
-            let meta = store.get_meta(&ik_key_id(&id))
+            let meta = store
+                .get_meta(&ik_key_id(&id))
                 .ok_or("Identity metadata missing")?;
             return Ok(IkGenerateResponse {
                 identity_id: id,
@@ -144,7 +148,8 @@ pub fn ik_get_public(
     identity_id: String,
 ) -> Result<IkGetPublicResponse, String> {
     let store = state.key_store.lock().map_err(|e| e.to_string())?;
-    let meta = store.get_meta(&ik_key_id(&identity_id))
+    let meta = store
+        .get_meta(&ik_key_id(&identity_id))
         .ok_or(format!("Identity not found: {identity_id}"))?;
     Ok(IkGetPublicResponse {
         identity_id,
@@ -161,13 +166,13 @@ pub fn ik_list(state: State<CryptoState>) -> Result<IkListResponse, String> {
     let identities = all_meta
         .into_iter()
         .filter_map(|(key_id, meta)| {
-            key_id.strip_prefix(IK_PREFIX).map(|stripped| {
-                IkGetPublicResponse {
+            key_id
+                .strip_prefix(IK_PREFIX)
+                .map(|stripped| IkGetPublicResponse {
                     identity_id: stripped.to_string(),
                     public_key_hex: hex::encode(&meta.public_key),
                     fingerprint: meta.fingerprint.clone(),
-                }
-            })
+                })
         })
         .collect();
     Ok(IkListResponse { identities })
@@ -202,7 +207,10 @@ pub fn x3dh_initiate(
 
     // X3DH initiator computation
     let shared_secret = X3DH::initiator(
-        &my_identity, &my_ephemeral, &their_identity, &their_signed_prekey,
+        &my_identity,
+        &my_ephemeral,
+        &their_identity,
+        &their_signed_prekey,
     )?;
 
     let ss_id = stash_shared_secret(&state, shared_secret)?;
@@ -246,7 +254,10 @@ pub fn x3dh_respond(
 
     // X3DH responder computation
     let shared_secret = X3DH::responder(
-        &my_identity, &my_signed_prekey, &their_identity, &their_ephemeral,
+        &my_identity,
+        &my_signed_prekey,
+        &their_identity,
+        &their_ephemeral,
     )?;
 
     let ss_id = stash_shared_secret(&state, shared_secret)?;
@@ -263,7 +274,10 @@ pub fn x3dh_respond(
 fn hex_to_bytes_32(hex: &str, label: &str) -> Result<[u8; 32], String> {
     let bytes = hex::decode(hex).map_err(|e| format!("Invalid hex for {label}: {e}"))?;
     if bytes.len() != 32 {
-        return Err(format!("Invalid {label} length: expected 32, got {}", bytes.len()));
+        return Err(format!(
+            "Invalid {label} length: expected 32, got {}",
+            bytes.len()
+        ));
     }
     let mut arr = [0u8; 32];
     arr.copy_from_slice(&bytes);

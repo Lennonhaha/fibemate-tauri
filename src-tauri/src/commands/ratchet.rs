@@ -66,10 +66,13 @@ pub fn dr_init(
     // Parse peer identity key if provided
     let peer_identity_pk: Option<[u8; 32]> = match peer_identity_pk_hex {
         Some(ref hex_str) if !hex_str.is_empty() => {
-            let bytes = hex::decode(hex_str)
-                .map_err(|e| format!("Invalid peer identity pk hex: {e}"))?;
+            let bytes =
+                hex::decode(hex_str).map_err(|e| format!("Invalid peer identity pk hex: {e}"))?;
             if bytes.len() != 32 {
-                return Err(format!("Peer identity pk must be 32 bytes, got {}", bytes.len()));
+                return Err(format!(
+                    "Peer identity pk must be 32 bytes, got {}",
+                    bytes.len()
+                ));
             }
             let mut pk = [0u8; 32];
             pk.copy_from_slice(&bytes);
@@ -81,7 +84,9 @@ pub fn dr_init(
     // Consume the shared secret (single-use, removed from storage)
     let (session_id, our_pk) = {
         let mut secrets = state.shared_secrets.lock().map_err(|e| e.to_string())?;
-        let ss = secrets.remove(&ss_id).ok_or(format!("Shared secret not found: {ss_id}"))?;
+        let ss = secrets
+            .remove(&ss_id)
+            .ok_or(format!("Shared secret not found: {ss_id}"))?;
         drop(secrets);
 
         // Use ss_id as session_id so both Alice and Bob use the same identifier.
@@ -94,7 +99,10 @@ pub fn dr_init(
         let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
         if sessions.has_session(&ss_id)? {
             // 幂等：会话已存在，复用（不覆盖）
-            eprintln!("[DR-INIT] Session {} already exists, reusing (idempotent)", ss_id);
+            eprintln!(
+                "[DR-INIT] Session {} already exists, reusing (idempotent)",
+                ss_id
+            );
             let our_pk = sessions.get_send_key(&ss_id)?;
             return Ok(DrInitResponse {
                 session_id: ss_id,
@@ -130,10 +138,12 @@ pub fn dr_set_peer(
     session_id: String,
     peer_public_key_hex: String,
 ) -> Result<(), String> {
-    let pk_bytes = hex::decode(&peer_public_key_hex)
-        .map_err(|e| format!("Invalid hex: {e}"))?;
+    let pk_bytes = hex::decode(&peer_public_key_hex).map_err(|e| format!("Invalid hex: {e}"))?;
     if pk_bytes.len() != 32 {
-        return Err(format!("Invalid public key length: expected 32, got {}", pk_bytes.len()));
+        return Err(format!(
+            "Invalid public key length: expected 32, got {}",
+            pk_bytes.len()
+        ));
     }
     let mut pk = [0u8; 32];
     pk.copy_from_slice(&pk_bytes);
@@ -141,7 +151,8 @@ pub fn dr_set_peer(
     {
         let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
         // Check recv_public_key before set_peer_key to see if ratchet will fire
-        let recv_pk_before = sessions.get_session_recv_pk(&session_id)
+        let recv_pk_before = sessions
+            .get_session_recv_pk(&session_id)
             .map(|pk| hex::encode(pk)[..8].to_string())
             .unwrap_or_else(|_| "NOT_FOUND".to_string());
         eprintln!(
@@ -152,7 +163,8 @@ pub fn dr_set_peer(
             recv_pk_before == "00000000"
         );
         sessions.set_peer_key(&session_id, pk)?;
-        let recv_pk_after = sessions.get_session_recv_pk(&session_id)
+        let recv_pk_after = sessions
+            .get_session_recv_pk(&session_id)
             .map(|pk| hex::encode(pk)[..8].to_string())
             .unwrap_or_else(|_| "ERR".to_string());
         eprintln!("[DR-SET-PEER] recv_pk_after={}", recv_pk_after);
@@ -171,8 +183,8 @@ pub fn dr_encrypt(
     session_id: String,
     plaintext_hex: String,
 ) -> Result<DrEncryptResponse, String> {
-    let plaintext = hex::decode(&plaintext_hex)
-        .map_err(|e| format!("Invalid hex plaintext: {e}"))?;
+    let plaintext =
+        hex::decode(&plaintext_hex).map_err(|e| format!("Invalid hex plaintext: {e}"))?;
 
     let (encrypted, msg_num) = {
         let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
@@ -181,12 +193,15 @@ pub fn dr_encrypt(
         (encrypted, msg_num)
     };
 
-    let message_json = serde_json::to_string(&encrypted)
-        .map_err(|e| format!("Serialization failed: {e}"))?;
+    let message_json =
+        serde_json::to_string(&encrypted).map_err(|e| format!("Serialization failed: {e}"))?;
 
     state.save_sessions_to_disk()?;
 
-    Ok(DrEncryptResponse { message_json, message_num: msg_num })
+    Ok(DrEncryptResponse {
+        message_json,
+        message_num: msg_num,
+    })
 }
 
 /// Decrypt a message in a Double Ratchet session.
@@ -199,8 +214,8 @@ pub fn dr_decrypt(
     session_id: String,
     message_json: String,
 ) -> Result<DrDecryptResponse, String> {
-    let encrypted: EncryptedMessage = serde_json::from_str(&message_json)
-        .map_err(|e| format!("Invalid message JSON: {e}"))?;
+    let encrypted: EncryptedMessage =
+        serde_json::from_str(&message_json).map_err(|e| format!("Invalid message JSON: {e}"))?;
 
     let msg_pk8 = &encrypted.public_key[..4];
     let result = {
@@ -233,8 +248,8 @@ pub fn dr_decrypt(
 
     let plaintext_hex = match result {
         Ok(Some(p)) => Some(hex::encode(&p)),
-        Ok(None) => None,          // duplicate / replay — silent drop
-        Err(e) => return Err(e),   // propagate real errors
+        Ok(None) => None,        // duplicate / replay — silent drop
+        Err(e) => return Err(e), // propagate real errors
     };
 
     Ok(DrDecryptResponse { plaintext_hex })
@@ -242,20 +257,14 @@ pub fn dr_decrypt(
 
 /// Check whether a session exists in Rust state (for JS-layer deduplication).
 #[tauri::command]
-pub fn dr_session_exists(
-    state: State<CryptoState>,
-    session_id: String,
-) -> Result<bool, String> {
+pub fn dr_session_exists(state: State<CryptoState>, session_id: String) -> Result<bool, String> {
     let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     Ok(sessions.has_session(&session_id)?)
 }
 
 /// Get this session's current sending public key.
 #[tauri::command]
-pub fn dr_get_send_key(
-    state: State<CryptoState>,
-    session_id: String,
-) -> Result<String, String> {
+pub fn dr_get_send_key(state: State<CryptoState>, session_id: String) -> Result<String, String> {
     let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     let pk = sessions.get_send_key(&session_id)?;
     Ok(hex::encode(pk))
@@ -263,19 +272,14 @@ pub fn dr_get_send_key(
 
 /// List all active session IDs.
 #[tauri::command]
-pub fn dr_list_sessions(
-    state: State<CryptoState>,
-) -> Result<Vec<String>, String> {
+pub fn dr_list_sessions(state: State<CryptoState>) -> Result<Vec<String>, String> {
     let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
     Ok(sessions.list_session_ids())
 }
 
 /// Delete a session and wipe its key material.
 #[tauri::command]
-pub fn dr_delete_session(
-    state: State<CryptoState>,
-    session_id: String,
-) -> Result<(), String> {
+pub fn dr_delete_session(state: State<CryptoState>, session_id: String) -> Result<(), String> {
     {
         let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
         sessions.delete_session(&session_id);

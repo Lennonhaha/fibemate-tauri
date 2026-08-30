@@ -1,11 +1,11 @@
 use tauri::Manager;
 
-mod pq;
+mod commands;
 mod double_ratchet;
 mod key_store;
+mod pq;
 pub mod sm2;
 pub mod sm3;
-mod commands;
 
 #[cfg(test)]
 mod interop_test;
@@ -19,8 +19,7 @@ use commands::CryptoState;
 /// Get WebSocket server URL (configurable via env FIBEMATE_WS_URL)
 #[tauri::command]
 fn get_ws_url() -> String {
-    std::env::var("FIBEMATE_WS_URL")
-        .unwrap_or_else(|_| "wss://fibemate.net/ws".to_string())
+    std::env::var("FIBEMATE_WS_URL").unwrap_or_else(|_| "wss://fibemate.net/ws".to_string())
 }
 
 /// Get user data directory for key storage
@@ -109,7 +108,9 @@ pub fn run() {
         ])
         .setup(|app| {
             // Initialize encrypted key store with the app data directory
-            let app_data = app.path().app_data_dir()
+            let app_data = app
+                .path()
+                .app_data_dir()
                 .map_err(|e| format!("App data dir not available: {e}"))?;
             let crypto_state = CryptoState::new(app_data)
                 .map_err(|e| format!("Failed to initialize crypto state: {e}"))?;

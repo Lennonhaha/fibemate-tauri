@@ -41,8 +41,7 @@ fn get_or_create_device_key(app_data: &Path) -> Result<[u8; DEVICE_KEY_LEN], Str
     let key_path = app_data.join(DEVICE_KEY_FILE);
 
     if key_path.exists() {
-        let bytes = fs::read(&key_path)
-            .map_err(|e| format!("Failed to read device key: {e}"))?;
+        let bytes = fs::read(&key_path).map_err(|e| format!("Failed to read device key: {e}"))?;
         if bytes.len() != DEVICE_KEY_LEN {
             return Err(format!(
                 "Device key corrupt: expected {DEVICE_KEY_LEN} bytes, got {}",
@@ -58,12 +57,10 @@ fn get_or_create_device_key(app_data: &Path) -> Result<[u8; DEVICE_KEY_LEN], Str
         rand::rngs::OsRng.fill_bytes(&mut key);
 
         // Create parent directories
-        fs::create_dir_all(app_data)
-            .map_err(|e| format!("Failed to create app data dir: {e}"))?;
+        fs::create_dir_all(app_data).map_err(|e| format!("Failed to create app data dir: {e}"))?;
 
         // Write with restricted permissions where possible
-        fs::write(&key_path, key)
-            .map_err(|e| format!("Failed to write device key: {e}"))?;
+        fs::write(&key_path, key).map_err(|e| format!("Failed to write device key: {e}"))?;
 
         // On Unix, chmod 600; on Windows, we rely on user directory permissions
         #[cfg(unix)]
@@ -83,15 +80,15 @@ fn get_or_create_device_key(app_data: &Path) -> Result<[u8; DEVICE_KEY_LEN], Str
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct KeyMeta {
     pub key_id: String,
-    pub public_key: Vec<u8>,       // 1184 bytes ML-KEM-768
-    pub fingerprint: String,       // human-readable
-    pub created_at: u64,           // Unix timestamp
+    pub public_key: Vec<u8>, // 1184 bytes ML-KEM-768
+    pub fingerprint: String, // human-readable
+    pub created_at: u64,     // Unix timestamp
 }
 
 pub struct KeyStore {
     app_data: PathBuf,
     device_key: [u8; DEVICE_KEY_LEN],
-    key_meta: HashMap<String, KeyMeta>,  // key_id → metadata
+    key_meta: HashMap<String, KeyMeta>, // key_id → metadata
     meta_path: PathBuf,
 }
 
@@ -185,8 +182,8 @@ impl KeyStore {
             return Err(format!("Key not found: {key_id}"));
         }
 
-        let encrypted = fs::read(&key_path)
-            .map_err(|e| format!("Failed to read encrypted key: {e}"))?;
+        let encrypted =
+            fs::read(&key_path).map_err(|e| format!("Failed to read encrypted key: {e}"))?;
 
         if encrypted.len() < NONCE_LEN + 16 {
             return Err("Encrypted key file corrupt (too short)".to_string());
@@ -210,8 +207,7 @@ impl KeyStore {
     pub fn delete_secret_key(&mut self, key_id: &str) -> Result<(), String> {
         let key_path = self.key_path(key_id);
         if key_path.exists() {
-            fs::remove_file(&key_path)
-                .map_err(|e| format!("Failed to delete key file: {e}"))?;
+            fs::remove_file(&key_path).map_err(|e| format!("Failed to delete key file: {e}"))?;
         }
         self.key_meta.remove(key_id);
         self.save_meta()?;
@@ -248,8 +244,7 @@ impl KeyStore {
     fn save_meta(&self) -> Result<(), String> {
         let json = serde_json::to_string_pretty(&self.key_meta)
             .map_err(|e| format!("Failed to serialize metadata: {e}"))?;
-        fs::write(&self.meta_path, json)
-            .map_err(|e| format!("Failed to write metadata: {e}"))?;
+        fs::write(&self.meta_path, json).map_err(|e| format!("Failed to write metadata: {e}"))?;
         Ok(())
     }
 }
@@ -284,7 +279,9 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let mut store = KeyStore::new(dir.path()).unwrap();
 
-        store.store_secret_key("k1", &[0u8; 1184], &[1u8; 2400], "f1").unwrap();
+        store
+            .store_secret_key("k1", &[0u8; 1184], &[1u8; 2400], "f1")
+            .unwrap();
         assert!(store.has_key("k1"));
 
         store.delete_secret_key("k1").unwrap();
@@ -299,7 +296,9 @@ mod tests {
 
         {
             let mut store = KeyStore::new(app_data).unwrap();
-            store.store_secret_key("persist", &[0u8; 1184], &[9u8; 2400], "pf").unwrap();
+            store
+                .store_secret_key("persist", &[0u8; 1184], &[9u8; 2400], "pf")
+                .unwrap();
         }
 
         // Re-open — key should still be there

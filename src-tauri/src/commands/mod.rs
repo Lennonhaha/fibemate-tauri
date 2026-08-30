@@ -11,9 +11,9 @@ use std::sync::Mutex;
 use crate::double_ratchet::SessionManager;
 use crate::key_store::KeyStore;
 
+pub mod identity;
 pub mod kem;
 pub mod ratchet;
-pub mod identity;
 pub mod safety_number;
 pub mod sm2_cmd;
 
@@ -47,7 +47,10 @@ impl CryptoState {
                 println!("[CryptoState] No persisted sessions found — starting fresh.");
                 SessionManager::new()
             } else {
-                println!("[CryptoState] Restored {} persisted session(s) from disk.", loaded.len());
+                println!(
+                    "[CryptoState] Restored {} persisted session(s) from disk.",
+                    loaded.len()
+                );
                 SessionManager::from_sessions(loaded)
             }
         };

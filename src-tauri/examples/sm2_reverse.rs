@@ -17,8 +17,8 @@ fn main() {
     let plaintext = "REVERSE-CROSS-CHECK";
     let ct = sm2::encrypt_standard(&pk_hex, plaintext.as_bytes()).expect("encrypt");
 
-    let sig = sm2::sign_with_za(&d, &pk_hex, "1234567812345678", plaintext.as_bytes())
-        .expect("sign");
+    let sig =
+        sm2::sign_with_za(&d, &pk_hex, "1234567812345678", plaintext.as_bytes()).expect("sign");
 
     println!("PUBKEY={}", pk_hex);
     println!("CIPHER={}", ct.to_hex());

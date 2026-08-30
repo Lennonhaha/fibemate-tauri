@@ -6,7 +6,8 @@ fn main() {
     let d = BigUint::from_str_radix(
         "be3dd1fa0d046cc5936737ea5ca22188ef8e76ef53b93187b604408af36920e1",
         16,
-    ).unwrap();
+    )
+    .unwrap();
     let pk = fibemate_lib::sm2::public_key_from_private(&d);
     let pk_hex = fibemate_lib::sm2::pk_to_hex(&pk);
 
