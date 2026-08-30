@@ -47,7 +47,8 @@ jobs:
         working-directory: src-tauri
         run: cargo fmt --all -- --check
 
-      - name: Rust clippy
+      - name: Rust clippy (ubuntu only; lint is platform-independent)
+        if: matrix.os == 'ubuntu-latest'
         working-directory: src-tauri
         run: cargo clippy --all-targets --all-features
 
