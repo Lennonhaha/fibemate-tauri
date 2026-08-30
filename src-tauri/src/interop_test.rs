@@ -2,7 +2,7 @@
 //! 用 JS 端（js-double-ratchet.js）生成的密钥和密文，验证 Rust 端能解密
 //! 这证明 JS 实现与 Rust 实现字节级互通
 
-use crate::double_ratchet::{EncryptedMessage, SessionManager};
+use crate::double_ratchet::SessionManager;
 
 #[test]
 fn test_js_to_rust_interop() {

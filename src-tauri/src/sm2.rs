@@ -1364,9 +1364,6 @@ mod tests {
     /// GM messaging round-trip without any raw private key leaving Rust.
     #[test]
     fn test_gm_envelope_end_to_end() {
-        use num_bigint::BigUint;
-        use num_traits::Num;
-
         // 1. Recipient + sender keypairs (private keys never leave Rust).
         let recipient_kp = generate_key_pair();
         let sender_kp = generate_key_pair();
