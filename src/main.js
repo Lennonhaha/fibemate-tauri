@@ -52,6 +52,11 @@ document.addEventListener('DOMContentLoaded', async () => {
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
             body: JSON.stringify({
               publicKey: bundle.identityKey,
+              // SPK 独立化新字段（Tauri >= 2c3b021）
+              identitySigningKey: bundle.identitySigningKey || null,
+              signedPreKey: bundle.signedPreKey || bundle.identityKey,
+              signedPreKeySignature: bundle.signedPreKeySignature || null,
+              // backward compat (server accepts both naming conventions)
               signedPrekey: bundle.signedPreKey || bundle.identityKey,
               prekeySignature: bundle.signedPreKeySignature || ''
             })
