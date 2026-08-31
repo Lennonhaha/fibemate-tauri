@@ -27,7 +27,7 @@
       "tooltip": "FIBEMATE - Privacy-Enhanced Messaging"
     },
     "security": {
-      "csp": "default-src 'self'; connect-src 'self' ws: wss: http: https:; script-src 'self' 'unsafe-inline' 'unsafe-eval' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; media-src 'self' blob:; worker-src 'self' blob:; frame-src 'none'; object-src 'none'"
+      "csp": "default-src 'self'; connect-src 'self' wss://fibemate.net ws://localhost:* wss://localhost:* ws://127.0.0.1:* wss://127.0.0.1:*; script-src 'self' 'unsafe-inline' blob: 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self' data:; media-src 'self' blob:; worker-src 'self' blob:; frame-src 'none'; object-src 'none'"
     }
   },
   "plugins": {},

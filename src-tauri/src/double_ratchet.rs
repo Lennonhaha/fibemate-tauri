@@ -77,6 +77,11 @@ pub struct RatchetState {
     /// be decrypted when they eventually arrive. Indexed by message number.
     #[serde(default)]
     pub skipped_keys: HashMap<u32, [u8; 32]>,
+    /// Public keys of chains we have ratcheted away from. Late messages that
+    /// carry one of these keys belong to an OLD chain and must NOT trigger
+    /// another DH ratchet — they decrypt via previous_send_keys instead.
+    #[serde(default)]
+    pub previous_chain_pubkeys: Vec<[u8; 32]>,
     // ── DH ratchet state (v2) ──
     /// Our current DH ratchet private key (X25519, 32 bytes)
     #[serde(default)]
@@ -133,6 +138,7 @@ impl RatchetState {
             previous_send_keys: HashMap::new(),
             skipped_messages: 0,
             skipped_keys: HashMap::new(),
+            previous_chain_pubkeys: Vec::new(),
             dh_private: keypair.private_key,
             root_key: *shared_secret,
             is_initiator,
@@ -142,14 +148,27 @@ impl RatchetState {
     }
 
     pub fn ratchet_step(&mut self, their_public_key: [u8; 32]) -> Result<(), String> {
-        // Clear skipped_keys pool: these are derived from the OLD chain and
-        // become invalid after a DH ratchet. Draining the pool here also
-        // prevents unbounded memory growth on long-running sessions.
-        self.skipped_keys.clear();
-        self.previous_send_keys
-            .insert(self.send_message_num, self.send_chain_key);
+        // Migrate this chain's unused skipped message keys into the cross-chain
+        // pool (previous_send_keys) BEFORE clearing. Messages from the OLD chain
+        // may still arrive late (in flight during the ratchet); their message
+        // keys are message keys (MK), so decrypting with them is correct.
+        // Without this, late old-chain messages would fail with aead::Error.
+        for (num, mk) in self.skipped_keys.drain() {
+            self.previous_send_keys.insert(num, mk);
+        }
+        // Remember the chain we are ratcheting away from, so late messages
+        // carrying this public key are recognised as old-chain messages and
+        // do not trigger another ratchet.
+        if self.recv_public_key != [0u8; 32]
+            && !self.previous_chain_pubkeys.contains(&self.recv_public_key)
+        {
+            self.previous_chain_pubkeys.push(self.recv_public_key);
+            if self.previous_chain_pubkeys.len() > 8 {
+                self.previous_chain_pubkeys.remove(0); // FIFO — drop oldest chain
+            }
+        }
         // Evict oldest entry if map grew beyond the cap (FIFO).
-        if self.previous_send_keys.len() > MAX_PREVIOUS_SEND_KEYS {
+        while self.previous_send_keys.len() > MAX_PREVIOUS_SEND_KEYS {
             if let Some(&min_key) = self.previous_send_keys.keys().min() {
                 self.previous_send_keys.remove(&min_key);
             }
@@ -382,6 +401,15 @@ impl SessionManager {
         Ok(state.recv_public_key)
     }
 
+    /// Test-only: force a DH ratchet step on a session, simulating the peer
+    /// rotating their DH public key mid-conversation.
+    #[cfg(test)]
+    pub fn debug_ratchet_step(&self, session_id: &str, their_pub: [u8; 32]) -> Result<(), String> {
+        let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
+        let state = sessions.get_mut(session_id).ok_or("Session not found")?;
+        state.ratchet_step(their_pub)
+    }
+
     /// Check if a session exists.
     pub fn has_session(&self, session_id: &str) -> Result<bool, String> {
         let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
@@ -464,56 +492,71 @@ impl SessionManager {
             state.recv_public_key = message.public_key;
         } else if message.public_key != state.recv_public_key {
             // Peer rotated their DH public key → ratchet our recv chain.
-            state.ratchet_step(message.public_key)?;
+            // Exception: a LATE message from a chain we already ratcheted away
+            // from carries an old public key — it must NOT trigger another
+            // ratchet; it decrypts via the previous_send_keys pool instead.
+            if !state.previous_chain_pubkeys.contains(&message.public_key) {
+                state.ratchet_step(message.public_key)?;
+            }
         }
 
-        // 2. Message-key derivation (Signal spec: skipped-key pool)
+        // 2. Message-key derivation (Signal spec: skipped-key pool).
+        //    Two distinct cases:
+        //      a) CURRENT chain (message.public_key == recv_public_key):
+        //         normal order / skip-ahead / in-chain late messages.
+        //      b) OLD chain (message.public_key != recv_public_key): a late
+        //         message from a chain we ratcheted away from — decrypt via
+        //         previous_send_keys (which now stores message keys, MK).
         let mut chain = KdfChain::new(state.recv_chain_key);
-        let message_key = if message.message_num == state.recv_message_num {
-            // Expected next message in order.
-            chain.next_message_key()
-        } else if message.message_num > state.recv_message_num {
-            // Out-of-order (jump forward). Derive the skipped-over message
-            // keys and stash them in the skipped-key pool so they can be
-            // decrypted when they eventually arrive.
-            let skip_count = message.message_num - state.recv_message_num;
-            if skip_count > MAX_SKIP {
-                return Err(format!(
-                    "Too many skipped messages: {} (MAX_SKIP={})",
-                    skip_count, MAX_SKIP
-                ));
-            }
-            let skipped = chain.skip_messages(skip_count);
-            for (i, k) in skipped.iter().enumerate() {
-                state
-                    .skipped_keys
-                    .insert(state.recv_message_num + i as u32, *k);
-            }
-            // Derive the key for the current message (one past the skips).
-            chain.next_message_key()
-        } else {
-            // message_num < recv_message_num: a previously-skipped (late)
-            // message arrived. Try the skipped-key pool; otherwise it is a
-            // replay and must be rejected.
-            // Try skipped_keys pool first (within current chain).
-            if let Some(k) = state.skipped_keys.remove(&message.message_num) {
-                k
+        let message_key = if message.public_key == state.recv_public_key {
+            if message.message_num == state.recv_message_num {
+                // Expected next message in order.
+                chain.next_message_key()
+            } else if message.message_num > state.recv_message_num {
+                // Out-of-order (jump forward). Derive the skipped-over message
+                // keys and stash them in the skipped-key pool so they can be
+                // decrypted when they eventually arrive.
+                let skip_count = message.message_num - state.recv_message_num;
+                if skip_count > MAX_SKIP {
+                    return Err(format!(
+                        "Too many skipped messages: {} (MAX_SKIP={})",
+                        skip_count, MAX_SKIP
+                    ));
+                }
+                let skipped = chain.skip_messages(skip_count);
+                for (i, k) in skipped.iter().enumerate() {
+                    state
+                        .skipped_keys
+                        .insert(state.recv_message_num + i as u32, *k);
+                }
+                // Derive the key for the current message (one past the skips).
+                chain.next_message_key()
             } else {
-                // Cross-chain: try previous_send_keys (Signal spec "skipped message keys
-                // from a previous chain"). Handles the case where peer performed a DH ratchet
-                // between sending two messages.
-                if let Some(prev_key) = state.previous_send_keys.get(&message.message_num) {
-                    prev_key.clone()
+                // message_num < recv_message_num: a previously-skipped (late)
+                // message arrived within the current chain.
+                if let Some(k) = state.skipped_keys.remove(&message.message_num) {
+                    k
                 } else {
                     // No key found — genuine duplicate / replay.
-                    // Return Ok(None) so the adapter silently drops it.
                     return Ok(None);
                 }
             }
+        } else {
+            // Old-chain late message. Its message key was migrated into
+            // previous_send_keys when we ratcheted away.
+            if let Some(k) = state.previous_send_keys.remove(&message.message_num) {
+                k
+            } else {
+                // Unknown old chain / expired / replay — silently drop.
+                return Ok(None);
+            }
         };
 
-        // 3. Advance chain state only when the message moved the window forward.
-        if message.message_num >= state.recv_message_num {
+        // 3. Advance chain state only for current-chain messages that moved
+        //    the window forward. Old-chain late messages must not touch it.
+        if message.public_key == state.recv_public_key
+            && message.message_num >= state.recv_message_num
+        {
             state.recv_chain_key = chain.chain_key;
             state.recv_message_num = message.message_num + 1;
         }
@@ -995,6 +1038,63 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn test_cross_chain_late_message_with_previous_keys() {
+        // 跨链迟到消息：DH ratchet 之后，旧链的在途消息必须仍能解密。
+        // 依赖两个修正：
+        //   1) ratchet_step 把旧链 skipped_keys（消息密钥 MK）迁移到
+        //      previous_send_keys（此前存链密钥 CK，直接用 CK 当 AES 密钥解密会失败）
+        //   2) 旧链公钥记入 previous_chain_pubkeys，迟到消息不触发二次 ratchet
+        let secret = [42u8; 32];
+        let alice = SessionManager::new();
+        let bob = SessionManager::new();
+        alice.create_session("bob", &secret, true).unwrap();
+        bob.create_session("alice", &secret, false).unwrap();
+        bob.set_peer_key("alice", alice.get_send_key("bob").unwrap())
+            .unwrap();
+        alice
+            .set_peer_key("bob", bob.get_send_key("alice").unwrap())
+            .unwrap();
+
+        // Alice 连发 5 条（链 A，同一 DH 公钥 P_A）
+        let msgs: Vec<_> = (0..5)
+            .map(|i| {
+                alice
+                    .encrypt_message("bob", format!("m{}", i).as_bytes())
+                    .unwrap()
+            })
+            .collect();
+        let chain_a_pk = msgs[0].public_key;
+
+        // Bob 先收跳号消息 m3：skipped_keys 生成 MK1、MK2，MK3 消费。
+        // 注意：skipped_keys 是收到跳号消息时才派生的，不是预生成。
+        assert_eq!(
+            bob.decrypt_message("alice", &msgs[3]).unwrap().unwrap(),
+            b"m3"
+        );
+
+        // 模拟对端轮换 DH 公钥：Bob 收到新公钥消息 → 触发 DH ratchet。
+        // 旧链 P_A 应被记录，skipped_keys(MK1、MK2) 应迁移到 previous_send_keys。
+        bob.debug_ratchet_step("alice", [9u8; 32]).unwrap();
+
+        // 旧链迟到消息 m1（公钥 = P_A ∈ previous_chain_pubkeys）→ 不二次 ratchet，经 previous_send_keys 解密
+        let pt = bob.decrypt_message("alice", &msgs[1]).unwrap().unwrap();
+        assert_eq!(pt, b"m1");
+
+        // 旧链迟到消息 m2 同样可解密
+        let pt = bob.decrypt_message("alice", &msgs[2]).unwrap().unwrap();
+        assert_eq!(pt, b"m2");
+
+        // 旧链已消费消息 m3 重放 → 静默丢弃（previous_send_keys 无 m3）
+        assert_eq!(bob.decrypt_message("alice", &msgs[3]).unwrap(), None);
+
+        // recv 公钥已切换到新链，且旧链公钥被记住
+        assert_eq!(bob.get_session_recv_pk("alice").unwrap(), [9u8; 32]);
+        let sessions = bob.list_session_ids();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(chain_a_pk, msgs[2].public_key, "链 A 内公钥应一致");
+    }
+
     fn test_encrypted_persistence_roundtrip() {
         use tempfile::TempDir;
         // 加密持久化 roundtrip：双端保存 → 重启加载 → 链状态一致、可继续互操作
