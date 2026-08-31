@@ -383,6 +383,10 @@ function renderSettings() {
         <div class="setting-info"><div class="setting-name">Delete Account</div><div class="setting-desc">Permanently delete your account and data</div></div>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
       </div>
+      <div class="setting-item clickable danger" id="settingSelfDestruct">
+        <div class="setting-info"><div class="setting-name">Destroy Key Store</div><div class="setting-desc">Wipe all local keys &amp; sessions (manual, 3-step confirm)</div></div>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+      </div>
     </div>
 
     <!-- About -->
@@ -506,6 +510,108 @@ function renderSettings() {
       localStorage.clear();
       if (STATE.ws) STATE.ws.close();
       window.location.href = 'index.html';
+    }
+  });
+  document.getElementById('settingSelfDestruct')?.addEventListener('click', () => _showSelfDestructDialog());
+}
+
+/**
+ * Controlled key-store self-destruct - 3-step confirmation flow.
+ * Step 1: type the exact phrase "DESTROY ALL KEYS"
+ * Step 2: acknowledge checkbox (irreversible, local-only)
+ * Step 3: 10-second countdown, cancellable, then execute via RatchetBridge
+ */
+function _showSelfDestructDialog() {
+  const overlay = document.createElement('div');
+  overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center;';
+  const modal = document.createElement('div');
+  modal.style.cssText = 'background:var(--bg-panel,#1e2227);border:1px solid var(--border-subtle,#3a3f45);border-radius:12px;padding:24px;max-width:420px;width:90%;color:var(--text-primary,#e8eaed);';
+  modal.innerHTML = `
+    <h3 style="margin:0 0 8px;color:#f85149;">!! Destroy Key Store</h3>
+    <p style="font-size:13px;line-height:1.6;margin:0 0 14px;">
+      This wipes <b>all local keys, sessions and device secrets</b> of FIBEMATE
+      (keys/, device.key, sessions.json). It is <b>irreversible</b> and affects
+      <b>only this application's data</b> on this device. Other files are untouched.
+    </p>
+    <label style="font-size:12px;display:block;margin-bottom:6px;">Type <code>DESTROY ALL KEYS</code> to enable:</label>
+    <input id="sdPhrase" type="text" placeholder="DESTROY ALL KEYS" autocomplete="off"
+      style="width:100%;padding:8px 10px;background:var(--bg-input,#262b31);border:1px solid var(--border-subtle,#3a3f45);border-radius:6px;color:var(--text-primary);font-size:13px;box-sizing:border-box;"/>
+    <label style="display:flex;align-items:center;gap:8px;font-size:12px;margin:12px 0;">
+      <input id="sdAck" type="checkbox"/> I understand this is irreversible and destroys only FIBEMATE's local keys.
+    </label>
+    <button id="sdCountdown" disabled style="width:100%;padding:10px;border:none;border-radius:6px;background:#f85149;color:#fff;font-size:14px;cursor:not-allowed;opacity:0.5;">
+      Hold 10s to confirm
+    </button>
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <button id="sdCancel" style="flex:1;padding:9px;border:1px solid var(--border-subtle,#3a3f45);border-radius:6px;background:transparent;color:var(--text-primary);cursor:pointer;">Cancel</button>
+      <button id="sdGo" disabled style="flex:1;padding:9px;border:none;border-radius:6px;background:#f85149;color:#fff;cursor:not-allowed;opacity:0.5;">Destroy</button>
+    </div>
+  `;
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+
+  const phraseEl = modal.querySelector('#sdPhrase');
+  const ackEl = modal.querySelector('#sdAck');
+  const countdownBtn = modal.querySelector('#sdCountdown');
+  const goBtn = modal.querySelector('#sdGo');
+  const cancelBtn = modal.querySelector('#sdCancel');
+
+  let countdown = 0;
+  let timer = null;
+
+  const refresh = () => {
+    const phraseOk = phraseEl.value.trim() === 'DESTROY ALL KEYS';
+    const ready = phraseOk && ackEl.checked;
+    countdownBtn.disabled = !ready;
+    countdownBtn.style.cursor = ready ? 'pointer' : 'not-allowed';
+    countdownBtn.style.opacity = ready ? '1' : '0.5';
+  };
+  phraseEl.addEventListener('input', refresh);
+  ackEl.addEventListener('change', refresh);
+
+  countdownBtn.addEventListener('click', () => {
+    if (countdown > 0 || countdownBtn.disabled) return;
+    countdown = 10;
+    countdownBtn.textContent = 'Confirm in ' + countdown + 's...';
+    timer = setInterval(() => {
+      countdown -= 1;
+      if (countdown <= 0) {
+        clearInterval(timer);
+        countdownBtn.textContent = 'Confirmed';
+        goBtn.disabled = false;
+        goBtn.style.cursor = 'pointer';
+        goBtn.style.opacity = '1';
+      } else {
+        countdownBtn.textContent = 'Confirm in ' + countdown + 's...';
+      }
+    }, 1000);
+  });
+
+  cancelBtn.addEventListener('click', () => {
+    if (timer) clearInterval(timer);
+    document.body.removeChild(overlay);
+  });
+
+  goBtn.addEventListener('click', async () => {
+    if (goBtn.disabled) return;
+    if (timer) clearInterval(timer);
+    try {
+      const bridge = window.RatchetBridge;
+      if (!bridge || typeof bridge.selfDestruct !== 'function') {
+        showToast('Rust backend unavailable - self-destruct cancelled', 'error');
+        document.body.removeChild(overlay);
+        return;
+      }
+      goBtn.disabled = true;
+      goBtn.textContent = 'Wiping...';
+      const result = await bridge.selfDestruct(phraseEl.value.trim());
+      showToast(result || 'Key store destroyed', 'success');
+      localStorage.clear();
+      if (STATE.ws) STATE.ws.close();
+      setTimeout(() => { window.location.href = 'index.html'; }, 1200);
+    } catch (e) {
+      showToast('Self-destruct failed: ' + (e && e.message || e), 'error');
+      document.body.removeChild(overlay);
     }
   });
 }
