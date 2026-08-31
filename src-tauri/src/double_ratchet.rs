@@ -865,6 +865,56 @@ mod tests {
     }
 
     #[test]
+    fn test_x3dh_with_independent_spk_and_signature() {
+        // SPK 独立化：Bob 的 signed pre-key 独立于身份密钥（不再是 SPK=IK
+        // 退化），且 SPK 由 ML-DSA-65 身份签名密钥签名；篡改 SPK 验签失败。
+        use crate::pq::MlDsa65KeyPair;
+
+        let ik_a = RatchetKeyPair::generate();
+        let ek_a = RatchetKeyPair::generate();
+        let ik_b = RatchetKeyPair::generate();
+        let spk_b = RatchetKeyPair::generate(); // 独立 SPK
+        assert_ne!(
+            ik_b.public_key, spk_b.public_key,
+            "SPK 必须独立于 IK（修复 DH2=DH3 退化）"
+        );
+
+        // Bob 用 ISK（ML-DSA-65）签名 SPK 公钥
+        let isk_b = MlDsa65KeyPair::generate();
+        let sig = isk_b.sign(&spk_b.public_key, b"fibemate-spk-v1").unwrap();
+        assert!(isk_b
+            .verify(&spk_b.public_key, b"fibemate-spk-v1", &sig)
+            .unwrap());
+
+        // Alice 验签通过后执行 X3DH（用独立 SPK_B）
+        let init_ss = X3DH::initiator(&ik_a, &ek_a, &ik_b.public_key, &spk_b.public_key).unwrap();
+        let resp_ss = X3DH::responder(&ik_b, &spk_b, &ik_a.public_key, &ek_a.public_key).unwrap();
+        assert_eq!(init_ss, resp_ss, "独立 SPK 下 X3DH 双方共享密钥必须一致");
+
+        // 篡改 SPK → 验签必须失败
+        let spk_b_tampered = RatchetKeyPair::generate();
+        assert!(
+            !isk_b
+                .verify(&spk_b_tampered.public_key, b"fibemate-spk-v1", &sig)
+                .unwrap(),
+            "篡改 SPK 后验签必须失败"
+        );
+
+        // 完整握手：独立 SPK 下会话可正常建立并互发消息
+        let sm_a = SessionManager::new();
+        let sm_b = SessionManager::new();
+        sm_a.create_session("bob", &init_ss, true).unwrap();
+        sm_b.create_session("alice", &resp_ss, false).unwrap();
+        sm_b.set_peer_key("alice", sm_a.get_send_key("bob").unwrap())
+            .unwrap();
+        sm_a.set_peer_key("bob", sm_b.get_send_key("alice").unwrap())
+            .unwrap();
+        let m = sm_a.encrypt_message("bob", b"independent-spk-ok").unwrap();
+        let pt = sm_b.decrypt_message("alice", &m).unwrap().unwrap();
+        assert_eq!(pt, b"independent-spk-ok");
+    }
+
+    #[test]
     fn test_full_handshake_roundtrip_realistic() {
         // 模拟真实命令：Bob 的 SPK = IK（identity.rs x3dh_respond 用 my_identity.clone()）
         let ik_a = RatchetKeyPair::generate();

@@ -159,12 +159,14 @@
      * @returns {Promise<{ssId, ourIdentityPkHex, ourEphemeralPkHex}>}
      *   → send {ourIdentityPkHex, ourEphemeralPkHex} to peer via server
      */
-    async x3dhInitiate(myIdentityId, peerIdentityPkHex, peerSignedPrekeyPkHex) {
+    async x3dhInitiate(myIdentityId, peerIdentityPkHex, peerSignedPrekeyPkHex, peerSigningPkHex = null, peerSpkSigHex = null) {
       if (!this.initialized) this.init();
       const result = await invoke()('x3dh_initiate', {
         myIdentityId,
         peerIdentityPkHex,
-        peerSignedPrekeyPkHex
+        peerSignedPrekeyPkHex,
+        peerSigningPkHex,
+        peerSpkSigHex
       });
       console.log('[RatchetBridge] X3DH initiate → ss_id:', result.ss_id);
       return {
@@ -172,6 +174,29 @@
         ourIdentityPkHex: result.our_identity_pk_hex,
         ourEphemeralPkHex: result.our_ephemeral_pk_hex
       };
+    },
+
+    /**
+     * Fetch the full pre-key bundle (IK + ISK + independent SPK + signature).
+     * The SPK is lazily generated on first use and persisted; the ML-DSA-65
+     * signature binds the SPK to the identity.
+     *
+     * @param {string} myIdentityId — from generateIdentity()
+     * @returns {Promise<{identity_id, identity_pk_hex, signing_pk_hex,
+     *                    signed_prekey_hex, signed_prekey_sig_hex, signed_prekey_id}>}
+     */
+    async getSpkPublic(myIdentityId) {
+      if (!this.initialized) this.init();
+      return await invoke()('spk_get_public', { identityId: myIdentityId });
+    },
+
+    /**
+     * Rotate the independent signed pre-key and return the fresh bundle.
+     * Old established sessions are unaffected; new handshakes use the new SPK.
+     */
+    async rotateSpk(myIdentityId) {
+      if (!this.initialized) this.init();
+      return await invoke()('spk_rotate', { identityId: myIdentityId });
     },
 
     /**

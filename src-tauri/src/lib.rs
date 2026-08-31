@@ -78,6 +78,9 @@ pub fn run() {
             commands::identity::ik_generate,
             commands::identity::ik_get_public,
             commands::identity::ik_list,
+            // Signed pre-key (independent SPK + ML-DSA-65 signature)
+            commands::identity::spk_get_public,
+            commands::identity::spk_rotate,
             // X3DH Key Exchange
             commands::identity::x3dh_initiate,
             commands::identity::x3dh_respond,

@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::commands::CryptoState;
 use crate::double_ratchet::{RatchetKeyPair, X3DH};
+use crate::pq::MlDsa65KeyPair;
 
 // ── Response types ──────────────────────────────────────────────
 
@@ -51,6 +52,23 @@ pub struct X3dhRespondResponse {
     pub our_signed_prekey_pk_hex: String,
 }
 
+/// Full pre-key bundle response (identity + signing key + signed pre-key).
+/// This is what the frontend uploads to the server / shares with peers.
+#[derive(Serialize, Clone)]
+pub struct SpkGetPublicResponse {
+    pub identity_id: String,
+    /// X25519 identity public key (hex) — IK
+    pub identity_pk_hex: String,
+    /// ML-DSA-65 identity signing public key (hex) — verifies the SPK signature
+    pub signing_pk_hex: String,
+    /// Independent X25519 signed pre-key public key (hex) — SPK
+    pub signed_prekey_hex: String,
+    /// ML-DSA-65 signature over the SPK public key (hex)
+    pub signed_prekey_sig_hex: String,
+    /// Opaque SPK version identifier (changes on rotation)
+    pub signed_prekey_id: String,
+}
+
 #[derive(Serialize, Clone)]
 pub struct IkListResponse {
     pub identities: Vec<IkGetPublicResponse>,
@@ -60,11 +78,27 @@ pub struct IkListResponse {
 
 /// Prefix for identity key storage in KeyStore
 const IK_PREFIX: &str = "ik_";
+/// Prefix for the ML-DSA-65 identity signing key (signs the SPK)
+const IK_SIGN_PREFIX: &str = "iksign_";
+/// Prefix for the independent signed pre-key (X25519)
+const IK_SPK_PREFIX: &str = "ikspk_";
+/// Domain-separation context for the ML-DSA-65 SPK signature.
+const SPK_SIGN_CONTEXT: &[u8] = b"fibemate-spk-v1";
 
 /// Internal: encode a KeyStore key for an identity key.
 #[doc(hidden)]
 pub fn ik_key_id(identity_id: &str) -> String {
     format!("{IK_PREFIX}{identity_id}")
+}
+
+/// Internal: encode a KeyStore key for the ML-DSA-65 identity signing key.
+fn ik_sign_key_id(identity_id: &str) -> String {
+    format!("{IK_SIGN_PREFIX}{identity_id}")
+}
+
+/// Internal: encode a KeyStore key for the independent signed pre-key.
+fn ik_spk_key_id(identity_id: &str) -> String {
+    format!("{IK_SPK_PREFIX}{identity_id}")
 }
 
 /// Load an identity keypair from KeyStore (secret key decrypts from disk each use).
@@ -80,6 +114,104 @@ fn load_identity_keypair(state: &CryptoState, identity_id: &str) -> Result<Ratch
     let mut private_key = [0u8; 32];
     private_key.copy_from_slice(&sk_bytes);
     Ok(RatchetKeyPair::from_private_key(private_key))
+}
+
+/// Load (or lazily generate + persist) the ML-DSA-65 identity signing key.
+/// Lazy init keeps pre-existing identities (created before SPK support)
+/// working — the ISK appears on first bundle request.
+fn load_or_create_isk(state: &CryptoState, identity_id: &str) -> Result<MlDsa65KeyPair, String> {
+    let result = {
+        let store = state.key_store.lock().map_err(|e| e.to_string())?;
+        store.load_secret_key(&ik_sign_key_id(identity_id))
+    };
+    let sk_bytes = match result {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            let kp = MlDsa65KeyPair::generate();
+            let mut store = state.key_store.lock().map_err(|e| e.to_string())?;
+            store.store_secret_key(
+                &ik_sign_key_id(identity_id),
+                &kp.public_key,
+                &kp.secret_key,
+                &crate::pq::fingerprint(&kp.public_key),
+            )?;
+            return Ok(kp);
+        }
+    };
+    if sk_bytes.len() != crate::pq::MLDSA65_SK_SIZE {
+        return Err(format!(
+            "Identity signing key corrupt: expected {} bytes, got {}",
+            crate::pq::MLDSA65_SK_SIZE,
+            sk_bytes.len()
+        ));
+    }
+    let mut secret_key = [0u8; crate::pq::MLDSA65_SK_SIZE];
+    secret_key.copy_from_slice(&sk_bytes);
+    // rustpq 0.3 cannot derive the public key from the secret key, so it is
+    // read back from the KeyStore metadata (stored alongside on creation).
+    let public_key = {
+        let store = state.key_store.lock().map_err(|e| e.to_string())?;
+        let meta = store
+            .get_meta(&ik_sign_key_id(identity_id))
+            .ok_or("Identity signing key metadata missing")?;
+        let mut pk = [0u8; crate::pq::MLDSA65_PK_SIZE];
+        if meta.public_key.len() != crate::pq::MLDSA65_PK_SIZE {
+            return Err(format!(
+                "Identity signing key metadata corrupt: expected {} bytes, got {}",
+                crate::pq::MLDSA65_PK_SIZE,
+                meta.public_key.len()
+            ));
+        }
+        pk.copy_from_slice(&meta.public_key);
+        pk
+    };
+    Ok(MlDsa65KeyPair {
+        public_key,
+        secret_key,
+    })
+}
+
+/// Load (or lazily generate + persist) the independent X25519 signed pre-key.
+/// Being separate from the identity key means X3DH DH2 != DH3 (no degenerate
+/// duplicate) and the SPK can be rotated without rotating the identity.
+fn load_or_create_spk(state: &CryptoState, identity_id: &str) -> Result<RatchetKeyPair, String> {
+    let result = {
+        let store = state.key_store.lock().map_err(|e| e.to_string())?;
+        store.load_secret_key(&ik_spk_key_id(identity_id))
+    };
+    let sk_bytes = match result {
+        Ok(bytes) => bytes,
+        Err(_) => {
+            let kp = RatchetKeyPair::generate();
+            let mut store = state.key_store.lock().map_err(|e| e.to_string())?;
+            store.store_secret_key(
+                &ik_spk_key_id(identity_id),
+                &kp.public_key,
+                &kp.private_key,
+                &crate::pq::fingerprint(&kp.public_key),
+            )?;
+            return Ok(kp);
+        }
+    };
+    if sk_bytes.len() != 32 {
+        return Err(format!(
+            "SPK corrupt: expected 32 bytes, got {}",
+            sk_bytes.len()
+        ));
+    }
+    let mut private_key = [0u8; 32];
+    private_key.copy_from_slice(&sk_bytes);
+    Ok(RatchetKeyPair::from_private_key(private_key))
+}
+
+/// Sign the SPK public key with the ML-DSA-65 identity signing key.
+/// Deterministic inputs → signature is stable for a given (ISK, SPK) pair,
+/// so it does not need to be persisted separately.
+fn sign_spk(
+    isk: &MlDsa65KeyPair,
+    spk_pub: &[u8; 32],
+) -> Result<[u8; crate::pq::MLDSA65_SIG_SIZE], String> {
+    isk.sign(spk_pub, SPK_SIGN_CONTEXT)
 }
 
 /// Store an X3DH shared secret and return its opaque ss_id.
@@ -178,6 +310,76 @@ pub fn ik_list(state: State<CryptoState>) -> Result<IkListResponse, String> {
     Ok(IkListResponse { identities })
 }
 
+/// Build the full pre-key bundle for an identity:
+/// IK (X25519) + ISK (ML-DSA-65 signing key) + independent SPK (X25519)
+/// with an ML-DSA-65 signature binding the SPK to the identity.
+///
+/// The SPK is generated lazily on first call and persisted; the signature is
+/// deterministic (same ISK + SPK => same signature) so it is computed on the
+/// fly. This replaces the old "SPK = IK" degenerate design: X3DH now gets
+/// three distinct DH inputs (DH2 != DH3) and a fresh SPK can be rotated
+/// without touching the long-term identity key.
+#[tauri::command]
+pub fn spk_get_public(
+    state: State<CryptoState>,
+    identity_id: String,
+) -> Result<SpkGetPublicResponse, String> {
+    // IK public key (from metadata - no secret decryption needed).
+    let identity_pk_hex = {
+        let store = state.key_store.lock().map_err(|e| e.to_string())?;
+        let meta = store
+            .get_meta(&ik_key_id(&identity_id))
+            .ok_or(format!("Identity not found: {identity_id}"))?;
+        hex::encode(&meta.public_key)
+    };
+
+    // ISK (ML-DSA-65) - lazily created on first use.
+    let isk = load_or_create_isk(&state, &identity_id)?;
+    let signing_pk_hex = hex::encode(isk.public_key);
+
+    // Independent SPK (X25519) - lazily created on first use.
+    let spk = load_or_create_spk(&state, &identity_id)?;
+    let signed_prekey_hex = hex::encode(spk.public_key);
+
+    // ML-DSA-65 signature over the SPK public key.
+    let sig = sign_spk(&isk, &spk.public_key)?;
+    let signed_prekey_sig_hex = hex::encode(sig);
+
+    // SPK version identifier - derived from the SPK so it changes on rotation.
+    let signed_prekey_id = hex::encode(&spk.public_key[..8]);
+
+    Ok(SpkGetPublicResponse {
+        identity_id,
+        identity_pk_hex,
+        signing_pk_hex,
+        signed_prekey_hex,
+        signed_prekey_sig_hex,
+        signed_prekey_id,
+    })
+}
+
+/// Rotate the independent signed pre-key: generates a fresh X25519 SPK and
+/// re-signs it. Old sessions already established are unaffected; new X3DH
+/// handshakes use the new SPK. Callers should re-upload their bundle.
+#[tauri::command]
+pub fn spk_rotate(
+    state: State<CryptoState>,
+    identity_id: String,
+) -> Result<SpkGetPublicResponse, String> {
+    let new_spk = RatchetKeyPair::generate();
+    let mut store = state.key_store.lock().map_err(|e| e.to_string())?;
+    store.store_secret_key(
+        &ik_spk_key_id(&identity_id),
+        &new_spk.public_key,
+        &new_spk.private_key,
+        &crate::pq::fingerprint(&new_spk.public_key),
+    )?;
+    drop(store);
+
+    // Rebuild the full bundle with the rotated SPK.
+    spk_get_public(state, identity_id)
+}
+
 /// Initiate X3DH key exchange (Alice side).
 ///
 /// Performs 3-DH computation:
@@ -193,6 +395,11 @@ pub fn x3dh_initiate(
     my_identity_id: String,
     peer_identity_pk_hex: String,
     peer_signed_prekey_pk_hex: String,
+    // Optional SPK authenticity check: the peer's ML-DSA-65 signing public
+    // key + the signature over their SPK. When provided, the handshake is
+    // rejected if the signature does not verify (prevents SPK substitution).
+    peer_signing_pk_hex: Option<String>,
+    peer_spk_sig_hex: Option<String>,
 ) -> Result<X3dhInitiateResponse, String> {
     // Load our identity key
     let my_identity = load_identity_keypair(&state, &my_identity_id)?;
@@ -200,6 +407,42 @@ pub fn x3dh_initiate(
     // Parse peer's keys
     let their_identity = hex_to_bytes_32(&peer_identity_pk_hex, "peer identity key")?;
     let their_signed_prekey = hex_to_bytes_32(&peer_signed_prekey_pk_hex, "peer signed pre-key")?;
+
+    // Verify the SPK signature when the peer provided its signing key.
+    if let (Some(signing_pk_hex), Some(sig_hex)) = (peer_signing_pk_hex, peer_spk_sig_hex) {
+        let signing_pk = hex::decode(&signing_pk_hex)
+            .map_err(|e| format!("Invalid peer signing pk hex: {e}"))?;
+        let sig_bytes =
+            hex::decode(&sig_hex).map_err(|e| format!("Invalid peer spk signature hex: {e}"))?;
+        if signing_pk.len() != crate::pq::MLDSA65_PK_SIZE {
+            return Err(format!(
+                "Invalid peer signing pk length: expected {}, got {}",
+                crate::pq::MLDSA65_PK_SIZE,
+                signing_pk.len()
+            ));
+        }
+        if sig_bytes.len() != crate::pq::MLDSA65_SIG_SIZE {
+            return Err(format!(
+                "Invalid peer spk signature length: expected {}, got {}",
+                crate::pq::MLDSA65_SIG_SIZE,
+                sig_bytes.len()
+            ));
+        }
+        let mut pk_arr = [0u8; crate::pq::MLDSA65_PK_SIZE];
+        pk_arr.copy_from_slice(&signing_pk);
+        let mut sig_arr = [0u8; crate::pq::MLDSA65_SIG_SIZE];
+        sig_arr.copy_from_slice(&sig_bytes);
+        // Verify: signature is over the SPK public key, context "fibemate-spk-v1".
+        let peer_isk = MlDsa65KeyPair {
+            public_key: pk_arr,
+            secret_key: [0u8; crate::pq::MLDSA65_SK_SIZE],
+        };
+        if !peer_isk.verify(&their_signed_prekey, SPK_SIGN_CONTEXT, &sig_arr)? {
+            return Err(
+                "SPK signature verification failed — peer bundle may be tampered with".to_string(),
+            );
+        }
+    }
 
     // Generate ephemeral key
     let my_ephemeral = RatchetKeyPair::generate();
@@ -245,12 +488,11 @@ pub fn x3dh_respond(
     let their_identity = hex_to_bytes_32(&peer_identity_pk_hex, "peer identity key")?;
     let their_ephemeral = hex_to_bytes_32(&peer_ephemeral_pk_hex, "peer ephemeral key")?;
 
-    // Signed pre-key = identity key (spk = ik)
-    // 对齐前端 getMyPreKeyBundle() 的 "Reuse identity key as pre-key" 设计。
-    // 若这里临时生成新 spk，则与前端上传的 bundle（signedPreKey=identityKey）不一致，
-    // 导致 X3DH 双方 dh1 不对称、shared secret 永远不一致（Bug 2）。
-    // TODO: 将来升级为独立持久化 signed pre-key（需同步前端 bundle 上传逻辑）。
-    let my_signed_prekey = my_identity.clone();
+    // Independent signed pre-key (persisted, lazily created on first use).
+    // Distinct from the identity key: X3DH gets three distinct DH inputs
+    // (DH2 != DH3) and the SPK can be rotated without rotating the identity.
+    // The frontend uploads this SPK via spk_get_public() so both sides agree.
+    let my_signed_prekey = load_or_create_spk(&state, &my_identity_id)?;
 
     // X3DH responder computation
     let shared_secret = X3DH::responder(
