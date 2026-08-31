@@ -186,6 +186,25 @@
      * @param {string} peerEphemeralPkHex — initiator's ephemeral public key (hex)
      * @returns {Promise<{ssId, ourIdentityPkHex, ourSignedPrekeyPkHex}>}
      */
+    /**
+     * Fetch the full pre-key bundle (IK + ISK + independent SPK + signature).
+     * The SPK is lazily generated on first use and persisted; the ML-DSA-65
+     * signature binds the SPK to the identity.
+     */
+    async getSpkPublic(myIdentityId) {
+      if (!this.initialized) this.init();
+      return await invoke()('spk_get_public', { identityId: myIdentityId });
+    },
+
+    /**
+     * Rotate the independent signed pre-key and return the fresh bundle.
+     * Old established sessions are unaffected; new handshakes use the new SPK.
+     */
+    async rotateSpk(myIdentityId) {
+      if (!this.initialized) this.init();
+      return await invoke()('spk_rotate', { identityId: myIdentityId });
+    },
+
     async x3dhRespond(myIdentityId, peerIdentityPkHex, peerEphemeralPkHex) {
       if (!this.initialized) this.init();
       const result = await invoke()('x3dh_respond', {

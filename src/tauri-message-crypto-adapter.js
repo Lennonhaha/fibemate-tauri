@@ -159,9 +159,12 @@
       }
       _identityBundles[identityId] = identity;
 
-      // Build bundle compatible with server's pre-key format
-      // The server expects: { identityKey, identitySigningKey?, signedPreKey, signedPreKeyId, signedPreKeySignature?, oneTimePreKeys? }
-      // For Rust (X25519), we simplify: no signing key, no signature verification
+      // Build full pre-key bundle via Rust spk_get_public:
+      //   identityKey            - X25519 identity key (IK)
+      //   identitySigningKey     - ML-DSA-65 identity signing key (ISK)
+      //   signedPreKey           - independent X25519 signed pre-key (SPK)
+      //   signedPreKeySignature  - ML-DSA-65 signature over the SPK
+      const spkBundle = await bridge.getSpkPublic(identityId);
       return {
         identityKey: identity.publicKeyHex,             // X25519 32-byte hex (64 chars)
         identitySigningKey: spkBundle.signing_pk_hex,      // ML-DSA-65 ISK (hex)
