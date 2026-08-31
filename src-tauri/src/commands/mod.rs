@@ -40,6 +40,7 @@ impl CryptoState {
     /// Initialize with an app data directory for encrypted key storage.
     /// Loads persisted DR sessions from disk if available.
     pub fn new(app_data: PathBuf) -> Result<Self, String> {
+        crate::audit::init(&app_data);
         let key_store = KeyStore::new(&app_data)?;
         let sessions_path = app_data.join("sessions.json");
 

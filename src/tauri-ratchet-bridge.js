@@ -200,6 +200,24 @@
      * Rotate the independent signed pre-key and return the fresh bundle.
      * Old established sessions are unaffected; new handshakes use the new SPK.
      */
+    /**
+     * Controlled key-store self-destruct (manual-only, requires exact
+     * confirmation phrase). Destroys all local keys/sessions — FIBEMATE
+     * data only.
+     */
+    async selfDestruct(confirmPhrase) {
+      if (!this.initialized) this.init();
+      return await invoke()('keystore_selfdestruct', { confirm: confirmPhrase });
+    },
+
+    /**
+     * Revoke a session via trusted instruction (memory + disk wipe).
+     */
+    async revokeSession(sessionId) {
+      if (!this.initialized) this.init();
+      return await invoke()('dr_revoke_session', { sessionId });
+    },
+
     async rotateSpk(myIdentityId) {
       if (!this.initialized) this.init();
       return await invoke()('spk_rotate', { identityId: myIdentityId });

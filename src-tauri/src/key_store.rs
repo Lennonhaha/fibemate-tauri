@@ -373,6 +373,11 @@ impl KeyStore {
 
     // ── Internal ───────────────────────────────────────────────
 
+    /// Absolute path of the keys directory (for self-destruct / diagnostics).
+    pub fn keys_dir(&self) -> PathBuf {
+        self.app_data.join(KEYS_DIR)
+    }
+
     fn key_path(&self, key_id: &str) -> PathBuf {
         // Sanitize key_id for filesystem safety
         let safe_id: String = key_id

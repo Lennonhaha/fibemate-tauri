@@ -1,5 +1,6 @@
 use tauri::Manager;
 
+mod audit;
 mod commands;
 mod double_ratchet;
 mod key_store;
@@ -81,6 +82,8 @@ pub fn run() {
             // Signed pre-key (independent SPK + ML-DSA-65 signature)
             commands::identity::spk_get_public,
             commands::identity::spk_rotate,
+            // Key-store controlled self-destruct (manual-only)
+            commands::identity::keystore_selfdestruct,
             // X3DH Key Exchange
             commands::identity::x3dh_initiate,
             commands::identity::x3dh_respond,
@@ -91,6 +94,7 @@ pub fn run() {
             commands::ratchet::dr_decrypt,
             commands::ratchet::dr_get_send_key,
             commands::ratchet::dr_delete_session,
+            commands::ratchet::dr_revoke_session,
             commands::ratchet::dr_list_sessions,
             commands::ratchet::dr_session_exists,
             // Safety Number

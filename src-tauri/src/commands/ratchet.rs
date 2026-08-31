@@ -278,6 +278,26 @@ pub fn dr_list_sessions(state: State<CryptoState>) -> Result<Vec<String>, String
     Ok(sessions.list_session_ids())
 }
 
+/// Revoke a session via a trusted instruction (defense-in-depth).
+///
+/// Local / trusted-channel revocation: destroys the session (memory
+/// zeroize + encrypted disk file invalidated) so a leaked session key
+/// becomes useless. Design reserves a future path for server-signed
+/// revocation tokens (HMAC/ML-DSA over userId+sessionId+ts) — the
+/// verifier hook lives here; no remote-control capability is added.
+#[tauri::command]
+pub fn dr_revoke_session(state: State<CryptoState>, session_id: String) -> Result<(), String> {
+    // TODO(revocation-token): verify a server-signed revocation token here
+    // before deleting (token = Sign(sk, userId || sessionId || ts)).
+    {
+        let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+        sessions.delete_session(&session_id);
+    }
+    state.save_sessions_to_disk()?;
+    crate::audit::audit("revoke_session", &session_id);
+    Ok(())
+}
+
 /// Delete a session and wipe its key material.
 #[tauri::command]
 pub fn dr_delete_session(state: State<CryptoState>, session_id: String) -> Result<(), String> {

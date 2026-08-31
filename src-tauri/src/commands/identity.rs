@@ -358,6 +358,70 @@ pub fn spk_get_public(
     })
 }
 
+/// Key-store controlled self-destruct (defense-in-depth, manual-only).
+///
+/// Triggers:
+///   1. Memory: all DR sessions (Zeroize-derived → drop wipes) and pending
+///      shared secrets are destroyed.
+///   2. Disk: every encrypted key blob in keys/, device.key, sessions.json
+///      and key_meta.json is overwritten 3x with random bytes, then removed.
+///
+/// Constraints (hard):
+///   - Requires the exact confirmation phrase "DESTROY ALL KEYS".
+///   - Only destroys FIBEMATE's own data under app_data — never touches
+///     other user files.
+///   - No automatic / scheduled / remote-triggered path exists.
+#[tauri::command]
+pub fn keystore_selfdestruct(state: State<CryptoState>, confirm: String) -> Result<String, String> {
+    if confirm != "DESTROY ALL KEYS" {
+        return Err("确认短语不正确 — 操作已取消。".to_string());
+    }
+    crate::audit::audit("keystore_selfdestruct", "begin");
+
+    // 1. Memory: destroy all ratchet sessions (RatchetState: derive(Zeroize))
+    {
+        let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
+        for sid in sessions.list_session_ids() {
+            sessions.delete_session(&sid);
+        }
+    }
+    // 2. Memory: clear pending X3DH shared secrets
+    {
+        let mut secrets = state.shared_secrets.lock().map_err(|e| e.to_string())?;
+        secrets.clear();
+    }
+    // 3. Disk: overwrite-then-delete every encrypted key blob
+    {
+        let mut store = state.key_store.lock().map_err(|e| e.to_string())?;
+        let ids: Vec<String> = store.list_keys().into_iter().map(|(id, _)| id).collect();
+        for id in ids {
+            let path = store.keys_dir().join(format!("{id}.enc"));
+            for _ in 0..3 {
+                let junk: Vec<u8> = (0..1024).map(|_| rand::random::<u8>()).collect();
+                let _ = std::fs::write(&path, &junk);
+            }
+            let _ = std::fs::remove_file(&path);
+            let _ = store.delete_secret_key(&id);
+        }
+    }
+    // 4. Disk: overwrite-then-delete device key, session file, metadata
+    if let Some(app_data) = state.sessions_path.parent() {
+        for f in ["device.key", "sessions.json", "key_meta.json"] {
+            let p = app_data.join(f);
+            if p.exists() {
+                for _ in 0..3 {
+                    let junk: Vec<u8> = (0..512).map(|_| rand::random::<u8>()).collect();
+                    let _ = std::fs::write(&p, &junk);
+                }
+                let _ = std::fs::remove_file(&p);
+            }
+        }
+    }
+
+    crate::audit::audit("keystore_selfdestruct", "complete");
+    Ok("密钥库已销毁。重新启动后应用将处于全新状态。".to_string())
+}
+
 /// Rotate the independent signed pre-key: generates a fresh X25519 SPK and
 /// re-signs it. Old sessions already established are unaffected; new X3DH
 /// handshakes use the new SPK. Callers should re-upload their bundle.
