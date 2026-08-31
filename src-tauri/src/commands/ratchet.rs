@@ -56,6 +56,7 @@ pub struct DrDecryptResponse {
 pub fn dr_init(
     state: State<CryptoState>,
     ss_id: String,
+    #[allow(unused_variables)] // reserved for future session naming
     peer_name: String,
     is_initiator: bool,
     // Our identity key Store ID (optional — enables Safety Number)

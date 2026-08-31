@@ -542,9 +542,21 @@ impl SessionManager {
     }
 
     /// Persist all sessions to disk (acquires inner lock).
+    /// Legacy plaintext path — kept for tests and migration.
+    #[allow(dead_code)]
     pub fn save_to_disk(&self, path: &std::path::Path) -> Result<(), String> {
         let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
         save_sessions_to_disk(path, &sessions)
+    }
+
+    /// Persist all sessions to disk, AES-256-GCM encrypted (acquires inner lock).
+    pub fn save_to_disk_encrypted(
+        &self,
+        path: &std::path::Path,
+        enc_key: &[u8; 32],
+    ) -> Result<(), String> {
+        let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
+        save_sessions_to_disk_encrypted(path, &sessions, enc_key)
     }
 
     /// List all active session IDs.
@@ -589,6 +601,8 @@ struct SessionFile {
 }
 
 /// Write all sessions to disk as JSON (atomic: temp + rename).
+/// Legacy plaintext format — kept for tests and migration reading.
+#[allow(dead_code)]
 pub fn save_sessions_to_disk(
     path: &std::path::Path,
     sessions: &HashMap<String, RatchetState>,
@@ -631,6 +645,139 @@ pub fn load_sessions_from_disk(path: &std::path::Path) -> HashMap<String, Ratche
             HashMap::new()
         }
     }
+}
+
+// ════════════════════════════════════════════════════════════════
+// Encrypted Session Persistence (v3, security hardening)
+// ════════════════════════════════════════════════════════════════
+//
+// v3 stores the entire session file (including dh_private, root_key,
+// and both chain keys) AES-256-GCM encrypted under a key derived from
+// the device key. On-disk layout: [12-byte nonce][ciphertext+tag].
+// Domain-separated HKDF keeps this key distinct from the ML-KEM key
+// encryption key used by KeyStore.
+
+/// HKDF info tag for the session-encryption key derivation.
+const SESSION_ENC_INFO: &[u8] = b"fibemate-sessions-enc-v1";
+/// AAD bound to every encrypted session file (tamper detection).
+const SESSION_ENC_AAD: &[u8] = b"fibemate-sessions-enc-v1";
+
+/// Derive the session-file encryption key from the device key.
+/// Domain-separated: never reuses the KeyStore ML-KEM key directly.
+pub fn derive_session_enc_key(device_key: &[u8; 32]) -> [u8; 32] {
+    let hkdf = Hkdf::<Sha256>::new(None, device_key);
+    let mut key = [0u8; 32];
+    hkdf.expand(SESSION_ENC_INFO, &mut key)
+        .expect("HKDF expand should never fail for 32 bytes");
+    key
+}
+
+/// Serialize + AES-256-GCM encrypt all sessions to disk (atomic: temp + rename).
+/// Returns an error if encryption or write fails.
+pub fn save_sessions_to_disk_encrypted(
+    path: &std::path::Path,
+    sessions: &HashMap<String, RatchetState>,
+    enc_key: &[u8; 32],
+) -> Result<(), String> {
+    let file = SessionFile {
+        v: SESSION_FILE_VERSION.to_string(),
+        sessions: sessions.clone(),
+    };
+    let json =
+        serde_json::to_string(&file).map_err(|e| format!("Session serialization failed: {e}"))?;
+
+    // AES-256-GCM encrypt with a fresh random nonce.
+    let cipher = Aes256Gcm::new_from_slice(enc_key).map_err(|e| e.to_string())?;
+    let mut nonce_bytes = [0u8; 12];
+    rand::thread_rng().fill_bytes(&mut nonce_bytes);
+    let nonce = Nonce::from_slice(&nonce_bytes);
+    let ciphertext = cipher
+        .encrypt(
+            nonce,
+            aes_gcm::aead::Payload {
+                msg: json.as_bytes(),
+                aad: SESSION_ENC_AAD,
+            },
+        )
+        .map_err(|e| format!("Session encryption failed: {e}"))?;
+
+    let mut blob = Vec::with_capacity(12 + ciphertext.len());
+    blob.extend_from_slice(&nonce_bytes);
+    blob.extend_from_slice(&ciphertext);
+
+    // Atomic write: temp file → rename.
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, &blob).map_err(|e| format!("Session write failed: {e}"))?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("Session rename failed: {e}"))?;
+    Ok(())
+}
+
+/// Load + AES-256-GCM decrypt sessions from disk.
+///
+/// Returns `Err` on a genuine decryption failure (wrong key / tampered
+/// file), so the caller can distinguish "no sessions" from "key mismatch".
+pub fn load_sessions_from_disk_decrypted(
+    path: &std::path::Path,
+    enc_key: &[u8; 32],
+) -> Result<HashMap<String, RatchetState>, String> {
+    let blob = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(_) => return Ok(HashMap::new()), // no file yet — fresh start
+    };
+    if blob.len() < 12 + 16 {
+        return Err("Encrypted session file too short (corrupt)".to_string());
+    }
+    let (nonce_bytes, ciphertext) = blob.split_at(12);
+    let nonce = Nonce::from_slice(nonce_bytes);
+    let cipher = Aes256Gcm::new_from_slice(enc_key).map_err(|e| e.to_string())?;
+    let plaintext = cipher
+        .decrypt(
+            nonce,
+            aes_gcm::aead::Payload {
+                msg: ciphertext,
+                aad: SESSION_ENC_AAD,
+            },
+        )
+        .map_err(|e| {
+            format!("Session decryption failed (device key mismatch or tampered file): {e}")
+        })?;
+
+    let file: SessionFile = serde_json::from_slice(&plaintext)
+        .map_err(|e| format!("Decrypted session file corrupt: {e}"))?;
+    if file.v != SESSION_FILE_VERSION {
+        eprintln!(
+            "[SessionManager] Session file version {} != {} — discarding old sessions (re-handshake required)",
+            file.v, SESSION_FILE_VERSION
+        );
+        return Ok(HashMap::new());
+    }
+    Ok(file.sessions)
+}
+
+/// Attempt to load sessions with transparent legacy migration:
+///   1. Try the encrypted (v3) format first.
+///   2. If the file is an old plaintext v2 JSON, read it and report that
+///      a migration is needed (caller re-saves, which rewrites as v3).
+pub fn load_sessions_with_migration(
+    path: &std::path::Path,
+    enc_key: &[u8; 32],
+) -> (HashMap<String, RatchetState>, bool) {
+    // No file at all — fresh start.
+    if !path.exists() {
+        return (HashMap::new(), false);
+    }
+    // Try encrypted format.
+    match load_sessions_from_disk_decrypted(path, enc_key) {
+        Ok(sessions) => return (sessions, false),
+        Err(_) => { /* fall through to legacy plaintext attempt */ }
+    }
+    // Legacy plaintext v2 format.
+    let legacy = load_sessions_from_disk(path);
+    if !legacy.is_empty() {
+        eprintln!("[SessionManager] Migrating legacy plaintext sessions to encrypted v3 format");
+        return (legacy, true);
+    }
+    (HashMap::new(), false)
 }
 
 impl Default for SessionManager {
@@ -845,5 +992,115 @@ mod tests {
 
         // 重放 m0（已消费）→ Ok(None) = silent drop
         assert_eq!(bob.decrypt_message("alice", &m0).unwrap(), None);
+    }
+
+    #[test]
+    fn test_encrypted_persistence_roundtrip() {
+        use tempfile::TempDir;
+        // 加密持久化 roundtrip：双端保存 → 重启加载 → 链状态一致、可继续互操作
+        let dir = TempDir::new().unwrap();
+        let path_a = dir.path().join("alice.json");
+        let path_b = dir.path().join("bob.json");
+        let enc_key = derive_session_enc_key(&[7u8; 32]);
+
+        let secret = [42u8; 32];
+        let alice = SessionManager::new();
+        let bob = SessionManager::new();
+        alice.create_session("bob", &secret, true).unwrap();
+        bob.create_session("alice", &secret, false).unwrap();
+        bob.set_peer_key("alice", alice.get_send_key("bob").unwrap())
+            .unwrap();
+        alice
+            .set_peer_key("bob", bob.get_send_key("alice").unwrap())
+            .unwrap();
+
+        // 保存前先走一条消息，让链状态推进
+        let m0 = alice.encrypt_message("bob", b"before reload").unwrap();
+        assert_eq!(
+            bob.decrypt_message("alice", &m0).unwrap().unwrap(),
+            b"before reload"
+        );
+
+        // 加密保存双端
+        alice.save_to_disk_encrypted(&path_a, &enc_key).unwrap();
+        bob.save_to_disk_encrypted(&path_b, &enc_key).unwrap();
+
+        // 磁盘上必须是二进制密文，绝不能是明文 JSON
+        for p in [&path_a, &path_b] {
+            let raw = std::fs::read(p).unwrap();
+            assert!(
+                !raw.windows(4).any(|w| w == b"\"v\":"),
+                "session file must not contain plaintext JSON markers"
+            );
+            assert!(raw.len() > 12 + 16, "encrypted blob too small");
+        }
+
+        // 用正确密钥加载（模拟应用重启）
+        let alice2 = SessionManager::from_sessions(
+            load_sessions_from_disk_decrypted(&path_a, &enc_key).unwrap(),
+        );
+        let bob2 = SessionManager::from_sessions(
+            load_sessions_from_disk_decrypted(&path_b, &enc_key).unwrap(),
+        );
+        assert!(alice2.has_session("bob").unwrap());
+        assert!(bob2.has_session("alice").unwrap());
+
+        // 重启后双端链状态一致，可继续互操作
+        let m1 = alice2.encrypt_message("bob", b"after reload").unwrap();
+        let pt = bob2.decrypt_message("alice", &m1).unwrap().unwrap();
+        assert_eq!(pt, b"after reload");
+    }
+
+    #[test]
+    fn test_encrypted_persistence_wrong_key_fails() {
+        use tempfile::TempDir;
+        // 错误密钥必须解密失败（而非静默返回空）
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("sessions.json");
+        let enc_key = derive_session_enc_key(&[7u8; 32]);
+
+        let sm = SessionManager::new();
+        sm.create_session("bob", &[42u8; 32], true).unwrap();
+        sm.save_to_disk_encrypted(&path, &enc_key).unwrap();
+
+        let wrong_key = derive_session_enc_key(&[8u8; 32]);
+        let result = load_sessions_from_disk_decrypted(&path, &wrong_key);
+        assert!(result.is_err(), "wrong key must not decrypt sessions");
+    }
+
+    #[test]
+    fn test_legacy_plaintext_migration() {
+        use tempfile::TempDir;
+        // 旧明文 v2 文件 → 加载并标记需要迁移
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("sessions.json");
+        let enc_key = derive_session_enc_key(&[7u8; 32]);
+
+        // 构造 v2 明文文件
+        let sm = SessionManager::new();
+        sm.create_session("legacy", &[42u8; 32], true).unwrap();
+        sm.save_to_disk(&path).unwrap(); // 明文 v2 格式
+
+        // 迁移加载：应读到旧会话 + 标记 needs_migration
+        let (sessions, needs_migration) = load_sessions_with_migration(&path, &enc_key);
+        assert!(
+            needs_migration,
+            "legacy plaintext file must trigger migration flag"
+        );
+        assert_eq!(sessions.len(), 1);
+        assert!(sessions.contains_key("legacy"));
+
+        // 迁移后立即加密重写 → 磁盘不再含明文 JSON
+        save_sessions_to_disk_encrypted(&path, &sessions, &enc_key).unwrap();
+        let raw = std::fs::read(&path).unwrap();
+        assert!(
+            !raw.windows(4).any(|w| w == b"\"v\":"),
+            "migrated file must be encrypted"
+        );
+
+        // 加密格式可正常回读
+        let (sessions2, needs_migration2) = load_sessions_with_migration(&path, &enc_key);
+        assert!(!needs_migration2);
+        assert_eq!(sessions2.len(), 1);
     }
 }

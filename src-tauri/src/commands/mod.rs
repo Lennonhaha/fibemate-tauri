@@ -31,6 +31,9 @@ pub struct CryptoState {
     pub sessions: Mutex<SessionManager>,
     /// Path to sessions.json for persistence
     pub sessions_path: PathBuf,
+    /// Domain-separated key for encrypting sessions.json at rest
+    /// (derived from the device key via HKDF — never exposed to JS).
+    session_enc_key: [u8; 32],
 }
 
 impl CryptoState {
@@ -40,33 +43,49 @@ impl CryptoState {
         let key_store = KeyStore::new(&app_data)?;
         let sessions_path = app_data.join("sessions.json");
 
-        // Restore persisted sessions from disk
-        let sessions = {
-            let loaded = crate::double_ratchet::load_sessions_from_disk(&sessions_path);
+        // Derive the session-file encryption key from the device key
+        // (domain-separated from the ML-KEM key-encryption key).
+        let session_enc_key = crate::double_ratchet::derive_session_enc_key(key_store.device_key());
+
+        // Restore persisted sessions from disk, transparently migrating
+        // legacy plaintext v2 files to the encrypted v3 format.
+        let (sessions, migrated) = {
+            let (loaded, needs_migration) = crate::double_ratchet::load_sessions_with_migration(
+                &sessions_path,
+                &session_enc_key,
+            );
             if loaded.is_empty() {
                 println!("[CryptoState] No persisted sessions found — starting fresh.");
-                SessionManager::new()
             } else {
                 println!(
                     "[CryptoState] Restored {} persisted session(s) from disk.",
                     loaded.len()
                 );
-                SessionManager::from_sessions(loaded)
             }
+            (SessionManager::from_sessions(loaded), needs_migration)
         };
 
-        Ok(Self {
+        let state = Self {
             key_store: Mutex::new(key_store),
             shared_secrets: Mutex::new(HashMap::new()),
             sessions: Mutex::new(sessions),
             sessions_path,
-        })
+            session_enc_key,
+        };
+
+        // If a legacy plaintext file was migrated, immediately rewrite it
+        // encrypted so no plaintext copy remains on disk.
+        if migrated {
+            state.save_sessions_to_disk()?;
+        }
+
+        Ok(state)
     }
 
-    /// Persist the current session state to disk.
+    /// Persist the current session state to disk, encrypted at rest.
     /// Call this after any session-mutating operation.
     pub fn save_sessions_to_disk(&self) -> Result<(), String> {
         let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
-        sessions.save_to_disk(&self.sessions_path)
+        sessions.save_to_disk_encrypted(&self.sessions_path, &self.session_enc_key)
     }
 }

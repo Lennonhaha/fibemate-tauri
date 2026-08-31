@@ -31,26 +31,171 @@ const KEYS_DIR: &str = "keys";
 const DEVICE_KEY_LEN: usize = 32;
 const NONCE_LEN: usize = 12;
 
+// ── Windows DPAPI device-key protection ─────────────────────────
+// On Windows the device key is wrapped with DPAPI (CryptProtectData),
+// binding it to the current Windows user+machine. A copied device.key
+// is therefore useless on another machine / account (e.g. cloud sync
+// leaks). Unix keeps the plaintext file with 0600 permissions.
+#[cfg(windows)]
+mod dpapi {
+    use windows_sys::Win32::Foundation::LocalFree;
+    use windows_sys::Win32::Security::Cryptography::{
+        CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
+    };
+
+    pub fn protect(bytes: &[u8]) -> Result<Vec<u8>, String> {
+        unsafe {
+            let in_blob = CRYPT_INTEGER_BLOB {
+                cbData: bytes.len() as u32,
+                pbData: bytes.as_ptr() as *mut u8,
+            };
+            let mut out_blob = CRYPT_INTEGER_BLOB {
+                cbData: 0,
+                pbData: std::ptr::null_mut(),
+            };
+            let ok = CryptProtectData(
+                &in_blob,
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut out_blob,
+            );
+            if ok == 0 {
+                return Err("DPAPI CryptProtectData failed".to_string());
+            }
+            let out =
+                std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize).to_vec();
+            LocalFree(out_blob.pbData as _);
+            Ok(out)
+        }
+    }
+
+    pub fn unprotect(blob: &[u8]) -> Result<Vec<u8>, String> {
+        unsafe {
+            let in_blob = CRYPT_INTEGER_BLOB {
+                cbData: blob.len() as u32,
+                pbData: blob.as_ptr() as *mut u8,
+            };
+            let mut out_blob = CRYPT_INTEGER_BLOB {
+                cbData: 0,
+                pbData: std::ptr::null_mut(),
+            };
+            let ok = CryptUnprotectData(
+                &in_blob,
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                std::ptr::null(),
+                std::ptr::null(),
+                CRYPTPROTECT_UI_FORBIDDEN,
+                &mut out_blob,
+            );
+            if ok == 0 {
+                return Err(
+                    "DPAPI CryptUnprotectData failed (wrong user or corrupted file)".to_string(),
+                );
+            }
+            let out =
+                std::slice::from_raw_parts(out_blob.pbData, out_blob.cbData as usize).to_vec();
+            LocalFree(out_blob.pbData as _);
+            Ok(out)
+        }
+    }
+}
+
+/// Magic prefix marking a DPAPI-wrapped device key file (Windows only).
+#[cfg(windows)]
+const DPAPI_MAGIC: &[u8] = b"FIBEDPAPI1";
+#[cfg(windows)]
+const DPAPI_MAGIC_LEN: usize = 10;
+
+/// Read the raw device-key material from disk, transparently handling
+/// the on-disk protection format:
+///   - Windows: DPAPI-wrapped blob (magic prefix) or legacy plaintext 32B
+///     (migrated in place to DPAPI on first read).
+///   - Unix: plaintext 32B with 0600 permissions.
+fn read_device_key_from_disk(key_path: &Path) -> Result<[u8; DEVICE_KEY_LEN], String> {
+    let bytes = fs::read(key_path).map_err(|e| format!("Failed to read device key: {e}"))?;
+
+    // ── Windows: DPAPI-wrapped format ──
+    #[cfg(windows)]
+    {
+        if bytes.starts_with(DPAPI_MAGIC) {
+            let plain = dpapi::unprotect(&bytes[DPAPI_MAGIC_LEN..])?;
+            if plain.len() != DEVICE_KEY_LEN {
+                return Err(format!(
+                    "Device key corrupt: expected {DEVICE_KEY_LEN} bytes, got {}",
+                    plain.len()
+                ));
+            }
+            let mut key = [0u8; DEVICE_KEY_LEN];
+            key.copy_from_slice(&plain);
+            return Ok(key);
+        }
+        // Legacy plaintext 32B → migrate to DPAPI in place.
+        if bytes.len() == DEVICE_KEY_LEN {
+            let protected = dpapi::protect(&bytes)?;
+            let mut out = Vec::with_capacity(DPAPI_MAGIC_LEN + protected.len());
+            out.extend_from_slice(DPAPI_MAGIC);
+            out.extend_from_slice(&protected);
+            fs::write(key_path, &out)
+                .map_err(|e| format!("Failed to migrate device key to DPAPI: {e}"))?;
+            let mut key = [0u8; DEVICE_KEY_LEN];
+            key.copy_from_slice(&bytes);
+            return Ok(key);
+        }
+        // Fall through to shared length check for any other corrupt form.
+    }
+
+    // ── Unix / plaintext format ──
+    if bytes.len() != DEVICE_KEY_LEN {
+        return Err(format!(
+            "Device key corrupt: expected {DEVICE_KEY_LEN} bytes, got {}",
+            bytes.len()
+        ));
+    }
+    let mut key = [0u8; DEVICE_KEY_LEN];
+    key.copy_from_slice(&bytes);
+    Ok(key)
+}
+
+/// Write the device-key material to disk with platform protection:
+///   - Windows: DPAPI-wrapped (bound to current user+machine).
+///   - Unix: 0600 plaintext file.
+fn write_device_key_to_disk(key_path: &Path, key: &[u8; DEVICE_KEY_LEN]) -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        let protected = dpapi::protect(key)?;
+        let mut out = Vec::with_capacity(DPAPI_MAGIC_LEN + protected.len());
+        out.extend_from_slice(DPAPI_MAGIC);
+        out.extend_from_slice(&protected);
+        fs::write(key_path, &out).map_err(|e| format!("Failed to write device key: {e}"))?;
+        return Ok(());
+    }
+    #[cfg(not(windows))]
+    {
+        fs::write(key_path, key).map_err(|e| format!("Failed to write device key: {e}"))?;
+        // On Unix, chmod 600.
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(key_path, fs::Permissions::from_mode(0o600))
+            .map_err(|e| format!("Failed to restrict device key permissions: {e}"))?;
+        Ok(())
+    }
+}
+
 // ── Device Key ─────────────────────────────────────────────────
 
 /// Get or create the device-level encryption key.
 ///
-/// On first run, generates 32 random bytes and writes to disk.
-/// Subsequent runs read the file.
+/// On first run, generates 32 random bytes and writes to disk (DPAPI
+/// on Windows, 0600 file on Unix). Subsequent runs read the file,
+/// transparently migrating legacy plaintext Windows files to DPAPI.
 fn get_or_create_device_key(app_data: &Path) -> Result<[u8; DEVICE_KEY_LEN], String> {
     let key_path = app_data.join(DEVICE_KEY_FILE);
 
     if key_path.exists() {
-        let bytes = fs::read(&key_path).map_err(|e| format!("Failed to read device key: {e}"))?;
-        if bytes.len() != DEVICE_KEY_LEN {
-            return Err(format!(
-                "Device key corrupt: expected {DEVICE_KEY_LEN} bytes, got {}",
-                bytes.len()
-            ));
-        }
-        let mut key = [0u8; DEVICE_KEY_LEN];
-        key.copy_from_slice(&bytes);
-        Ok(key)
+        read_device_key_from_disk(&key_path)
     } else {
         // First run — generate a new device key
         let mut key = [0u8; DEVICE_KEY_LEN];
@@ -59,17 +204,7 @@ fn get_or_create_device_key(app_data: &Path) -> Result<[u8; DEVICE_KEY_LEN], Str
         // Create parent directories
         fs::create_dir_all(app_data).map_err(|e| format!("Failed to create app data dir: {e}"))?;
 
-        // Write with restricted permissions where possible
-        fs::write(&key_path, key).map_err(|e| format!("Failed to write device key: {e}"))?;
-
-        // On Unix, chmod 600; on Windows, we rely on user directory permissions
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600))
-                .map_err(|e| format!("Failed to restrict device key permissions: {e}"))?;
-        }
-
+        write_device_key_to_disk(&key_path, &key)?;
         Ok(key)
     }
 }
@@ -217,6 +352,13 @@ impl KeyStore {
     /// Get public metadata for a key.
     pub fn get_meta(&self, key_id: &str) -> Option<&KeyMeta> {
         self.key_meta.get(key_id)
+    }
+
+    /// Access the device key for domain-separated key derivation
+    /// (e.g. session-file encryption). Callers must NOT persist or
+    /// expose this value to the frontend.
+    pub fn device_key(&self) -> &[u8; DEVICE_KEY_LEN] {
+        &self.device_key
     }
 
     /// List all stored key IDs with their metadata (id, meta).
