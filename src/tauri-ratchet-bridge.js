@@ -177,29 +177,6 @@
     },
 
     /**
-     * Fetch the full pre-key bundle (IK + ISK + independent SPK + signature).
-     * The SPK is lazily generated on first use and persisted; the ML-DSA-65
-     * signature binds the SPK to the identity.
-     *
-     * @param {string} myIdentityId — from generateIdentity()
-     * @returns {Promise<{identity_id, identity_pk_hex, signing_pk_hex,
-     *                    signed_prekey_hex, signed_prekey_sig_hex, signed_prekey_id}>}
-     */
-    async getSpkPublic(myIdentityId) {
-      if (!this.initialized) this.init();
-      return await invoke()('spk_get_public', { identityId: myIdentityId });
-    },
-
-    /**
-     * Rotate the independent signed pre-key and return the fresh bundle.
-     * Old established sessions are unaffected; new handshakes use the new SPK.
-     */
-    async rotateSpk(myIdentityId) {
-      if (!this.initialized) this.init();
-      return await invoke()('spk_rotate', { identityId: myIdentityId });
-    },
-
-    /**
      * Respond to X3DH key exchange (Bob side).
      *
      * Call this after receiving Alice's {identityPkHex, ephemeralPkHex}.

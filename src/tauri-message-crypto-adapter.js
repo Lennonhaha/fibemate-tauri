@@ -159,15 +159,11 @@
       }
       _identityBundles[identityId] = identity;
 
-      // Build full pre-key bundle via Rust spk_get_public:
-      //   identityKey        — X25519 identity key (IK)
-      //   identitySigningKey — ML-DSA-65 identity signing key (ISK), verifies SPK signature
-      //   signedPreKey       — independent X25519 signed pre-key (SPK), distinct from IK
-      //   signedPreKeySignature — ML-DSA-65 signature over the SPK
-      // This replaces the old "signedPreKey = identityKey" degenerate bundle.
-      const spkBundle = await bridge.getSpkPublic(identityId);
+      // Build bundle compatible with server's pre-key format
+      // The server expects: { identityKey, identitySigningKey?, signedPreKey, signedPreKeyId, signedPreKeySignature?, oneTimePreKeys? }
+      // For Rust (X25519), we simplify: no signing key, no signature verification
       return {
-        identityKey: spkBundle.identity_pk_hex,            // X25519 IK (hex)
+        identityKey: identity.publicKeyHex,             // X25519 32-byte hex (64 chars)
         identitySigningKey: spkBundle.signing_pk_hex,      // ML-DSA-65 ISK (hex)
         signedPreKey: spkBundle.signed_prekey_hex,         // independent X25519 SPK (hex)
         signedPreKeyId: spkBundle.signed_prekey_id,
@@ -272,8 +268,7 @@
 
       console.log(`[DR Adapter] X3DH initiate with ${peerId} (X25519)`);
 
-      // Peer SPK authenticity: pass the peer's ML-DSA-65 signing key + SPK
-      // signature so the Rust backend can reject a tampered bundle.
+      // X3DH handshake
       const peerSigningPkHex = (typeof bundle.identitySigningKey === 'string')
         ? bundle.identitySigningKey : null;
       const peerSpkSigHex = (typeof bundle.signedPreKeySignature === 'string')
