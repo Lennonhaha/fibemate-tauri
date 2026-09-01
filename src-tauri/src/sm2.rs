@@ -347,7 +347,7 @@ fn point_mul(k: &BigUint, p: &AffinePoint) -> AffinePoint {
 
     // --- 1. Scalar masking ---
     let mut rng = OsRng;
-    let r = rng.gen_biguint(64); // 64-bit random mask
+    let r = rng.gen_biguint(128); // 128-bit random mask (>=128-bit per side-channel guidance; 64-bit was below modern threshold)
     let k_masked = if r.is_zero() {
         k.clone()
     } else {
@@ -355,7 +355,9 @@ fn point_mul(k: &BigUint, p: &AffinePoint) -> AffinePoint {
     };
 
     // --- 2. Projective randomization ---
-    let rz = rng.gen_biguint(64) % &*SM2_P;
+    // 512-bit draw modulo P: uniform over [0, P) with negligible modulo bias
+    // (a 64-bit draw mod P was heavily biased — only covered low bits of P)
+    let rz = rng.gen_biguint(512) % &*SM2_P;
     let rz_safe = if rz.is_zero() { BigUint::one() } else { rz };
     let rz2 = (&rz_safe * &rz_safe) % &*SM2_P;
     let rz3 = (&rz2 * &rz_safe) % &*SM2_P;
