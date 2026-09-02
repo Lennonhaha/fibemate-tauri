@@ -82,47 +82,55 @@ pub fn dr_init(
         _ => None,
     };
 
-    // Consume the shared secret (single-use, removed from storage)
-    let (session_id, our_pk) = {
+    // ── 幂等保护（2026-09-02 修复）──
+    // 同一条 initMessage 被 WS/历史重复投递时，dr_init 可能被多次调用。
+    // 会话存在性检查必须先于 secret 消费，且两者必须在同一临界区内完成：
+    //   * 旧实现先 `remove` 再 `has_session`，重复投递时 secret 已被首次
+    //     调用消费 → `remove` 返回 None → 报错，幂等分支永远不可达（死代码）。
+    //   * 新实现：已存在 → 直接复用（不消费 secret、不落盘）；不存在 →
+    //     原子地 remove + create，secret 单次消费语义不变。
+    //
+    // 锁顺序：shared_secrets → sessions。
+    // 全 crate 无反向持锁点（identity.rs:382-392 为分块加锁，先释放 sessions
+    // 再取 shared_secrets），此顺序不会引入 ABBA 死锁。
+    let (session_id, our_pk, created) = {
         let mut secrets = state.shared_secrets.lock().map_err(|e| e.to_string())?;
-        let ss = secrets
-            .remove(&ss_id)
-            .ok_or(format!("Shared secret not found: {ss_id}"))?;
-        drop(secrets);
+        let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
 
         // Use ss_id as session_id so both Alice and Bob use the same identifier.
         // This is safe because each X3DH shared secret is unique (different DH combos
         // per session). Alice's session lives on her device; Bob's on his — no collision.
-        //
-        // ── 幂等保护（2026-08-24 修复）──
-        // 同一条 initMessage 被 WS/历史重复投递时，dr_init 可能被多次调用。
-        // 若会话已存在，直接返回不覆盖（避免重建=新 DH 公钥=对端 ratchet 发散）
-        let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
         if sessions.has_session(&ss_id)? {
-            // 幂等：会话已存在，复用（不覆盖）
+            // 幂等：会话已存在，复用（不覆盖、不消费 secret）
             eprintln!(
                 "[DR-INIT] Session {} already exists, reusing (idempotent)",
                 ss_id
             );
             let our_pk = sessions.get_send_key(&ss_id)?;
-            return Ok(DrInitResponse {
-                session_id: ss_id,
-                our_public_key: hex::encode(our_pk),
-            });
-        }
-        sessions.create_session(&ss_id, &ss, is_initiator)?;
+            (ss_id.clone(), our_pk, false)
+        } else {
+            // Consume the shared secret (single-use) only when actually
+            // creating the session. Same-critical-section remove+create keeps
+            // the single-consumption invariant under concurrent delivery.
+            let ss = secrets
+                .remove(&ss_id)
+                .ok_or(format!("Shared secret not found: {ss_id}"))?;
+            sessions.create_session(&ss_id, &ss, is_initiator)?;
 
-        // Bind identity keys if provided
-        if let (Some(ref our_id), Some(pk)) = (&our_identity_id, peer_identity_pk) {
-            sessions.set_identity_keys(&ss_id, our_id, pk)?;
-        }
+            // Bind identity keys if provided
+            if let (Some(ref our_id), Some(pk)) = (&our_identity_id, peer_identity_pk) {
+                sessions.set_identity_keys(&ss_id, our_id, pk)?;
+            }
 
-        let our_pk = sessions.get_send_key(&ss_id)?;
-        (ss_id.clone(), our_pk)
+            let our_pk = sessions.get_send_key(&ss_id)?;
+            (ss_id.clone(), our_pk, true)
+        }
     }; // both locks dropped
 
-    // Persist to disk
-    state.save_sessions_to_disk()?;
+    // Persist to disk only when a new session was created (reuse changes nothing).
+    if created {
+        state.save_sessions_to_disk()?;
+    }
 
     Ok(DrInitResponse {
         session_id,

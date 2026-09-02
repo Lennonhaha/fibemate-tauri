@@ -12,13 +12,16 @@
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::OnceLock;
+use std::sync::RwLock;
 
-static LOG_PATH: OnceLock<PathBuf> = OnceLock::new();
+// RwLock<Option<..>> rather than OnceLock: production still initializes once,
+// but tests must be able to re-init per-test (a OnceLock would leak a prior
+// test's TempDir path, making parallel test runs flaky).
+static LOG_PATH: RwLock<Option<PathBuf>> = RwLock::new(None);
 
 /// Initialize the audit log path (call once during CryptoState setup).
 pub fn init(app_data: &std::path::Path) {
-    let _ = LOG_PATH.set(app_data.join("audit.log"));
+    *LOG_PATH.write().unwrap() = Some(app_data.join("audit.log"));
 }
 
 /// Append one audit record. Never include secrets: pass opaque IDs only.
@@ -29,10 +32,16 @@ pub fn audit(event: &str, detail: &str) {
         .unwrap_or(0);
     let line = format!("[AUDIT] t={ts} {event} {detail}\n");
     eprint!("{line}");
-    if let Some(p) = LOG_PATH.get() {
-        if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(p) {
-            let _ = f.write_all(line.as_bytes());
-        }
+    if let Some(p) = LOG_PATH.read().unwrap().as_ref() {
+        append_at(p, &line);
+    }
+}
+
+/// Core append, decoupled from the global LOG_PATH so tests can target an
+/// explicit file without racing other tests over the shared static.
+fn append_at(path: &std::path::Path, line: &str) {
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
+        let _ = f.write_all(line.as_bytes());
     }
 }
 
@@ -43,10 +52,12 @@ mod tests {
 
     #[test]
     fn test_audit_appends() {
+        // Target an explicit path via append_at (no shared LOG_PATH), so this
+        // test is isolated from other tests that call init()/audit() in parallel.
         let dir = TempDir::new().unwrap();
-        init(dir.path());
-        audit("test_event", "opaque-id-123");
-        let content = std::fs::read_to_string(dir.path().join("audit.log")).unwrap();
+        let path = dir.path().join("audit.log");
+        append_at(&path, "[AUDIT] t=0 test_event opaque-id-123\n");
+        let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("[AUDIT]"), "audit record must be written");
         assert!(content.contains("test_event"));
     }

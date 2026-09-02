@@ -379,12 +379,20 @@ impl KeyStore {
     }
 
     fn key_path(&self, key_id: &str) -> PathBuf {
-        // Sanitize key_id for filesystem safety
+        // Sanitize key_id for filesystem safety. If filtering empties the id
+        // (all-punctuation input like "@@@" / "###"), fall back to its hex
+        // encoding so distinct ids can never collide onto the same ".enc" file.
+        // Legitimate ids (UUIDs) are alphanumeric+dash and are unaffected.
         let safe_id: String = key_id
             .chars()
             .filter(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
             .take(64)
             .collect();
+        let safe_id = if safe_id.is_empty() {
+            hex::encode(key_id.as_bytes())
+        } else {
+            safe_id
+        };
         self.app_data.join(KEYS_DIR).join(format!("{safe_id}.enc"))
     }
 
