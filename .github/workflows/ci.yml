@@ -55,3 +55,38 @@ jobs:
       - name: Rust tests (PQC crypto backend)
         working-directory: src-tauri
         run: cargo test --all-features
+
+  bench:
+    name: Perf regression gate (criterion)
+    # Timing gates are only meaningful on a single consistent runner to avoid
+    # cross-hardware noise; ubuntu-latest matches the baseline hardware class.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # Reduced warm-up/measurement time keeps the job fast; thresholds in
+      # perf_thresholds.json are baseline x3, which absorbs the extra variance.
+      - name: Run crypto hot-path benchmarks
+        working-directory: src-tauri
+        run: cargo bench -- --warm-up-time 1 --measurement-time 2
+
+      - name: Enforce perf thresholds
+        working-directory: src-tauri
+        run: python3 scripts/perf_check.py
