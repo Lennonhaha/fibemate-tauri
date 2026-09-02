@@ -1088,7 +1088,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn test_cross_chain_late_message_with_previous_keys() {
         // 跨链迟到消息：DH ratchet 之后，旧链的在途消息必须仍能解密。
         // 依赖两个修正：
@@ -1145,6 +1144,7 @@ mod tests {
         assert_eq!(chain_a_pk, msgs[2].public_key, "链 A 内公钥应一致");
     }
 
+    #[test]
     fn test_encrypted_persistence_roundtrip() {
         use tempfile::TempDir;
         // 加密持久化 roundtrip：双端保存 → 重启加载 → 链状态一致、可继续互操作

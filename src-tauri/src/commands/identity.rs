@@ -446,8 +446,8 @@ pub fn spk_rotate(
 
 /// Initiate X3DH key exchange (Alice side).
 ///
-/// Performs 3-DH computation:
-///   DH1 = DH(our_identity, their_identity)
+/// Performs 3-DH computation (Signal X3DH spec — see X3DH::initiator):
+///   DH1 = DH(our_identity, their_signed_prekey)
 ///   DH2 = DH(our_ephemeral, their_identity)
 ///   DH3 = DH(our_ephemeral, their_signed_prekey)
 ///   → HKDF to 32-byte shared secret
