@@ -1,0 +1,17 @@
+{
+  "double_ratchet/create_session": 55.7,
+  "double_ratchet/decrypt_1kb": 7.3,
+  "double_ratchet/encrypt_1kb": 7.1,
+  "keystore/load_32b_secret": 758.3,
+  "keystore/store_32b_secret": 16256.8,
+  "mldsa65/keygen": 629.6,
+  "mldsa65/sign_1kb": 1934.8,
+  "mldsa65/verify_1kb": 493.0,
+  "mlkem768/decapsulate": 126.1,
+  "mlkem768/encapsulate": 111.2,
+  "mlkem768/keygen": 110.0,
+  "persistence/load_50_sessions_encrypted": 1283.5,
+  "persistence/save_50_sessions_encrypted": 10116.6,
+  "x3dh/initiator": 454.9,
+  "x3dh/responder": 482.2
+}

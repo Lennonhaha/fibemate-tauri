@@ -2,14 +2,25 @@ use tauri::Manager;
 
 mod audit;
 mod commands;
-mod double_ratchet;
-mod key_store;
-mod pq;
+// pub: exposed for the `perf` criterion bench target (P2 performance
+// regression). No runtime impact — symbols already exist in the lib.
+pub mod double_ratchet;
+pub mod key_store;
+pub mod pq;
 pub mod sm2;
 pub mod sm3;
 
 #[cfg(test)]
 mod interop_test;
+
+#[cfg(test)]
+mod concurrency_tests;
+
+#[cfg(test)]
+mod persistence_tests;
+
+#[cfg(test)]
+mod destructive_tests;
 
 use commands::CryptoState;
 

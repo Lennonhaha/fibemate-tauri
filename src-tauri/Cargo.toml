@@ -56,6 +56,31 @@ windows-sys = { version = "0.59", features = [
 
 [dev-dependencies]
 tempfile = "3"
+# Enables tauri::test::{mock_builder, mock_context, get_ipc_response}
+# for IPC/FFI boundary testing of #[tauri::command] functions.
+tauri = { version = "2", features = ["test"] }
+# P2 performance regression benchmarks (cargo bench).
+# default-features = false → no plotters/rayon/clap: lean build, small disk footprint.
+criterion = { version = "0.5", default-features = false }
+
+# ── P2 performance regression benchmarks ──
+# Run:   cargo bench
+# Gate:  python scripts/perf_check.py   (thresholds in perf_thresholds.json)
+[[bench]]
+name = "perf"
+harness = false
+
+# bench profile inherits from release by default. release is tuned for binary
+# size (opt-level="z", lto="fat"), which would distort timings. Override for
+# representative benchmark builds. NOTE: `panic` is always "unwind" for the
+# bench profile (cargo ignores a panic override here — criterion needs it), so
+# no panic line is set.
+[profile.bench]
+opt-level = 3
+lto = false
+codegen-units = 16
+debug = false
+strip = false
 
 [profile.release]
 panic = "abort"

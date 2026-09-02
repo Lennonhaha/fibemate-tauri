@@ -17,6 +17,9 @@ pub mod ratchet;
 pub mod safety_number;
 pub mod sm2_cmd;
 
+#[cfg(test)]
+mod ipc_tests;
+
 /// Global cryptographic state managed by Tauri.
 ///
 /// All secret material stays in Rust memory (or encrypted on disk via KeyStore).
