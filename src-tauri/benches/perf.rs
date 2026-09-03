@@ -3,6 +3,7 @@
 //! Coverage (aligned with the deep-test plan):
 //!   * ML-KEM-768  (FIPS 203) — keygen / encapsulate / decapsulate
 //!   * ML-DSA-65   (FIPS 204) — keygen / sign 1KB / verify 1KB
+//!   * SM2         (GB/T 32918) — keygen / sign / verify / encrypt 1KB / decrypt 1KB
 //!   * X3DH        (X25519)   — initiator / responder
 //!   * Double Ratchet         — session create / encrypt 1KB / decrypt 1KB
 //!   * Session persistence    — encrypted save/load of 50 sessions
@@ -21,6 +22,8 @@ use fibemate_lib::key_store::KeyStore;
 use fibemate_lib::pq::{
     mlkem768_decapsulate, mlkem768_encapsulate, mlkem768_generate, MlDsa65KeyPair,
 };
+use fibemate_lib::sm2;
+use num_bigint::BigUint;
 
 const KB: usize = 1024;
 
@@ -251,6 +254,54 @@ fn bench_keystore(c: &mut Criterion) {
     g.finish();
 }
 
+// ── SM2 (GB/T 32918, 国密) ────────────────────────────────────
+//
+// Functional API (fibemate_lib::sm2): generate_key_pair / sign / verify /
+// encrypt / decrypt. Message digest is a BigUint computed from SM3.
+// sign/verify are the slowest (~ms); sample_size(30) keeps wall time sane.
+
+fn sm2_setup() -> (sm2::Sm2KeyPair, BigUint, Vec<u8>, String) {
+    let kp = sm2::generate_key_pair();
+    let msg = vec![0x5Au8; KB];
+    let digest = BigUint::from_bytes_be(&fibemate_lib::sm3::sm3(&msg));
+    let pk_hex = sm2::pk_to_hex(&kp.public_key);
+    (kp, digest, msg, pk_hex)
+}
+
+fn bench_sm2(c: &mut Criterion) {
+    let mut g = c.benchmark_group("sm2");
+    g.sample_size(30);
+
+    g.bench_function("keygen", |b| {
+        b.iter(|| black_box(sm2::generate_key_pair()));
+    });
+
+    let (kp, digest, msg, pk_hex) = sm2_setup();
+    g.bench_function("sign", |b| {
+        b.iter(|| black_box(sm2::sign(&kp.private_key, &digest)));
+    });
+
+    let sig = sm2::sign(&kp.private_key, &digest);
+    g.bench_function("verify", |b| {
+        b.iter(|| {
+            black_box(sm2::verify(&pk_hex, &digest, &sig.r, &sig.s).unwrap());
+        });
+    });
+
+    g.bench_function("encrypt_1kb", |b| {
+        b.iter(|| black_box(sm2::encrypt(&pk_hex, &msg).unwrap()));
+    });
+
+    let ct = sm2::encrypt(&pk_hex, &msg).unwrap();
+    g.bench_function("decrypt_1kb", |b| {
+        b.iter(|| {
+            black_box(sm2::decrypt(&kp.private_key, &ct.c1, &ct.c2).unwrap());
+        });
+    });
+
+    g.finish();
+}
+
 criterion_group!(
     benches,
     bench_mlkem768,
@@ -258,6 +309,7 @@ criterion_group!(
     bench_x3dh,
     bench_double_ratchet,
     bench_persistence,
-    bench_keystore
+    bench_keystore,
+    bench_sm2
 );
 criterion_main!(benches);
