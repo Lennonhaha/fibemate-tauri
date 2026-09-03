@@ -83,9 +83,12 @@ jobs:
 
       # Reduced warm-up/measurement time keeps the job fast; thresholds in
       # perf_thresholds.json are baseline x3, which absorbs the extra variance.
+      # --bench perf is REQUIRED: a bare `cargo bench` also runs the lib target
+      # under libtest's bench harness, which rejects criterion's
+      # --warm-up-time/--measurement-time flags (exit 101).
       - name: Run crypto hot-path benchmarks
         working-directory: src-tauri
-        run: cargo bench -- --warm-up-time 1 --measurement-time 2
+        run: cargo bench --bench perf -- --warm-up-time 1 --measurement-time 2
 
       - name: Enforce perf thresholds
         working-directory: src-tauri
