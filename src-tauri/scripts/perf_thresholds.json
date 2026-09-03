@@ -20,5 +20,11 @@
   "sm2/sign": 5986.2,
   "sm2/verify": 11712.3,
   "x3dh/initiator": 454.9,
-  "x3dh/responder": 482.2
+  "x3dh/responder": 482.2,
+  "x3dh_concurrent/handshake_x10": 6165.0,
+  "x3dh_concurrent/handshake_x100": 64679.7,
+  "x3dh_concurrent/handshake_x100:p95": 66201.0,
+  "x3dh_concurrent/handshake_x10:p95": 6528.6,
+  "x3dh_concurrent/handshake_x50": 32496.0,
+  "x3dh_concurrent/handshake_x50:p95": 33393.9
 }
