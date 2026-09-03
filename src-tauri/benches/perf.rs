@@ -6,6 +6,7 @@
 //!   * SM2         (GB/T 32918) — keygen / sign / verify / encrypt 1KB / decrypt 1KB
 //!   * X3DH        (X25519)   — initiator / responder
 //!   * Double Ratchet         — session create / encrypt 1KB / decrypt 1KB
+//!   * DR sustained throughput — 100 sequential 1KB messages encrypt / decrypt
 //!   * Session persistence    — encrypted save/load of 50 sessions
 //!   * KeyStore               — store/load 32B secret (DPAPI + AES-256-GCM)
 //!
@@ -145,6 +146,16 @@ fn fresh_decrypt_pair() -> (
     (bob, msg)
 }
 
+/// Established Alice→Bob pair: Bob has Alice's sending key so he can decrypt.
+fn fresh_pair() -> (SessionManager, SessionManager) {
+    let alice = fresh_session("a");
+    let bob = SessionManager::new();
+    bob.create_session("b", &[0x42u8; 32], false).unwrap();
+    let alice_pk = alice.get_send_key("a").unwrap();
+    bob.set_peer_key("b", alice_pk).unwrap();
+    (alice, bob)
+}
+
 fn bench_double_ratchet(c: &mut Criterion) {
     let mut g = c.benchmark_group("double_ratchet");
 
@@ -172,6 +183,57 @@ fn bench_double_ratchet(c: &mut Criterion) {
         b.iter_batched(
             fresh_decrypt_pair,
             |(bob, msg)| black_box(bob.decrypt_message("b", &msg).unwrap()),
+            BatchSize::SmallInput,
+        )
+    });
+
+    g.finish();
+}
+
+// ── Double Ratchet: sustained throughput over one session ──────
+//
+// The *_1kb benchmarks above measure a single message in isolation, which is
+// dominated by setup and hides how the ratchet behaves over a real
+// conversation. These measure N sequential messages on ONE established
+// session, so the reported number is the cost of N messages (divide by
+// DR_MSG_COUNT for the per-message figure).
+//
+// This is also the only place where per-message state growth (skipped-key
+// map, chain advance) shows up as a trend rather than a single point.
+
+const DR_MSG_COUNT: usize = 100;
+
+fn bench_dr_throughput(c: &mut Criterion) {
+    let mut g = c.benchmark_group("dr_throughput");
+    g.sample_size(20); // each iteration is DR_MSG_COUNT encrypt/decrypt ops
+
+    g.bench_function("encrypt_100x1kb", |b| {
+        b.iter_batched(
+            || (fresh_session("a"), vec![0xCDu8; KB]),
+            |(alice, payload)| {
+                for _ in 0..DR_MSG_COUNT {
+                    black_box(alice.encrypt_message("a", &payload).unwrap());
+                }
+            },
+            BatchSize::SmallInput,
+        )
+    });
+
+    g.bench_function("decrypt_100x1kb", |b| {
+        b.iter_batched(
+            || {
+                let (alice, bob) = fresh_pair();
+                let payload = vec![0xCDu8; KB];
+                let msgs: Vec<_> = (0..DR_MSG_COUNT)
+                    .map(|_| alice.encrypt_message("a", &payload).unwrap())
+                    .collect();
+                (bob, msgs)
+            },
+            |(bob, msgs)| {
+                for m in &msgs {
+                    black_box(bob.decrypt_message("b", m).unwrap());
+                }
+            },
             BatchSize::SmallInput,
         )
     });
@@ -308,6 +370,7 @@ criterion_group!(
     bench_mldsa65,
     bench_x3dh,
     bench_double_ratchet,
+    bench_dr_throughput,
     bench_persistence,
     bench_keystore,
     bench_sm2
