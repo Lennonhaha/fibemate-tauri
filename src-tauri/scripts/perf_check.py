@@ -5,6 +5,13 @@ Reads criterion estimates from target/criterion/<group>/<bench>/new/estimates.js
 (most recent `cargo bench` run) and compares the mean against thresholds in
 perf_thresholds.json (microseconds). Exits 1 if any metric exceeds its threshold.
 
+Percentiles (p50/p95/p99) are derived from criterion's raw per-iteration
+samples in .../new/sample.json, because criterion's estimates.json only stores
+mean/median/std_dev. Tail latency matters most for the concurrent benchmarks,
+where a regression shows up in p95/p99 long before it moves the mean. A metric
+is additionally gated on p95 when a "<metric>:p95" key exists in the
+thresholds file (the mean gate always applies).
+
 Usage:
     cargo bench                      # produce fresh estimates
     python scripts/perf_check.py     # enforce thresholds
@@ -24,6 +31,40 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent  # src-tauri/
 THRESHOLDS = Path(__file__).resolve().parent / "perf_thresholds.json"
 SAFETY_FACTOR = 3.0  # thresholds = baseline mean x 3 (CI machines are noisy)
+P95_SUFFIX = ":p95"
+
+
+def percentile(sorted_values: list, q: float) -> float:
+    """Linear-interpolated percentile on an already-sorted list."""
+    if not sorted_values:
+        return float("nan")
+    if len(sorted_values) == 1:
+        return sorted_values[0]
+    pos = (len(sorted_values) - 1) * q
+    lo, hi = int(pos), min(int(pos) + 1, len(sorted_values) - 1)
+    if lo == hi:
+        return sorted_values[lo]
+    return sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * (pos - lo)
+
+
+def load_sample_percentiles(sample_path: Path) -> dict:
+    """p50/p95/p99 in microseconds from criterion's raw per-iteration samples.
+
+    sample.json stores, per sample, the iteration count and the TOTAL duration
+    for that many iterations, so the per-iteration time is total / iters.
+    """
+    with sample_path.open() as f:
+        data = json.load(f)
+    iters = data.get("iters") or []
+    times = data.get("times") or []
+    per_iter = sorted(t / i for t, i in zip(times, iters) if i)
+    if not per_iter:
+        return {}
+    return {
+        "p50": percentile(per_iter, 0.50) / 1000.0,
+        "p95": percentile(per_iter, 0.95) / 1000.0,
+        "p99": percentile(per_iter, 0.99) / 1000.0,
+    }
 
 
 def resolve_criterion_dir(argv: list) -> Path:
@@ -49,15 +90,34 @@ def load_estimates(criterion_dir: Path) -> dict:
     return out
 
 
+def load_percentiles(criterion_dir: Path) -> dict:
+    """Collect {group/bench: {p50,p95,p99}} in microseconds from raw samples."""
+    out = {}
+    for sample in criterion_dir.glob("*/*/new/sample.json"):
+        group = sample.parent.parent.parent.name
+        bench = sample.parent.parent.name
+        pcts = load_sample_percentiles(sample)
+        if pcts:
+            out[f"{group}/{bench}"] = pcts
+    return out
+
+
 def main() -> int:
     argv = sys.argv
     criterion_dir = resolve_criterion_dir(argv)
     estimates = load_estimates(criterion_dir)
     if not estimates:
         sys.exit("ERROR: no estimates found — run `cargo bench` first")
+    percentiles = load_percentiles(criterion_dir)
 
     if "--update" in argv:
         thresholds = {k: round(v / 1000 * SAFETY_FACTOR, 1) for k, v in estimates.items()}
+        if "--with-p95" in argv:
+            for key, pcts in percentiles.items():
+                if key in thresholds:
+                    thresholds[key + P95_SUFFIX] = round(
+                        pcts["p95"] * SAFETY_FACTOR, 1
+                    )
         with THRESHOLDS.open("w") as f:
             json.dump(thresholds, f, indent=2, sort_keys=True)
             f.write("\n")
@@ -71,27 +131,39 @@ def main() -> int:
         thresholds = json.load(f)
 
     failures = []
-    print(f"{'metric':<40} {'mean':>12} {'threshold':>12}  status")
-    print("-" * 74)
+    print(f"{'metric':<38} {'mean':>10} {'p50':>9} {'p95':>9} {'p99':>9} {'threshold':>11}  status")
+    print("-" * 94)
     for key, mean_ns in sorted(estimates.items()):
         mean_us = mean_ns / 1000
+        pcts = percentiles.get(key, {})
+        cells = "".join(f"{pcts.get(p, float('nan')):>8.1f} " for p in ("p50", "p95", "p99"))
         limit = thresholds.get(key)
         if limit is None:
-            print(f"{key:<40} {mean_us:>10.1f}us {'(no threshold)':>12}  SKIP")
+            print(f"{key:<38} {mean_us:>9.1f}us {cells} {'(no threshold)':>11}  SKIP")
             continue
         status = "OK" if mean_us <= limit else "FAIL"
-        print(f"{key:<40} {mean_us:>10.1f}us {limit:>10.1f}us  {status}")
         if mean_us > limit:
             failures.append(key)
+        # Optional tail gate: only applies when a "<metric>:p95" threshold exists.
+        p95_limit = thresholds.get(key + P95_SUFFIX)
+        if p95_limit is not None and pcts:
+            if pcts["p95"] > p95_limit:
+                status = "FAIL"
+                failures.append(key + P95_SUFFIX)
+        limit_cell = f"{limit:.1f}us"
+        if p95_limit is not None:
+            limit_cell = f"{limit:.1f}/p95 {p95_limit:.0f}"
+        print(f"{key:<38} {mean_us:>9.1f}us {cells} {limit_cell:>11}  {status}")
 
-    missing = set(thresholds) - set(estimates)
+    gated = set(estimates) & set(thresholds)
+    missing = set(thresholds) - set(estimates) - {k + P95_SUFFIX for k in estimates}
     for key in sorted(missing):
-        print(f"{key:<40} {'—':>12} {'—':>12}  MISSING (no measurement)")
+        print(f"{key:<38} {'—':>10} {'—':>9} {'—':>9} {'—':>9} {'—':>11}  MISSING (no measurement)")
 
     if failures:
         print(f"\nPERF REGRESSION: {len(failures)} metric(s) exceeded threshold(s)")
         return 1
-    print(f"\nAll {len([k for k in estimates if k in thresholds])} gated metrics within thresholds")
+    print(f"\nAll {len(gated)} gated metrics within thresholds")
     return 0
 
 

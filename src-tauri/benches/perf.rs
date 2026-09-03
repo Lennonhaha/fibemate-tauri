@@ -5,6 +5,8 @@
 //!   * ML-DSA-65   (FIPS 204) — keygen / sign 1KB / verify 1KB
 //!   * SM2         (GB/T 32918) — keygen / sign / verify / encrypt 1KB / decrypt 1KB
 //!   * X3DH        (X25519)   — initiator / responder
+//!   * X3DH concurrent       — 10 / 50 / 100 simultaneous handshakes
+//!                             (p50/p95/p99 reported by perf_check.py)
 //!   * Double Ratchet         — session create / encrypt 1KB / decrypt 1KB
 //!   * DR sustained throughput — 100 sequential 1KB messages encrypt / decrypt
 //!   * Session persistence    — encrypted save/load of 50 sessions
@@ -25,6 +27,10 @@ use fibemate_lib::pq::{
 };
 use fibemate_lib::sm2;
 use num_bigint::BigUint;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Barrier};
+use std::thread;
+use std::time::{Duration, Instant};
 
 const KB: usize = 1024;
 
@@ -118,6 +124,116 @@ fn bench_x3dh(c: &mut Criterion) {
             )
         })
     });
+
+    g.finish();
+}
+
+// ── X3DH under concurrency (latency distribution) ──────────────
+//
+// The x3dh group above measures one handshake in isolation on an idle
+// machine. Real servers run many handshakes at once, where the cost is
+// contention (core count, scheduler) rather than raw arithmetic.
+//
+// Each worker performs a FULL handshake (fresh ephemeral key + initiator +
+// responder), so one round = N concurrent sessions being established.
+//
+// Why a persistent pool instead of spawning N threads per iteration:
+// thread creation is ~tens of microseconds, so for N=100 the spawn cost alone
+// (~ms) would exceed the handshake work (~0.4ms) and we would be measuring
+// `thread::spawn`, not X3DH. Workers are spawned once at setup and
+// dispatched with a Barrier, so the measurement is the crypto + the real
+// scheduler contention.
+//
+// The reported figure is the wall time of one round of N handshakes, i.e.
+// the time until the SLOWEST of N completes — a tail-oriented number.
+// Per-handshake latency distribution (p50/p95/p99) is derived by
+// scripts/perf_check.py from criterion's raw samples.
+
+const CONCURRENCY_LEVELS: [usize; 3] = [10, 50, 100];
+
+/// One complete X3DH handshake: fresh ephemeral, then both sides.
+fn one_handshake(
+    ik_a: &RatchetKeyPair,
+    ik_b: &RatchetKeyPair,
+    spk_b: &RatchetKeyPair,
+) -> ([u8; 32], [u8; 32]) {
+    let ek_a = RatchetKeyPair::generate();
+    let init = X3DH::initiator(ik_a, &ek_a, &ik_b.public_key, &spk_b.public_key).unwrap();
+    let resp = X3DH::responder(ik_b, spk_b, &ik_a.public_key, &ek_a.public_key).unwrap();
+    (init, resp)
+}
+
+struct HandshakePool {
+    barrier: Arc<Barrier>,
+    done: Arc<AtomicBool>,
+    workers: Vec<thread::JoinHandle<()>>,
+}
+
+impl HandshakePool {
+    /// Spawn `n` workers, each owning its own participants' keys.
+    fn new(n: usize) -> Self {
+        let barrier = Arc::new(Barrier::new(n + 1));
+        let done = Arc::new(AtomicBool::new(false));
+        let mut workers = Vec::with_capacity(n);
+        for _ in 0..n {
+            let barrier = Arc::clone(&barrier);
+            let done = Arc::clone(&done);
+            let (ik_a, ik_b, spk_b) = (
+                RatchetKeyPair::generate(),
+                RatchetKeyPair::generate(),
+                RatchetKeyPair::generate(),
+            );
+            workers.push(thread::spawn(move || loop {
+                barrier.wait(); // dispatcher publishes a round
+                if done.load(Ordering::Acquire) {
+                    return;
+                }
+                black_box(one_handshake(&ik_a, &ik_b, &spk_b));
+                barrier.wait(); // all N finished
+            }));
+        }
+        Self {
+            barrier,
+            done,
+            workers,
+        }
+    }
+
+    /// Dispatch one round of N concurrent handshakes; returns wall time.
+    fn round(&self) -> Duration {
+        let start = Instant::now();
+        self.barrier.wait(); // release workers
+        self.barrier.wait(); // collect workers
+        start.elapsed()
+    }
+}
+
+impl Drop for HandshakePool {
+    fn drop(&mut self) {
+        self.done.store(true, Ordering::Release);
+        self.barrier.wait(); // release workers so they observe `done`
+        for h in self.workers.drain(..) {
+            let _ = h.join();
+        }
+    }
+}
+
+fn bench_x3dh_concurrent(c: &mut Criterion) {
+    let mut g = c.benchmark_group("x3dh_concurrent");
+    g.sample_size(30); // each iteration is N handshakes
+
+    for n in CONCURRENCY_LEVELS {
+        let pool = HandshakePool::new(n);
+        g.bench_function(&format!("handshake_x{n}"), |b| {
+            b.iter_custom(|iters| {
+                let mut total = Duration::ZERO;
+                for _ in 0..iters {
+                    total += pool.round();
+                }
+                total
+            })
+        });
+    }
 
     g.finish();
 }
@@ -369,6 +485,7 @@ criterion_group!(
     bench_mlkem768,
     bench_mldsa65,
     bench_x3dh,
+    bench_x3dh_concurrent,
     bench_double_ratchet,
     bench_dr_throughput,
     bench_persistence,
