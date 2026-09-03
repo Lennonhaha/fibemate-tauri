@@ -90,6 +90,12 @@ jobs:
         working-directory: src-tauri
         run: cargo bench --bench perf -- --warm-up-time 1 --measurement-time 2
 
+      # Memory footprint of DR sessions. Separate target because the unit is
+      # bytes, not time; writes target/criterion/memory.json for the gate.
+      - name: Run session memory footprint benchmark
+        working-directory: src-tauri
+        run: cargo bench --bench memory
+
       - name: Enforce perf thresholds
         working-directory: src-tauri
         run: python3 scripts/perf_check.py

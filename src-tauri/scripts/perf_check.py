@@ -12,6 +12,10 @@ where a regression shows up in p95/p99 long before it moves the mean. A metric
 is additionally gated on p95 when a "<metric>:p95" key exists in the
 thresholds file (the mean gate always applies).
 
+Memory footprint is gated separately: benches/memory.rs writes live-heap
+bytes to target/criterion/memory.json, checked against
+memory_thresholds.json (KB).
+
 Usage:
     cargo bench                      # produce fresh estimates
     python scripts/perf_check.py     # enforce thresholds
@@ -30,6 +34,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent  # src-tauri/
 THRESHOLDS = Path(__file__).resolve().parent / "perf_thresholds.json"
+MEMORY_THRESHOLDS = Path(__file__).resolve().parent / "memory_thresholds.json"
 SAFETY_FACTOR = 3.0  # thresholds = baseline mean x 3 (CI machines are noisy)
 P95_SUFFIX = ":p95"
 
@@ -102,6 +107,15 @@ def load_percentiles(criterion_dir: Path) -> dict:
     return out
 
 
+def load_memory(criterion_dir: Path) -> dict:
+    """{metric: live_bytes} written by benches/memory.rs."""
+    path = criterion_dir / "memory.json"
+    if not path.is_file():
+        return {}
+    with path.open() as f:
+        return json.load(f)
+
+
 def main() -> int:
     argv = sys.argv
     criterion_dir = resolve_criterion_dir(argv)
@@ -159,6 +173,27 @@ def main() -> int:
     missing = set(thresholds) - set(estimates) - {k + P95_SUFFIX for k in estimates}
     for key in sorted(missing):
         print(f"{key:<38} {'—':>10} {'—':>9} {'—':>9} {'—':>9} {'—':>11}  MISSING (no measurement)")
+
+    # ── Memory footprint (benches/memory.rs) ────────────────────
+    mem = load_memory(criterion_dir)
+    if mem:
+        mem_limits = {}
+        if MEMORY_THRESHOLDS.is_file():
+            with MEMORY_THRESHOLDS.open() as f:
+                mem_limits = json.load(f)
+        print(f"\n{'metric':<38} {'live':>12} {'threshold':>12}  status")
+        print("-" * 68)
+        for key, raw_bytes in sorted(mem.items()):
+            live_kb = raw_bytes / 1024
+            limit = mem_limits.get(key)
+            if limit is None:
+                print(f"{key:<38} {live_kb:>10.1f}KB {'(no threshold)':>12}  SKIP")
+                continue
+            status = "OK" if live_kb <= limit else "FAIL"
+            if live_kb > limit:
+                failures.append(key)
+            print(f"{key:<38} {live_kb:>10.1f}KB {limit:>10.1f}KB  {status}")
+            gated.add(key)
 
     if failures:
         print(f"\nPERF REGRESSION: {len(failures)} metric(s) exceeded threshold(s)")

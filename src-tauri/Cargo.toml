@@ -70,6 +70,14 @@ criterion = { version = "0.5", default-features = false }
 name = "perf"
 harness = false
 
+# Memory footprint of Double Ratchet sessions. A separate target rather than
+# a criterion group because the unit is bytes, not time: it measures live
+# heap with a counting global allocator and writes target/criterion/memory.json
+# for scripts/perf_check.py to gate (thresholds in memory_thresholds.json).
+[[bench]]
+name = "memory"
+harness = false
+
 # bench profile inherits from release by default. release is tuned for binary
 # size (opt-level="z", lto="fat"), which would distort timings. Override for
 # representative benchmark builds. NOTE: `panic` is always "unwind" for the
