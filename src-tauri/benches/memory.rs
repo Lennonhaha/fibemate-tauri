@@ -16,8 +16,30 @@
 //! so the same threshold is valid everywhere.
 //!
 //! `harness = false` — this is a plain binary, not a libtest/criterion harness.
+//!
+//! ## What the numbers actually mean
+//!
+//! `RatchetState` is a fully inline struct: its `HashMap`/`Vec` fields are
+//! empty at construction (`HashMap::new`/`Vec::new` do not allocate). So a
+//! session owns no heap of its own — it lives *inside* the manager's
+//! `HashMap<String, RatchetState>` table. Measured live heap is therefore
+//!
+//! ```text
+//! live(n) = buckets(n) * (size_of::<String>() + size_of::<RatchetState>() + 1)
+//!           + sum(key string bytes)
+//! ```
+//!
+//! where `buckets(n)` is hashbrown's power-of-two bucket count for n entries
+//! at a 7/8 load factor. That is why per-session cost is *not* constant:
+//! 100 sessions pack into 128 buckets (1.28 buckets/session) while 500 and
+//! 1000 both land on exactly 2048/1000 and 1024/500 = 2.048, giving
+//! 533 B vs 848 B per session. The jump is table slack, not fatter sessions.
+//!
+//! Because table slack dilutes per-session regressions, this target also
+//! reports `ratchet_state_size_bytes` — a compile-time constant with no slack
+//! in it, so any new inline field moves it immediately.
 
-use fibemate_lib::double_ratchet::SessionManager;
+use fibemate_lib::double_ratchet::{RatchetState, SessionManager};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -119,9 +141,13 @@ fn main() {
     for n in SESSION_COUNTS {
         let start = Instant::now();
         let bytes = median((0..ROUNDS).map(|_| measure_sessions(n)).collect());
-        // Attribute the whole delta to the sessions: it is dominated by their
-        // ratchet state, and any constant overhead is what a regression in
-        // per-session cost would show up in anyway.
+        // Attribute the whole delta to the sessions. This overstates the
+        // per-session figure at every n except a power-of-two boundary:
+        // hashbrown rounds the table up to 2^k buckets at a 7/8 load factor,
+        // so up to ~half the bytes at n=1000 are empty buckets. It is still
+        // the right number to gate — that slack is memory you really pay —
+        // but read it together with `ratchet_state_size_bytes`, which has no
+        // slack and so reacts to a single added field.
         let per = bytes / n;
         println!(
             "sessions_{:<20} {:>8} {:>11} B {:>13} B   ({:?})",
@@ -134,10 +160,18 @@ fn main() {
         results.push((format!("sessions_{n}"), bytes));
     }
 
+    // Cost of one session's inline state, with no hash-table slack in it.
+    // A new field moves this immediately; the aggregate numbers above dilute
+    // the same change across empty buckets.
+    let state_size = std::mem::size_of::<RatchetState>();
+
     println!(
         "\npeak live heap during run: {} B",
         PEAK.load(Ordering::Relaxed)
     );
+    println!("size_of::<RatchetState>() = {state_size} B (inline struct, no slack)");
+
+    results.push(("ratchet_state_size_bytes".to_string(), state_size));
 
     // Persist for scripts/perf_check.py, which gates the numbers.
     let out_dir = std::env::var_os("CARGO_TARGET_DIR")

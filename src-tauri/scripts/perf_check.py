@@ -13,8 +13,9 @@ is additionally gated on p95 when a "<metric>:p95" key exists in the
 thresholds file (the mean gate always applies).
 
 Memory footprint is gated separately: benches/memory.rs writes live-heap
-bytes to target/criterion/memory.json, checked against
-memory_thresholds.json (KB).
+bytes to target/criterion/memory.json, checked against memory_thresholds.json
+(bytes). Unlike the timing metrics, these reproduce byte-for-byte across
+platforms and runs, so MEMORY_SAFETY_FACTOR is 1.5 rather than 3.
 
 Usage:
     cargo bench                      # produce fresh estimates
@@ -36,7 +37,31 @@ ROOT = Path(__file__).resolve().parent.parent  # src-tauri/
 THRESHOLDS = Path(__file__).resolve().parent / "perf_thresholds.json"
 MEMORY_THRESHOLDS = Path(__file__).resolve().parent / "memory_thresholds.json"
 SAFETY_FACTOR = 3.0  # thresholds = baseline mean x 3 (CI machines are noisy)
+# Memory is measured with a counting allocator, not a clock: it reproduces
+# byte-identically across platforms and runs, so it needs no noise margin.
+# The margin below only absorbs benign layout drift (String capacities, an
+# extra Option field) and the toolchain is on unpinned `stable`, whose
+# hashbrown bucket policy is free to change.
+MEMORY_SAFETY_FACTOR = 1.5
+# `ratchet_state_size_bytes` is a compile-time constant: zero noise and no hash
+# table slack, so a multiplicative margin is the wrong shape. It gets a flat
+# allowance for one or two small fields; anything larger should be a reviewed
+# baseline update rather than something CI waves through.
+MEMORY_SLACK_BYTES = {"ratchet_state_size_bytes": 64}
 P95_SUFFIX = ":p95"
+
+
+def human_bytes(n: float) -> str:
+    """Format a byte count, keeping resolution for small values.
+
+    A bare KB rendering turns the 384-byte `ratchet_state_size_bytes` into
+    "0.4KB", which hides the very single-field changes it exists to catch.
+    """
+    if n < 1024:
+        return f"{n:.0f} B"
+    if n < 1024 * 1024:
+        return f"{n / 1024:.1f} KB"
+    return f"{n / 1024 / 1024:.1f} MB"
 
 
 def percentile(sorted_values: list, q: float) -> float:
@@ -123,6 +148,7 @@ def main() -> int:
     if not estimates:
         sys.exit("ERROR: no estimates found — run `cargo bench` first")
     percentiles = load_percentiles(criterion_dir)
+    mem = load_memory(criterion_dir)
 
     if "--update" in argv:
         thresholds = {k: round(v / 1000 * SAFETY_FACTOR, 1) for k, v in estimates.items()}
@@ -136,6 +162,20 @@ def main() -> int:
             json.dump(thresholds, f, indent=2, sort_keys=True)
             f.write("\n")
         print(f"Wrote {len(thresholds)} thresholds (baseline x {SAFETY_FACTOR}) to {THRESHOLDS.name}")
+        if mem:
+            mem_limits = {
+                k: v + MEMORY_SLACK_BYTES[k]
+                if k in MEMORY_SLACK_BYTES
+                else int(round(v * MEMORY_SAFETY_FACTOR))
+                for k, v in mem.items()
+            }
+            with MEMORY_THRESHOLDS.open("w") as f:
+                json.dump(mem_limits, f, indent=2, sort_keys=True)
+                f.write("\n")
+            print(
+                f"Wrote {len(mem_limits)} memory thresholds "
+                f"(baseline x {MEMORY_SAFETY_FACTOR}) to {MEMORY_THRESHOLDS.name}"
+            )
         return 0
 
     if not THRESHOLDS.is_file():
@@ -175,7 +215,6 @@ def main() -> int:
         print(f"{key:<38} {'—':>10} {'—':>9} {'—':>9} {'—':>9} {'—':>11}  MISSING (no measurement)")
 
     # ── Memory footprint (benches/memory.rs) ────────────────────
-    mem = load_memory(criterion_dir)
     if mem:
         mem_limits = {}
         if MEMORY_THRESHOLDS.is_file():
@@ -184,15 +223,14 @@ def main() -> int:
         print(f"\n{'metric':<38} {'live':>12} {'threshold':>12}  status")
         print("-" * 68)
         for key, raw_bytes in sorted(mem.items()):
-            live_kb = raw_bytes / 1024
             limit = mem_limits.get(key)
             if limit is None:
-                print(f"{key:<38} {live_kb:>10.1f}KB {'(no threshold)':>12}  SKIP")
+                print(f"{key:<38} {human_bytes(raw_bytes):>12} {'(no threshold)':>12}  SKIP")
                 continue
-            status = "OK" if live_kb <= limit else "FAIL"
-            if live_kb > limit:
+            status = "OK" if raw_bytes <= limit else "FAIL"
+            if raw_bytes > limit:
                 failures.append(key)
-            print(f"{key:<38} {live_kb:>10.1f}KB {limit:>10.1f}KB  {status}")
+            print(f"{key:<38} {human_bytes(raw_bytes):>12} {human_bytes(limit):>12}  {status}")
             gated.add(key)
 
     if failures:
