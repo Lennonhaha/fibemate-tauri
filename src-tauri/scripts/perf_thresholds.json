@@ -2,6 +2,8 @@
   "double_ratchet/create_session": 55.7,
   "double_ratchet/decrypt_1kb": 7.3,
   "double_ratchet/encrypt_1kb": 7.1,
+  "dr_throughput/decrypt_100x1kb": 473.1,
+  "dr_throughput/encrypt_100x1kb": 478.2,
   "keystore/load_32b_secret": 758.3,
   "keystore/store_32b_secret": 16256.8,
   "mldsa65/keygen": 629.6,
