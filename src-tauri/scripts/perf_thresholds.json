@@ -12,6 +12,11 @@
   "mlkem768/keygen": 110.0,
   "persistence/load_50_sessions_encrypted": 1283.5,
   "persistence/save_50_sessions_encrypted": 10116.6,
+  "sm2/decrypt_1kb": 5648.4,
+  "sm2/encrypt_1kb": 11287.5,
+  "sm2/keygen": 5472.3,
+  "sm2/sign": 5986.2,
+  "sm2/verify": 11712.3,
   "x3dh/initiator": 454.9,
   "x3dh/responder": 482.2
 }
