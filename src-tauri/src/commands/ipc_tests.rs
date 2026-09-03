@@ -194,8 +194,8 @@ fn e2e_x3dh_dr_roundtrip_with_spk_signature() {
         a.identity_id.clone(),
         bob_bundle.identity_pk_hex.clone(),
         bob_bundle.signed_prekey_hex.clone(),
-        Some(bob_bundle.signing_pk_hex.clone()),
-        Some(bob_bundle.signed_prekey_sig_hex.clone()),
+        bob_bundle.signing_pk_hex.clone(),
+        bob_bundle.signed_prekey_sig_hex.clone(),
     )
     .unwrap();
 
@@ -247,7 +247,62 @@ fn e2e_x3dh_dr_roundtrip_with_spk_signature() {
     let _ = (dir_a, dir_b);
 }
 
-// ── Invalid-argument injection ─────────────────────────────────
+// ── SPK signature enforcement ─────────────────────────────────
+
+#[test]
+fn x3dh_initiate_rejects_tampered_spk_signature() {
+    let (dir_a, app_a) = build_app();
+    let (dir_b, app_b) = build_app();
+
+    let a = identity::ik_generate(st!(app_a), Some("alice".into())).unwrap();
+    let b = identity::ik_generate(st!(app_b), Some("bob".into())).unwrap();
+
+    let bob_bundle = identity::spk_get_public(st!(app_b), b.identity_id.clone()).unwrap();
+
+    // Flip one byte in the signature → must be rejected (no silent fallback).
+    let mut bad_sig = hex::decode(&bob_bundle.signed_prekey_sig_hex).unwrap();
+    let n = bad_sig.len();
+    bad_sig[n - 1] ^= 0x01;
+
+    let res = identity::x3dh_initiate(
+        st!(app_a),
+        a.identity_id.clone(),
+        bob_bundle.identity_pk_hex.clone(),
+        bob_bundle.signed_prekey_hex.clone(),
+        bob_bundle.signing_pk_hex.clone(),
+        hex::encode(bad_sig),
+    );
+    let err = match res.err() {
+        Some(e) => e,
+        None => panic!("tampered SPK signature must be rejected"),
+    };
+    assert!(
+        err.contains("SPK signature verification failed"),
+        "unexpected error: {err}"
+    );
+
+    // Mismatched signing key (signature valid but under a different ISK)
+    // must also be rejected.
+    let mallory_bundle = identity::spk_get_public(st!(app_a), a.identity_id.clone()).unwrap();
+    let res2 = identity::x3dh_initiate(
+        st!(app_a),
+        a.identity_id.clone(),
+        bob_bundle.identity_pk_hex.clone(),
+        bob_bundle.signed_prekey_hex.clone(),
+        mallory_bundle.signing_pk_hex.clone(), // wrong ISK for Bob's SPK
+        bob_bundle.signed_prekey_sig_hex.clone(),
+    );
+    let err2 = match res2.err() {
+        Some(e) => e,
+        None => panic!("SPK signed by wrong ISK must be rejected"),
+    };
+    assert!(
+        err2.contains("SPK signature verification failed"),
+        "unexpected error: {err2}"
+    );
+
+    let _ = (dir_a, dir_b);
+}
 
 #[test]
 fn dr_encrypt_invalid_hex_rejected() {

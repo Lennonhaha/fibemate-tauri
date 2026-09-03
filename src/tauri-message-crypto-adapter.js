@@ -271,13 +271,16 @@
 
       console.log(`[DR Adapter] X3DH initiate with ${peerId} (X25519)`);
 
-      // X3DH handshake
+      // X3DH handshake — SPK signature is MANDATORY (prevents SPK substitution).
+      // Rust rejects the handshake if the signature is absent or does not verify.
       const peerSigningPkHex = (typeof bundle.identitySigningKey === 'string')
         ? bundle.identitySigningKey : null;
       const peerSpkSigHex = (typeof bundle.signedPreKeySignature === 'string')
         ? bundle.signedPreKeySignature : null;
+      if (!peerSigningPkHex || !peerSpkSigHex) {
+        throw new Error(`[DR Adapter] Peer bundle for ${peerId} is missing identitySigningKey/signedPreKeySignature — SPK verification cannot be skipped`);
+      }
 
-      // X3DH handshake (Rust verifies the SPK signature when provided)
       const x3dh = await bridge.x3dhInitiate(myId, peerIdentityPkHex, peerSpkHex, peerSigningPkHex, peerSpkSigHex);
 
       // Init DR session

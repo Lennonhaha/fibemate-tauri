@@ -153,14 +153,22 @@
      * Call this after fetching the peer's pre-key bundle from the server.
      * The peer's signed pre-key is ephemeral — generated fresh per bundle.
      *
+     * peerSigningPkHex + peerSpkSigHex are MANDATORY: Rust rejects the
+     * handshake if the SPK signature is absent or does not verify.
+     *
      * @param {string} myIdentityId — from generateIdentity()
      * @param {string} peerIdentityPkHex — peer's X25519 identity public key (hex)
      * @param {string} peerSignedPrekeyPkHex — peer's X25519 signed pre-key (hex)
+     * @param {string} peerSigningPkHex — peer's ML-DSA-65 signing public key (hex)
+     * @param {string} peerSpkSigHex — ML-DSA-65 signature over peer SPK (hex)
      * @returns {Promise<{ssId, ourIdentityPkHex, ourEphemeralPkHex}>}
      *   → send {ourIdentityPkHex, ourEphemeralPkHex} to peer via server
      */
-    async x3dhInitiate(myIdentityId, peerIdentityPkHex, peerSignedPrekeyPkHex, peerSigningPkHex = null, peerSpkSigHex = null) {
+    async x3dhInitiate(myIdentityId, peerIdentityPkHex, peerSignedPrekeyPkHex, peerSigningPkHex, peerSpkSigHex) {
       if (!this.initialized) this.init();
+      if (!peerSigningPkHex || !peerSpkSigHex) {
+        throw new Error('[RatchetBridge] x3dhInitiate: peer signing key + SPK signature are mandatory (SPK verification cannot be skipped)');
+      }
       const result = await invoke()('x3dh_initiate', {
         myIdentityId,
         peerIdentityPkHex,
@@ -409,8 +417,17 @@
      */
     async hybridX3dhInitiate(myIdentityId, peerBundle) {
       console.warn('[RatchetBridge] hybridX3dhInitiate — hybrid combine in Rust not yet exposed via commands');
-      // For now: fall back to classical X3DH only
-      return this.x3dhInitiate(myIdentityId, peerBundle.identityPkHex, peerBundle.signedPrekeyPkHex);
+      // For now: fall back to classical X3DH only (SPK signature still mandatory).
+      if (!peerBundle.signingPkHex || !peerBundle.signedPrekeySigHex) {
+        throw new Error('[RatchetBridge] hybridX3dhInitiate: peerBundle must include signingPkHex + signedPrekeySigHex');
+      }
+      return this.x3dhInitiate(
+        myIdentityId,
+        peerBundle.identityPkHex,
+        peerBundle.signedPrekeyPkHex,
+        peerBundle.signingPkHex,
+        peerBundle.signedPrekeySigHex
+      );
     },
 
     // ════════════════════════════════════════════════════════════
@@ -423,7 +440,7 @@
      * Generates identity → fetches peer bundle → X3DH → DR init.
      *
      * @param {string} peerName — peer's human-readable name
-     * @param {object} peerBundle — { identityPkHex, signedPrekeyPkHex } from server
+     * @param {object} peerBundle — { identityPkHex, signedPrekeyPkHex, signingPkHex, signedPrekeySigHex } from server
      * @returns {Promise<{sessionId, initMessage}>}
      *   initMessage = { identityPkHex, ephemeralPkHex } — send to peer
      */
@@ -434,11 +451,13 @@
         this._identityId = id.identityId;
       }
 
-      // Step 2: X3DH initiate
+      // Step 2: X3DH initiate (SPK signature mandatory — Rust rejects if absent)
       const x3dh = await this.x3dhInitiate(
         this._identityId,
         peerBundle.identityPkHex,
-        peerBundle.signedPrekeyPkHex
+        peerBundle.signedPrekeyPkHex,
+        peerBundle.signingPkHex,
+        peerBundle.signedPrekeySigHex
       );
 
       // Step 3: DR init

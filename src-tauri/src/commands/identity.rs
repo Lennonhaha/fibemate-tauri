@@ -459,11 +459,11 @@ pub fn x3dh_initiate(
     my_identity_id: String,
     peer_identity_pk_hex: String,
     peer_signed_prekey_pk_hex: String,
-    // Optional SPK authenticity check: the peer's ML-DSA-65 signing public
-    // key + the signature over their SPK. When provided, the handshake is
-    // rejected if the signature does not verify (prevents SPK substitution).
-    peer_signing_pk_hex: Option<String>,
-    peer_spk_sig_hex: Option<String>,
+    // Mandatory SPK authenticity check: the peer's ML-DSA-65 signing public
+    // key + the signature over their SPK. The handshake is rejected if the
+    // signature does not verify or is absent (prevents SPK substitution).
+    peer_signing_pk_hex: String,
+    peer_spk_sig_hex: String,
 ) -> Result<X3dhInitiateResponse, String> {
     // Load our identity key
     let my_identity = load_identity_keypair(&state, &my_identity_id)?;
@@ -472,40 +472,38 @@ pub fn x3dh_initiate(
     let their_identity = hex_to_bytes_32(&peer_identity_pk_hex, "peer identity key")?;
     let their_signed_prekey = hex_to_bytes_32(&peer_signed_prekey_pk_hex, "peer signed pre-key")?;
 
-    // Verify the SPK signature when the peer provided its signing key.
-    if let (Some(signing_pk_hex), Some(sig_hex)) = (peer_signing_pk_hex, peer_spk_sig_hex) {
-        let signing_pk = hex::decode(&signing_pk_hex)
-            .map_err(|e| format!("Invalid peer signing pk hex: {e}"))?;
-        let sig_bytes =
-            hex::decode(&sig_hex).map_err(|e| format!("Invalid peer spk signature hex: {e}"))?;
-        if signing_pk.len() != crate::pq::MLDSA65_PK_SIZE {
-            return Err(format!(
-                "Invalid peer signing pk length: expected {}, got {}",
-                crate::pq::MLDSA65_PK_SIZE,
-                signing_pk.len()
-            ));
-        }
-        if sig_bytes.len() != crate::pq::MLDSA65_SIG_SIZE {
-            return Err(format!(
-                "Invalid peer spk signature length: expected {}, got {}",
-                crate::pq::MLDSA65_SIG_SIZE,
-                sig_bytes.len()
-            ));
-        }
-        let mut pk_arr = [0u8; crate::pq::MLDSA65_PK_SIZE];
-        pk_arr.copy_from_slice(&signing_pk);
-        let mut sig_arr = [0u8; crate::pq::MLDSA65_SIG_SIZE];
-        sig_arr.copy_from_slice(&sig_bytes);
-        // Verify: signature is over the SPK public key, context "fibemate-spk-v1".
-        let peer_isk = MlDsa65KeyPair {
-            public_key: pk_arr,
-            secret_key: [0u8; crate::pq::MLDSA65_SK_SIZE],
-        };
-        if !peer_isk.verify(&their_signed_prekey, SPK_SIGN_CONTEXT, &sig_arr)? {
-            return Err(
-                "SPK signature verification failed — peer bundle may be tampered with".to_string(),
-            );
-        }
+    // Mandatory SPK signature verification (cannot be skipped).
+    let signing_pk = hex::decode(&peer_signing_pk_hex)
+        .map_err(|e| format!("Invalid peer signing pk hex: {e}"))?;
+    let sig_bytes = hex::decode(&peer_spk_sig_hex)
+        .map_err(|e| format!("Invalid peer spk signature hex: {e}"))?;
+    if signing_pk.len() != crate::pq::MLDSA65_PK_SIZE {
+        return Err(format!(
+            "Invalid peer signing pk length: expected {}, got {}",
+            crate::pq::MLDSA65_PK_SIZE,
+            signing_pk.len()
+        ));
+    }
+    if sig_bytes.len() != crate::pq::MLDSA65_SIG_SIZE {
+        return Err(format!(
+            "Invalid peer spk signature length: expected {}, got {}",
+            crate::pq::MLDSA65_SIG_SIZE,
+            sig_bytes.len()
+        ));
+    }
+    let mut pk_arr = [0u8; crate::pq::MLDSA65_PK_SIZE];
+    pk_arr.copy_from_slice(&signing_pk);
+    let mut sig_arr = [0u8; crate::pq::MLDSA65_SIG_SIZE];
+    sig_arr.copy_from_slice(&sig_bytes);
+    // Verify: signature is over the SPK public key, context "fibemate-spk-v1".
+    let peer_isk = MlDsa65KeyPair {
+        public_key: pk_arr,
+        secret_key: [0u8; crate::pq::MLDSA65_SK_SIZE],
+    };
+    if !peer_isk.verify(&their_signed_prekey, SPK_SIGN_CONTEXT, &sig_arr)? {
+        return Err(
+            "SPK signature verification failed — peer bundle may be tampered with".to_string(),
+        );
     }
 
     // Generate ephemeral key
