@@ -338,7 +338,6 @@ impl KeyStore {
     }
 
     /// Delete a secret key from disk (used by Tauri commands in binary context).
-    #[allow(dead_code)]
     pub fn delete_secret_key(&mut self, key_id: &str) -> Result<(), String> {
         let key_path = self.key_path(key_id);
         if key_path.exists() {

@@ -3,7 +3,7 @@
 //! Frontend calls these via `invoke()` — session state and
 //! message keys live entirely in Rust memory.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tauri::State;
 // use uuid::Uuid; // TODO: re-enable if session IDs need UUID generation
 
@@ -27,14 +27,6 @@ pub struct DrEncryptResponse {
     pub message_json: String,
     /// Message number (monotonically increasing)
     pub message_num: u32,
-}
-
-/// Used by Tauri command handlers in binary context.
-#[allow(dead_code)]
-#[derive(Deserialize)]
-pub struct DrDecryptRequest {
-    /// The EncryptedMessage serialized as JSON
-    pub message_json: String,
 }
 
 #[derive(Serialize, Clone)]

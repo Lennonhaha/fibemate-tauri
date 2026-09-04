@@ -586,7 +586,6 @@ impl SessionManager {
 
     /// Persist all sessions to disk (acquires inner lock).
     /// Legacy plaintext path — kept for tests and migration.
-    #[allow(dead_code)]
     pub fn save_to_disk(&self, path: &std::path::Path) -> Result<(), String> {
         let sessions = self.sessions.lock().map_err(|e| e.to_string())?;
         save_sessions_to_disk(path, &sessions)
@@ -645,7 +644,6 @@ struct SessionFile {
 
 /// Write all sessions to disk as JSON (atomic: temp + rename).
 /// Legacy plaintext format — kept for tests and migration reading.
-#[allow(dead_code)]
 pub fn save_sessions_to_disk(
     path: &std::path::Path,
     sessions: &HashMap<String, RatchetState>,
