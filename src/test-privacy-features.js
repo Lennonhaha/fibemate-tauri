@@ -119,8 +119,14 @@ async function testDeviceBinding() {
   log('Testing Device Binding...');
   
   try {
+    // Capture approval-scoped audit calls through the injected hook.
+    const auditCalls = [];
+    const fakeAuditInvoke = async (event, args) => {
+      auditCalls.push({ event, ...args });
+      return null;
+    };
     const { DeviceBinding } = await import('./privacy-layers/device-binding.js');
-    const binding = new DeviceBinding({ maxDevices: 3 });
+    const binding = new DeviceBinding({ maxDevices: 3, auditInvoke: fakeAuditInvoke });
     
     // Test device registration
     const device1 = await binding.registerDevice({
@@ -131,16 +137,43 @@ async function testDeviceBinding() {
     assert(device1.verified === true, 'First device should be auto-verified');
     log('Device registration: PASS', 'pass');
     
-    // Test device limit
+    // Test device limit: registerDevice is unconstrained (first-device
+    // bootstrap path); the limit is enforced at requestAddDevice time.
     await binding.registerDevice({ deviceId: 'device-2', deviceName: 'Test 2', deviceType: 'mobile' });
     await binding.registerDevice({ deviceId: 'device-3', deviceName: 'Test 3', deviceType: 'tablet' });
+    await binding.registerDevice({ deviceId: 'device-4', deviceName: 'Test 4', deviceType: 'desktop' });
+    const limitReq = await binding.requestAddDevice({ name: 'Over Limit', type: 'laptop' });
+    assert(limitReq.success === false, 'requestAddDevice must enforce max devices');
+    log('Device limit enforced: PASS', 'pass');
     
-    try {
-      await binding.registerDevice({ deviceId: 'device-4', deviceName: 'Test 4', deviceType: 'desktop' });
-      assert(false, 'Should throw error when exceeding max devices');
-    } catch (e) {
-      log('Device limit enforced: PASS', 'pass');
-    }
+    // Free slots (maxDevices=3) using real registered device ids, then run
+    // the approval flow.
+    const registered = binding.getDevices();
+    // Leave 2 active so a pending request (1 more) fits under maxDevices=3.
+    binding.removeDevice(registered[registered.length - 1].deviceId);
+    binding.removeDevice(registered[registered.length - 2].deviceId);
+    const req = await binding.requestAddDevice({ name: 'New Laptop', type: 'laptop' });
+    assert(req.success === true, 'requestAddDevice must succeed after freeing a slot');
+    const ok = await binding.verifyDevice(req.verificationId, true, 'device-1');
+    assert(ok.approved === true, 'verifyDevice(true) must approve');
+    assert(
+      auditCalls.some(c => c.event === 'device_approved' && c.approvedBy === 'device-1'),
+      'approval must emit device_approved with approver device id'
+    );
+    log('Device approval audit: PASS', 'pass');
+
+    // Free a slot again before requesting the rejection-path device.
+    const afterApprove = binding.getDevices();
+    binding.removeDevice(afterApprove[afterApprove.length - 1].deviceId);
+    const req2 = await binding.requestAddDevice({ name: 'Rogue Phone', type: 'mobile' });
+    assert(req2.success === true, 'second requestAddDevice must succeed');
+    const rejected = await binding.verifyDevice(req2.verificationId, false, 'device-1');
+    assert(rejected.approved === false, 'verifyDevice(false) must reject');
+    assert(
+      auditCalls.some(c => c.event === 'device_rejected' && c.approvedBy === 'device-1'),
+      'rejection must emit device_rejected with approver device id'
+    );
+    log('Device rejection audit: PASS', 'pass');
     
     return { name: 'Device Binding', status: 'PASS' };
   } catch (err) {

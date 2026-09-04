@@ -1,21 +1,20 @@
 #!/usr/bin/env python3
-"""Verify the test count documented in README matches reality.
+"""Verify the counts documented in README match the code.
 
-The README states the passing test count in several places: a shields.io badge,
-an "expected output" snippet, and a release checklist item. Every one of them
-is a hand-typed number, so they drift the moment anyone adds or removes a test
-- and nothing fails when they do, so the badge quietly starts lying.
+The README states the number of passing tests and the number of registered
+Tauri commands, in several places each: a shields.io badge, "expected output"
+snippets, a roadmap checklist, an architecture diagram and a command table.
+Every one is hand-typed, so they drift the moment anyone adds a test or a
+command - and nothing fails when they do, so the docs quietly start lying.
 
-This turns those numbers into a checked assertion. It reads the list produced
-by `cargo test -- --list` and compares it against every count the README
-claims, failing on any mismatch.
+This turns those numbers into checked assertions. It exits non-zero on any
+mismatch, and `--update` rewrites them all in place.
 
 Usage:
     cargo test --all-features -- --list > test_list.txt
-    python scripts/check_readme_tests.py --list test_list.txt
+    python scripts/check_readme_claims.py --list test_list.txt
 
-    python scripts/check_readme_tests.py --list test_list.txt --update
-        # rewrite the documented counts in place
+    python scripts/check_readme_claims.py --update    # rewrite documented counts
 """
 
 import argparse
@@ -25,15 +24,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent  # repo root
 README = ROOT / "README.md"
-
-# (label, regex) — every capture group must equal the real test count.
-# The badge URL-encodes its slash, which is why it needs its own pattern.
-CLAIMS = [
-    ("badge", re.compile(r"tests-(\d+)%2F(\d+)%20passed")),
-    ("expected-output comment", re.compile(r"Expected:\s*(\d+)\s+tests")),
-    ("sample test result", re.compile(r"^test result: ok\. (\d+) passed", re.M)),
-    ("checklist", re.compile(r"(\d+)/(\d+) lib tests passing")),
-]
+LIB = ROOT / "src-tauri" / "src" / "lib.rs"
 
 
 def read_text(path: Path) -> str:
@@ -49,81 +40,133 @@ def write_text(path: Path, text: str) -> None:
 
 def count_tests(list_path: Path) -> int:
     """Count 'name: test' lines from `cargo test -- --list`."""
-    n = 0
-    for line in list_path.read_text(encoding="utf-8", errors="replace").splitlines():
-        if line.rstrip().endswith(": test"):
-            n += 1
-    return n
-
-
-def update_readme(text: str, actual: int) -> str:
-    text = re.sub(r"tests-\d+%2F\d+%20passed", f"tests-{actual}%2F{actual}%20passed", text)
-    text = re.sub(r"Expected:\s*\d+\s+tests", f"Expected: {actual} tests", text)
-    text = re.sub(
-        r"^test result: ok\. \d+ passed",
-        f"test result: ok. {actual} passed",
-        text,
-        flags=re.M,
+    return sum(
+        1
+        for line in list_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        if line.rstrip().endswith(": test")
     )
-    text = re.sub(r"\d+/\d+ lib tests passing", f"{actual}/{actual} lib tests passing", text)
-    return text
+
+
+def count_commands() -> int:
+    """Count entries in `tauri::generate_handler![...]`.
+
+    Entries mix bare names with paths (`commands::kem::kem_keygen`) and the
+    list carries `// group` comments, so strip comments and take the last `::`
+    segment - matching the module prefix would nearly triple the count.
+    """
+    src = read_text(LIB)
+    m = re.search(r"generate_handler!\s*\[(.*?)\n\s*\]", src, re.S) or re.search(
+        r"generate_handler!\s*\[(.*?)\]", src, re.S
+    )
+    if not m:
+        sys.exit(f"ERROR: no generate_handler! block found in {LIB}")
+    body = re.sub(r"//[^\n]*", "", m.group(1))
+    return len([t for t in (x.strip() for x in body.split(",")) if t])
+
+
+# (label, regex, replacement) - every capture group must equal the real value.
+# The badge URL-encodes its slash, hence its own pattern.
+TEST_CLAIMS = [
+    ("badge", re.compile(r"tests-(\d+)%2F(\d+)%20passed"), r"tests-{n}%2F{n}%20passed"),
+    ("expected tests comment", re.compile(r"Expected:\s*(\d+)\s+tests"), r"Expected: {n} tests"),
+    (
+        "sample test result",
+        re.compile(r"^test result: ok\. (\d+) passed", re.M),
+        r"test result: ok. {n} passed",
+    ),
+    ("roadmap checklist", re.compile(r"(\d+)/(\d+) lib tests passing"), r"{n}/{n} lib tests passing"),
+]
+
+COMMAND_CLAIMS = [
+    ("architecture diagram", re.compile(r"│ (\d+) Tauri commands"), r"│ {n} Tauri commands"),
+    (
+        "lib.rs annotation",
+        re.compile(r"App entry \+ (\d+) command registrations"),
+        r"App entry + {n} command registrations",
+    ),
+    (
+        "command table header",
+        re.compile(r"### Tauri Commands \((\d+) registered"),
+        r"### Tauri Commands ({n} registered",
+    ),
+]
+
+ALL_CLAIMS = TEST_CLAIMS + COMMAND_CLAIMS
+
+
+def first_group(pattern: re.Pattern, text: str) -> str:
+    m = pattern.search(text)
+    return next(g for g in m.groups() if g is not None) if m else ""
+
+
+def run_checks(text: str, counts: dict) -> list:
+    """Print one table per claim group; return a list of failures."""
+    failures = []
+    for group, (claims, actual, unit) in counts.items():
+        print(f"{'claim':<26} {'documented':>12}  status   [{group}, actual {actual}]")
+        print("-" * 62)
+        for label, pattern, _ in claims:
+            found = pattern.findall(text)
+            if not found:
+                print(f"{label:<26} {'—':>12}  NOT FOUND (regex no longer matches)")
+                failures.append(f"{group}/{label} (regex stale)")
+                continue
+            value = first_group(pattern, text)
+            ok = value and int(value) == actual
+            for groups in found:
+                vals = groups if isinstance(groups, tuple) else (groups,)
+                if any(int(v) != actual for v in vals):
+                    ok = False
+            print(f"{label:<26} {value or '?':>12}  {'OK' if ok else 'FAIL'}")
+            if not ok:
+                failures.append(f"{group}/{label} (says {value})")
+        print()
+    return failures
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--list", required=True, type=Path, help="output of `cargo test -- --list`")
-    ap.add_argument("--update", action="store_true", help="rewrite README with the real count")
+    ap.add_argument(
+        "--list",
+        type=Path,
+        help="output of `cargo test -- --list` (omit to check command count only)",
+    )
+    ap.add_argument("--update", action="store_true", help="rewrite README with the real counts")
     args = ap.parse_args()
-
-    if not args.list.is_file():
-        sys.exit(f"ERROR: {args.list} not found — run `cargo test --all-features -- --list` first")
-    actual = count_tests(args.list)
-    if actual == 0:
-        sys.exit(f"ERROR: no tests listed in {args.list} — is it really `--list` output?")
 
     if not README.is_file():
         sys.exit(f"ERROR: {README} not found")
-
     text = read_text(README)
+
+    actual_commands = count_commands()
+    actual_tests = None
+    if args.list:
+        if not args.list.is_file():
+            sys.exit(f"ERROR: {args.list} not found — run `cargo test --all-features -- --list` first")
+        actual_tests = count_tests(args.list)
+        if actual_tests == 0:
+            sys.exit(f"ERROR: no tests listed in {args.list} — is it really `--list` output?")
+
     if args.update:
-        write_text(README, update_readme(text, actual))
-        print(f"README: documented test count updated to {actual}")
+        for _, pattern, tmpl in TEST_CLAIMS:
+            if actual_tests is not None:
+                text = pattern.sub(tmpl.format(n=actual_tests), text)
+        for _, pattern, tmpl in COMMAND_CLAIMS:
+            text = pattern.sub(tmpl.format(n=actual_commands), text)
+        write_text(README, text)
+        print(f"README updated: {actual_tests} tests, {actual_commands} commands")
         return 0
 
-    failures = []
-    missing = []
-    for label, pattern in CLAIMS:
-        found = pattern.findall(text)
-        if not found:
-            missing.append(label)
-            continue
-        for groups in found:
-            for value in (groups if isinstance(groups, tuple) else (groups,)):
-                if int(value) != actual:
-                    failures.append((label, value, actual))
+    counts = {"commands": (COMMAND_CLAIMS, actual_commands, "commands")}
+    if actual_tests is not None:
+        counts = {"tests": (TEST_CLAIMS, actual_tests, "tests"), **counts}
 
-    print(f"actual test count: {actual}")
-    print(f"{'claim':<26} {'documented':>12}  status")
-    print("-" * 48)
-    for label, _ in CLAIMS:
-        if label in missing:
-            print(f"{label:<26} {'—':>12}  NOT FOUND (regex no longer matches README)")
-            continue
-        documented = CLAIMS[[c[0] for c in CLAIMS].index(label)][1].search(text)
-        value = next(
-            g for g in (documented.groups() if documented else ()) if g is not None
-        )
-        status = "OK" if int(value) == actual else "FAIL"
-        print(f"{label:<26} {value:>12}  {status}")
-
-    if missing:
-        print(f"\nERROR: {len(missing)} claim pattern(s) matched nothing — the check itself is stale")
-        return 1
+    failures = run_checks(text, counts)
     if failures:
-        print(f"\nDOC DRIFT: README says {failures[0][1]} but {failures[0][2]} tests exist")
-        print("           fix with: python scripts/check_readme_tests.py --list <list> --update")
+        print(f"DOC DRIFT: {len(failures)} claim(s) disagree with the code — first: {failures[0]}")
+        print("           fix with: python scripts/check_readme_claims.py --update")
         return 1
-    print(f"\nREADME test count matches: all {len(CLAIMS)} claims say {actual}")
+    print(f"README claims match the code ({actual_tests} tests, {actual_commands} commands)")
     return 0
 
 

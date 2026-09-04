@@ -93,6 +93,8 @@ pub fn run() {
             // Signed pre-key (independent SPK + ML-DSA-65 signature)
             commands::identity::spk_get_public,
             commands::identity::spk_rotate,
+            // Approval-scoped audit records (JS device verification flow)
+            commands::audit_cmd::audit_approval,
             // Key-store controlled self-destruct (manual-only)
             commands::identity::keystore_selfdestruct,
             // X3DH Key Exchange

@@ -25,12 +25,29 @@ pub fn init(app_data: &std::path::Path) {
 }
 
 /// Append one audit record. Never include secrets: pass opaque IDs only.
+///
+/// Convenience wrapper for events without an approval actor; use
+/// [`audit_with_approval`] when the operation was gated on a user-supplied
+/// confirmation (e.g. the "DESTROY ALL KEYS" phrase) or an approving device.
 pub fn audit(event: &str, detail: &str) {
+    audit_with_approval(event, detail, None)
+}
+
+/// Append one audit record with an optional approval actor.
+///
+/// `approved_by` is recorded verbatim as `approved_by={who}` on the line.
+/// Callers MUST NOT pass secrets — the value is meant to be a confirmation
+/// phrase name (e.g. "DESTROY ALL KEYS"), an approver device id, or a
+/// fixed source tag like "manual" / "auto".
+pub fn audit_with_approval(event: &str, detail: &str, approved_by: Option<&str>) {
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
-    let line = format!("[AUDIT] t={ts} {event} {detail}\n");
+    let line = match approved_by {
+        Some(who) => format!("[AUDIT] t={ts} {event} {detail} approved_by={who}\n"),
+        None => format!("[AUDIT] t={ts} {event} {detail}\n"),
+    };
     eprint!("{line}");
     if let Some(p) = LOG_PATH.read().unwrap().as_ref() {
         append_at(p, &line);
@@ -60,5 +77,35 @@ mod tests {
         let content = std::fs::read_to_string(&path).unwrap();
         assert!(content.contains("[AUDIT]"), "audit record must be written");
         assert!(content.contains("test_event"));
+    }
+
+    #[test]
+    fn test_audit_with_approval_records_actor() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("audit.log");
+        // Drive the public API by pointing LOG_PATH at the temp dir.
+        *LOG_PATH.write().unwrap() = Some(path.clone());
+        audit_with_approval("device_approved", "dev_abc", Some("dev_approver_42"));
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            content.contains("approved_by=dev_approver_42"),
+            "approval actor must be recorded: {content}"
+        );
+        // Restore so parallel tests are unaffected.
+        *LOG_PATH.write().unwrap() = None;
+    }
+
+    #[test]
+    fn test_audit_without_approval_omits_field() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("audit.log");
+        *LOG_PATH.write().unwrap() = Some(path.clone());
+        audit("plain_event", "opaque-id-456");
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert!(
+            !content.contains("approved_by"),
+            "no approval field expected: {content}"
+        );
+        *LOG_PATH.write().unwrap() = None;
     }
 }

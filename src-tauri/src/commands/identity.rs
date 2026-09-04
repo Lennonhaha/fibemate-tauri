@@ -376,7 +376,7 @@ pub fn keystore_selfdestruct(state: State<CryptoState>, confirm: String) -> Resu
     if confirm != "DESTROY ALL KEYS" {
         return Err("确认短语不正确 — 操作已取消。".to_string());
     }
-    crate::audit::audit("keystore_selfdestruct", "begin");
+    crate::audit::audit_with_approval("keystore_selfdestruct", "begin", Some(confirm.as_str()));
 
     // 1. Memory: destroy all ratchet sessions (RatchetState: derive(Zeroize))
     {
@@ -418,7 +418,7 @@ pub fn keystore_selfdestruct(state: State<CryptoState>, confirm: String) -> Resu
         }
     }
 
-    crate::audit::audit("keystore_selfdestruct", "complete");
+    crate::audit::audit_with_approval("keystore_selfdestruct", "complete", Some(confirm.as_str()));
     Ok("密钥库已销毁。重新启动后应用将处于全新状态。".to_string())
 }
 

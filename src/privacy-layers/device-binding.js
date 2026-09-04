@@ -12,6 +12,26 @@ class DeviceBinding {
         this.deviceRegistry = new Map();
         this.pendingVerifications = new Map();
         this.listeners = new Set();
+        // Optional Tauri audit hook: when running inside the Tauri shell, the
+        // Rust backend records an approval-scoped line in audit.log. In plain
+        // browsers (demo/CI) this is a silent no-op.
+        this._auditInvoke = options.auditInvoke || null;
+    }
+
+    /**
+     * Append an approval-scoped audit record through the Rust backend.
+     * Never throws — auditing must not break the verification flow.
+     */
+    async _auditApproval(event, detail, approvedBy) {
+        if (!this._auditInvoke) return;
+        try {
+            await this._auditInvoke('audit_approval', {
+                event, detail, approvedBy
+            });
+        } catch (e) {
+            // Audit is a diagnostic channel — degrade silently.
+            console.warn('[DeviceBinding] audit_approval failed:', e);
+        }
     }
     
     /**
@@ -111,6 +131,8 @@ class DeviceBinding {
         if (!approval) {
             pending.status = 'rejected';
             this.emit('deviceVerificationRejected', pending);
+            // Rejection is approval-scoped too: record WHO rejected.
+            await this._auditApproval('device_rejected', verificationId, approverDeviceId);
             return { success: true, approved: false };
         }
         
@@ -118,6 +140,9 @@ class DeviceBinding {
         pending.status = 'approved';
         pending.verifiedAt = Date.now();
         pending.verifiedBy = approverDeviceId;
+        
+        // Approval-scoped audit record: approved_by = the verifying device.
+        await this._auditApproval('device_approved', verificationId, approverDeviceId);
         
         const device = {
             ...pending.deviceInfo,
@@ -211,14 +236,18 @@ class DeviceBinding {
      * Generate device fingerprint
      */
     async generateDeviceFingerprint() {
+        // Browser fingerprint components; each access is guarded so the
+        // module also runs under plain Node (tests, SSR, CI).
+        const hasWindow = typeof window !== 'undefined';
+        const hasScreen = typeof screen !== 'undefined';
         const components = [
-            navigator.userAgent,
-            navigator.platform,
-            navigator.language,
-            screen.width,
-            screen.height,
-            screen.colorDepth,
-            new Date().getTimezoneOffset()
+            hasWindow ? navigator.userAgent : 'node',
+            hasWindow ? navigator.platform : process.platform,
+            hasWindow ? navigator.language : process.env.LANG || 'en',
+            hasScreen ? screen.width : 0,
+            hasScreen ? screen.height : 0,
+            hasScreen ? screen.colorDepth : 0,
+            hasWindow ? new Date().getTimezoneOffset() : 0
         ];
         
         const data = components.join('|');
