@@ -12,6 +12,7 @@ use crate::double_ratchet::SessionManager;
 use crate::key_store::KeyStore;
 
 pub mod audit_cmd;
+pub mod hybrid_cmd;
 pub mod identity;
 pub mod kem;
 pub mod ratchet;

@@ -86,6 +86,10 @@ pub fn run() {
             commands::kem::kem_encapsulate,
             commands::kem::kem_decapsulate,
             commands::kem::kem_list_keys,
+            // Hybrid Key Exchange (X25519 + ML-KEM-768)
+            commands::hybrid_cmd::hybrid_keygen,
+            commands::hybrid_cmd::hybrid_begin,
+            commands::hybrid_cmd::hybrid_accept,
             // Identity Keys (X25519)
             commands::identity::ik_generate,
             commands::identity::ik_get_public,
