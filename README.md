@@ -4,7 +4,7 @@
 Built on Tauri v2 (Rust backend + WebView frontend), designed for the quantum era.
 
 [![Rust](https://img.shields.io/badge/rust-1.85+-orange)]()
-[![Tests](https://img.shields.io/badge/tests-107%2F107%20passed-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-108%2F108%20passed-brightgreen)]()
 [![PQ](https://img.shields.io/badge/PQC-ML--KEM--768%20%7C%20ML--DSA--65-blue)]()
 [![License](https://img.shields.io/badge/license-GPLv3-blue)]()
 
@@ -135,11 +135,11 @@ npx tauri build        # production binary
 ```bash
 cd src-tauri
 cargo test --release --lib
-# Expected: 107 tests, 0 failures
+# Expected: 108 tests, 0 failures
 ```
 
 ```
-test result: ok. 107 passed; 0 failed; 0 ignored; 0 measured
+test result: ok. 108 passed; 0 failed; 0 ignored; 0 measured
 ```
 
 Coverage highlights (all real, verified 2026-09-02):
@@ -237,7 +237,7 @@ fibemate-tauri/
 - [x] Double Ratchet fully in Rust
 - [x] X3DH with independent SPK (DH2 ≠ DH3)
 - [x] AES-256-GCM + DPAPI encrypted KeyStore
-- [x] 107/107 lib tests passing
+- [x] 108/108 lib tests passing
 - [ ] Hybrid PQ handshake (wire `pq/hybrid.rs` into X3DH) — P2
 - [ ] Session-level PQ ratchet (ML-KEM inside ratchet, PQXDH Level 3) — P2
 - [ ] P2P WebRTC with PQ key exchange

@@ -56,6 +56,17 @@ jobs:
         working-directory: src-tauri
         run: cargo test --all-features
 
+      # The README states the passing test count in four places (badge, expected
+      # output, sample result, roadmap checklist). Hand-maintaining them means the
+      # badge silently starts lying the moment a test is added, so verify instead.
+      # ubuntu only: the count is platform-independent, and one failure is enough.
+      - name: Verify documented test count
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: src-tauri
+        run: |
+          cargo test --all-features -- --list > test_list.txt
+          python3 scripts/check_readme_tests.py --list test_list.txt
+
   bench:
     name: Perf regression gate (criterion)
     # Timing gates are only meaningful on a single consistent runner to avoid
