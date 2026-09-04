@@ -30,6 +30,7 @@ Usage:
 """
 
 import json
+import platform
 import sys
 from pathlib import Path
 
@@ -49,6 +50,9 @@ MEMORY_SAFETY_FACTOR = 1.5
 # baseline update rather than something CI waves through.
 MEMORY_SLACK_BYTES = {"ratchet_state_size_bytes": 64}
 P95_SUFFIX = ":p95"
+# Keys starting with this are metadata, not gated metrics.
+META_PREFIX = "_"
+SOURCE_PLATFORM_KEY = "_source_platform"
 
 
 def human_bytes(n: float) -> str:
@@ -62,6 +66,30 @@ def human_bytes(n: float) -> str:
     if n < 1024 * 1024:
         return f"{n / 1024:.1f} KB"
     return f"{n / 1024 / 1024:.1f} MB"
+
+
+def strip_meta(name: str, thresholds: dict, *, platform_sensitive: bool = True) -> None:
+    """Drop metadata keys; shout if timing baselines came from another OS.
+
+    keystore/load_32b_secret and persistence/save_50_sessions_encrypted sat at
+    40-100x their real CI values because they were recorded on Windows - DPAPI
+    and NTFS - and then enforced on Linux. A cross-platform baseline makes the
+    gate either dead or flapping, and neither failure mode is visible from the
+    gate output alone, so it has to be said out loud.
+
+    Memory thresholds opt out via `platform_sensitive=False`: a counting
+    allocator reproduces byte-identically, so their baselines really are
+    portable and warning about them would be noise.
+    """
+    source = thresholds.pop(SOURCE_PLATFORM_KEY, None)
+    for key in [k for k in thresholds if k.startswith(META_PREFIX)]:
+        thresholds.pop(key)
+    if platform_sensitive and source and source != platform.system():
+        print(
+            f"WARNING: {name} was recorded on {source}, but this gate runs on "
+            f"{platform.system()}. Absolute timings are not comparable across "
+            f"platforms — re-derive with --update here."
+        )
 
 
 def percentile(sorted_values: list, q: float) -> float:
@@ -158,6 +186,7 @@ def main() -> int:
                     thresholds[key + P95_SUFFIX] = round(
                         pcts["p95"] * SAFETY_FACTOR, 1
                     )
+        thresholds[SOURCE_PLATFORM_KEY] = platform.system()
         with THRESHOLDS.open("w") as f:
             json.dump(thresholds, f, indent=2, sort_keys=True)
             f.write("\n")
@@ -169,6 +198,7 @@ def main() -> int:
                 else int(round(v * MEMORY_SAFETY_FACTOR))
                 for k, v in mem.items()
             }
+            mem_limits[SOURCE_PLATFORM_KEY] = platform.system()
             with MEMORY_THRESHOLDS.open("w") as f:
                 json.dump(mem_limits, f, indent=2, sort_keys=True)
                 f.write("\n")
@@ -183,6 +213,7 @@ def main() -> int:
 
     with THRESHOLDS.open() as f:
         thresholds = json.load(f)
+    strip_meta(THRESHOLDS.name, thresholds)
 
     failures = []
     print(f"{'metric':<38} {'mean':>10} {'p50':>9} {'p95':>9} {'p99':>9} {'threshold':>11}  status")
@@ -220,6 +251,9 @@ def main() -> int:
         if MEMORY_THRESHOLDS.is_file():
             with MEMORY_THRESHOLDS.open() as f:
                 mem_limits = json.load(f)
+            strip_meta(
+                MEMORY_THRESHOLDS.name, mem_limits, platform_sensitive=False
+            )
         print(f"\n{'metric':<38} {'live':>12} {'threshold':>12}  status")
         print("-" * 68)
         for key, raw_bytes in sorted(mem.items()):
