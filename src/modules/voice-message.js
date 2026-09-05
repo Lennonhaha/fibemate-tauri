@@ -772,7 +772,11 @@ const VoiceMessage = (() => {
         identityKey: keysResp.identityKey,
         signedPreKey: keysResp.signedPrekey || keysResp.identityKey,
         signedPreKeyId: 0,
-        oneTimePreKeys: []
+        oneTimePreKeys: [],
+        // Hybrid PQ advertisement (if responder uploaded one)
+        _hybridKeyId: keysResp.hybridKeyId || null,
+        _hybridBundleHex: keysResp.hybridBundleHex || null,
+        _hybridMode: keysResp.hybridMode || null
       };
 
       if (!bundle || !bundle.identityKey) {
@@ -781,7 +785,8 @@ const VoiceMessage = (() => {
       }
 
       let sessionResult;
-      if (typeof PQIntegration !== 'undefined' && PQIntegration.isAvailable && PQIntegration.isAvailable() && bundle.kemPublicKey) {
+      if (bundle._hybridBundleHex) {
+        // v7: 对方通告 hybrid PQ 预钥 → 真实 PQ 握手 (X25519 + ML-KEM-768)
         sessionResult = await Crypto.initiateHybridSession(STATE.currentPeerId, bundle);
       } else {
         sessionResult = await Crypto.initiateSession(STATE.currentPeerId, bundle);

@@ -343,6 +343,14 @@
         return this._receiveAcceptRust(peerId, initMessage);
       }
 
+      // Hybrid PQ init (Alice → Bob) — X25519 ECDH + ML-KEM-768 encaps.
+      // MUST be routed before the generic version-3 path: hybrid_init_rust
+      // carries hybridEnc + drPublicKey (no X3DH fields), so treating it as
+      // a classical x3dh init would break the handshake.
+      if (initMessage.type === 'hybrid_init_rust') {
+        return this.receiveHybridSession(peerId, initMessage);
+      }
+
       // Detect protocol version
       if (initMessage.type === 'x3dh_init_rust' || initMessage.version === 3) {
         return this._receiveRustSession(peerId, initMessage);

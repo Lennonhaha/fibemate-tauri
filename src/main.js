@@ -58,7 +58,12 @@ document.addEventListener('DOMContentLoaded', async () => {
               signedPreKeySignature: bundle.signedPreKeySignature || null,
               // backward compat (server accepts both naming conventions)
               signedPrekey: bundle.signedPreKey || bundle.identityKey,
-              prekeySignature: bundle.signedPreKeySignature || ''
+              prekeySignature: bundle.signedPreKeySignature || '',
+              // Hybrid PQ advertisement (X25519 + ML-KEM-768 responder bundle)
+              // — additive fields; peers without support fall back to X3DH
+              hybridKeyId: bundle._hybridKeyId || null,
+              hybridBundleHex: bundle._hybridBundleHex || null,
+              hybridMode: bundle._hybridMode || null
             })
           });
           console.log('[Init v5] Pre-key bundle uploaded to server (update-keys)');

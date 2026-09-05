@@ -244,13 +244,18 @@ async function sendMessage() {
               identityKey: keysResp.identityKey,
               signedPreKey: keysResp.signedPrekey || keysResp.identityKey,
               signedPreKeyId: 0,
-              oneTimePreKeys: []
+              oneTimePreKeys: [],
+              // Hybrid PQ advertisement (if responder uploaded one)
+              _hybridKeyId: keysResp.hybridKeyId || null,
+              _hybridBundleHex: keysResp.hybridBundleHex || null,
+              _hybridMode: keysResp.hybridMode || null
             };
             if (bundle && bundle.identityKey) {
-              // v6: 优先使用混合 X3DH (ECDH + ML-KEM-768)
+              // v7: 优先使用混合 PQ 握手 (X25519 + ML-KEM-768) —— 对方 bundle 携带 hybrid 通告时
+              //     走 adapter.initiateHybridSession（真实 PQ 握手）；否则纯 X3DH 降级
               let sessionResult;
-              if (PQIntegration && PQIntegration.isAvailable() && bundle.kemPublicKey) {
-                console.log(`[Send v6] Using hybrid X3DH with ML-KEM-768`);
+              if (bundle._hybridBundleHex) {
+                console.log(`[Send v7] Using hybrid PQ handshake (X25519 + ML-KEM-768)`);
                 sessionResult = await Crypto.initiateHybridSession(STATE.currentPeerId, bundle);
               } else {
                 sessionResult = await Crypto.initiateSession(STATE.currentPeerId, bundle);
