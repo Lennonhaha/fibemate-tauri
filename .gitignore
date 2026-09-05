@@ -20,6 +20,10 @@ stress-test.js
 test_syntax.js
 settings-shot.png
 
+# --- CI 验证产物 ---
+src-tauri/test_list.txt
+*.test_list.txt
+
 # --- 历史备份/损坏文件（不入库）---
 *.bak
 *.bak-*
