@@ -403,21 +403,80 @@
     },
 
     // ════════════════════════════════════════════════════════════
-    // ML-KEM-768 Hybrid X3DH (Post-Quantum)
+    // Hybrid Key Exchange (X25519 + ML-KEM-768, Rust hybrid_cmd layer)
     // ════════════════════════════════════════════════════════════
+    //
+    // The Rust pq/hybrid layer combines X25519 ECDH with ML-KEM-768 into a
+    // single 64-byte secret (HKDF-SHA3-512), of which the first 32 bytes are
+    // stored under ss_id — the Double Ratchet consumes it exactly like an
+    // X3DH shared secret.  So a hybrid session is: responder generates a
+    // hybrid keypair (hybrid_keygen) → shares its public bundle → initiator
+    // hybrid_begin (ECDH + encaps) → responder hybrid_accept (ECDH + decaps)
+    // → both feed dr_init(ss_id).  No dr_init dual-ss_id support needed.
+    //
+    // Wire bundles (hex strings):
+    //   classic: 0x01 ‖ x25519_pk(32)
+    //   hybrid:  0x02 ‖ x25519_pk(32) ‖ mlkem_pk(1184)
 
     /**
-     * Perform hybrid X3DH + ML-KEM-768 key exchange (initiator).
+     * Generate a persistent hybrid keypair (X25519 + optional ML-KEM-768).
+     * Call on the responder side, then share `bundle` with the initiator.
      *
-     * Combines classical X25519 X3DH with post-quantum ML-KEM-768.
-     * Both shared secrets are passed to dr_init for HKDF combination.
+     * @param {'classic'|'hybrid'} [mode='hybrid'] — 'hybrid' adds ML-KEM-768
+     * @returns {Promise<{keyId, mode, bundle}>}
+     *   bundle → send to the peer (public only; secrets stay in Rust).
+     */
+    async hybridKeygen(mode) {
+      if (!this.initialized) this.init();
+      const m = mode || 'hybrid';
+      const result = await invoke()('hybrid_keygen', { mode: m });
+      console.log(`[RatchetBridge] hybrid_keygen → key_id: ${result.key_id} mode: ${result.mode}`);
+      return {
+        keyId: result.key_id,
+        mode: result.mode,
+        bundle: result.bundle
+      };
+    },
+
+    /**
+     * Initiate a hybrid key exchange (Alice side) against a peer bundle.
+     * Ephemeral X25519 on this side — no persistent keypair created.
      *
-     * ⚠️ NOT YET IMPLEMENTED — requires dr_init to accept two ss_ids.
-     * Currently you can only use X3DH alone or ML-KEM alone.
+     * @param {string} peerBundleHex — from hybridKeygen() on the responder
+     * @returns {Promise<{enc, ssId}>}
+     *   enc → send to the peer; ssId → pass to initSession().
+     */
+    async hybridBegin(peerBundleHex) {
+      if (!this.initialized) this.init();
+      const result = await invoke()('hybrid_begin', { peerBundleHex });
+      console.log('[RatchetBridge] hybrid_begin → ss_id:', result.ss_id);
+      return {
+        enc: result.enc,
+        ssId: result.ss_id
+      };
+    },
+
+    /**
+     * Accept a hybrid key exchange (Bob side) with our persistent keypair.
+     *
+     * @param {string} keyId — from hybridKeygen() on this side
+     * @param {string} encHex — from hybridBegin() on the initiator
+     * @returns {Promise<{ssId}>} — pass to initSession().
+     */
+    async hybridAccept(keyId, encHex) {
+      if (!this.initialized) this.init();
+      const result = await invoke()('hybrid_accept', { keyId, encHex });
+      console.log('[RatchetBridge] hybrid_accept → ss_id:', result.ss_id);
+      return { ssId: result.ss_id };
+    },
+
+    /**
+     * Deprecated alias kept for callers of the old stub: performs a pure
+     * X3DH handshake (the pre-hybrid_cmd behaviour).  Real PQ mixing now
+     * goes through hybridKeygen/hybridBegin/hybridAccept + initSession.
      */
     async hybridX3dhInitiate(myIdentityId, peerBundle) {
-      console.warn('[RatchetBridge] hybridX3dhInitiate — hybrid combine in Rust not yet exposed via commands');
-      // For now: fall back to classical X3DH only (SPK signature still mandatory).
+      console.warn('[RatchetBridge] hybridX3dhInitiate is deprecated — use hybridKeygen/hybridBegin/hybridAccept for ML-KEM-768 hybrid sessions');
       if (!peerBundle.signingPkHex || !peerBundle.signedPrekeySigHex) {
         throw new Error('[RatchetBridge] hybridX3dhInitiate: peerBundle must include signingPkHex + signedPrekeySigHex');
       }
@@ -429,6 +488,73 @@
         peerBundle.signedPrekeySigHex
       );
     },
+
+    /**
+     * Full hybrid PQ session setup (responder side) — keygen + wait for the
+     * initiator's enc payload, then accept and derive the DR session.
+     *
+     * @param {string} peerName — human-readable peer identifier
+     * @param {'classic'|'hybrid'} [mode='hybrid']
+     * @returns {Promise<{keyId, bundle, sessionId, ourPublicKeyHex}>}
+     *   Send {keyId, bundle} to the initiator; when their enc arrives call
+     *   acceptHybridSession(peerName, keyId, enc).
+     */
+    async prepareHybridSession(peerName, mode) {
+      if (!this.initialized) this.init();
+      const kg = await this.hybridKeygen(mode || 'hybrid');
+      console.log(`[RatchetBridge] Hybrid responder ready: ${kg.mode} bundle for ${peerName}`);
+      return {
+        keyId: kg.keyId,
+        bundle: kg.bundle,
+        mode: kg.mode,
+        sessionId: null,
+        ourPublicKeyHex: null
+      };
+    },
+
+    /**
+     * Complete the responder side once the initiator's enc arrives.
+     *
+     * @param {string} peerName
+     * @param {string} keyId — from prepareHybridSession()
+     * @param {string} encHex — from the initiator's hybridBegin()
+     * @returns {Promise<{sessionId, ourPublicKeyHex}>}
+     */
+    async acceptHybridSession(peerName, keyId, encHex) {
+      if (!this.initialized) this.init();
+      const acc = await this.hybridAccept(keyId, encHex);
+      const dr = await this.initSession(acc.ssId, peerName, false);
+      console.log(`[RatchetBridge] Hybrid DR session created: ${dr.sessionId} with ${peerName}`);
+      return {
+        sessionId: dr.sessionId,
+        ourPublicKeyHex: dr.ourPublicKeyHex
+      };
+    },
+
+    /**
+     * Full hybrid PQ session setup (initiator side).
+     *
+     * @param {string} peerName
+     * @param {string} peerBundleHex — responder's bundle from prepareHybridSession()
+     * @returns {Promise<{sessionId, ourPublicKeyHex, enc, initMessage}>}
+     *   initMessage = { type:'hybrid_init', enc } — send to the responder.
+     */
+    async initiateHybridPQSession(peerName, peerBundleHex) {
+      if (!this.initialized) this.init();
+      const beg = await this.hybridBegin(peerBundleHex);
+      const dr = await this.initSession(beg.ssId, peerName, true);
+      console.log(`[RatchetBridge] Hybrid DR session created: ${dr.sessionId} with ${peerName}`);
+      return {
+        sessionId: dr.sessionId,
+        ourPublicKeyHex: dr.ourPublicKeyHex,
+        enc: beg.enc,
+        initMessage: {
+          type: 'hybrid_init',
+          enc: beg.enc
+        }
+      };
+    },
+
 
     // ════════════════════════════════════════════════════════════
     // Full Flow Helper

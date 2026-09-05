@@ -164,6 +164,14 @@
       //   identitySigningKey     - ML-DSA-65 identity signing key (ISK)
       //   signedPreKey           - independent X25519 signed pre-key (SPK)
       //   signedPreKeySignature  - ML-DSA-65 signature over the SPK
+      // Hybrid PQ pre-key (responder bundle) — cached across calls.
+      let hybrid = null;
+      try {
+        hybrid = await this.ensureHybridPreKey('hybrid');
+      } catch (hErr) {
+        console.warn('[DR Adapter] Hybrid pre-key unavailable:', hErr && hErr.message ? hErr.message : hErr);
+      }
+
       const spkBundle = await bridge.getSpkPublic(identityId);
       return {
         identityKey: identity.publicKeyHex,             // X25519 32-byte hex (64 chars)
@@ -176,8 +184,14 @@
         _rustIdentityId: identityId,
         _rustProtocol: DR_PROTOCOL,
         _rustVersion: DR_VERSION,
-        // Also include PQ key if available
-        _pqAvailable: false
+        // Hybrid PQ advertisement — lazily create/cache our ML-KEM-768
+        // responder keypair so the stored bundle always matches our keyId.
+        // Peers that support it will run a real PQ handshake; others
+        // seamlessly fall back to classical X3DH (fields are additive).
+        _pqAvailable: !!hybrid,
+        _hybridKeyId: hybrid ? hybrid.keyId : null,
+        _hybridBundleHex: hybrid ? hybrid.bundleHex : null,
+        _hybridMode: hybrid ? hybrid.mode : null
       };
     },
 
@@ -322,9 +336,10 @@
     async receiveSession(peerId, initMessage) {
       if (!_initialized) await this.init();
 
-      // Bob receives Alice's x3dh_accept_rust — set peer DR key on existing session
-      // MUST be checked BEFORE version check, since x3dh_accept_rust carries version:3
-      if (initMessage.type === 'x3dh_accept_rust') {
+      // Bob/Alice receives an accept (x3dh or hybrid) — set peer DR key on
+      // the existing session.  MUST be checked BEFORE version check, since
+      // both accept types carry version:3.
+      if (initMessage.type === 'x3dh_accept_rust' || initMessage.type === 'hybrid_accept_rust') {
         return this._receiveAcceptRust(peerId, initMessage);
       }
 
@@ -696,18 +711,164 @@
 
 
     // ════════════════════════════════════════════════════════════
-    // Hybrid PQ support (delegated to JS PQ layer for now)
+    // Hybrid PQ support — ML-KEM-768 + X25519 (Rust hybrid_cmd layer)
     // ════════════════════════════════════════════════════════════
+    //
+    // Bob advertises a hybrid bundle (hybrid_keygen output) inside the
+    // pre-key bundle (_hybridKeyId/_hybridBundleHex, cached in localStorage
+    // so the bundle on the server always matches Bob's local keyId).
+    // Alice detects it and runs a real PQ handshake:
+    //   Alice: hybrid_begin(bob_bundle) -> ss_id -> dr_init(initiator)
+    //   Bob:   hybrid_accept(key_id, alice_enc) -> ss_id -> dr_init(responder)
+    // The 64-byte combined secret (HKDF-SHA3-512 of ECDH | ML-KEM) is split
+    // at 32 bytes into shared_secrets — identical to an X3DH ss.  No change
+    // to dr_init; the DR layer is unaware it is seeded from a PQ mix.
+    // Sessions that only have classical bundles keep the X3DH path.
 
-    async initiateHybridSession(peerId, bundle) {
-      // TODO: After dr_init supports two ss_ids, combine X3DH + ML-KEM
-      console.log('[DR Adapter] initiateHybridSession: falling back to classical X3DH (hybrid not yet in Rust)');
-      return this.initiateSession(peerId, bundle);
+    // localStorage cache key for the responder's hybrid keypair.
+    _hybridStorageKey() {
+      return 'fibemate_rust_hybrid_' + (localStorage.getItem('fk_uid') || 'default');
     },
 
+    /**
+     * Lazily create (and cache) our hybrid responder keypair, then return
+     * the parts that must ride along in the pre-key bundle.
+     *
+     * @param {'classic'|'hybrid'} [mode='hybrid']
+     * @returns {Promise<{keyId, bundleHex, mode}>}
+     */
+    async ensureHybridPreKey(mode) {
+      if (!_initialized) await this.init();
+      const bridge = _getRatchetBridge();
+      const cacheKey = this._hybridStorageKey();
+      let cached = null;
+      try { cached = JSON.parse(localStorage.getItem(cacheKey)); } catch (e) { cached = null; }
+      if (cached && cached.keyId && cached.bundleHex) {
+        return cached;
+      }
+      const kg = await bridge.hybridKeygen(mode || 'hybrid');
+      const entry = { keyId: kg.keyId, bundleHex: kg.bundle, mode: kg.mode, createdAt: Date.now() };
+      try { localStorage.setItem(cacheKey, JSON.stringify(entry)); } catch (e) { /* ignore */ }
+      console.log('[DR Adapter] Hybrid pre-key ready (' + entry.mode + ') key_id=' + entry.keyId);
+      return entry;
+    },
+
+    /**
+     * Initiate a hybrid (ML-KEM-768 + X25519) session toward a peer whose
+     * bundle carries a hybrid bundle.  Falls back to classical X3DH when the
+     * peer has not advertised a hybrid bundle.
+     *
+     * @param {string} peerId
+     * @param {object} bundle — pre-key bundle (may carry _hybridKeyId/_hybridBundleHex)
+     * @returns {Promise<{initialMessage, sessionEstablished, hybridSession}>}
+     */
+    async initiateHybridSession(peerId, bundle) {
+      if (!_initialized) await this.init();
+      const bridge = _getRatchetBridge();
+      if (!bridge) {
+        throw new Error('[DR Adapter] Rust DR backend not available — Tauri required');
+      }
+
+      const peerHybridHex = bundle && (bundle._hybridBundleHex || bundle.hybridBundleHex);
+      if (!peerHybridHex) {
+        console.log('[DR Adapter] Peer has no hybrid bundle — falling back to classical X3DH');
+        return this.initiateSession(peerId, bundle);
+      }
+
+      const currentUserId = localStorage.getItem('fk_uid') || 'default';
+      if (currentUserId !== _currentUserId) {
+        _sessionMap.clear();
+        _identityBundles = {};
+        _currentUserId = currentUserId;
+      }
+      const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
+      const myId = localStorage.getItem(identityKey);
+      if (!myId) throw new Error('No identity generated — call getMyPreKeyBundle() first');
+
+      console.log('[DR Adapter] Hybrid PQ session initiate with ' + peerId + ' (X25519 + ML-KEM-768)');
+      const pq = await bridge.initiateHybridPQSession(peerId, peerHybridHex);
+
+      _sessionMap.set(peerId, {
+        sessionId: pq.sessionId,
+        identityId: myId,
+        version: DR_VERSION,
+        hybrid: true,
+        pqMode: 'x25519+mlkem768',
+        createdAt: Date.now()
+      });
+      _saveSessionMap();
+
+      return {
+        initialMessage: {
+          type: 'hybrid_init_rust',
+          version: DR_VERSION,
+          protocol: DR_PROTOCOL,
+          hybridEnc: pq.enc,
+          drPublicKey: pq.ourPublicKeyHex,
+          hybridBundleId: bundle._hybridKeyId || null
+        },
+        sessionEstablished: true,
+        rustSession: true,
+        hybridSession: true
+      };
+    },
+
+    /**
+     * Receive a hybrid session (Bob side).  Handles Alice's hybrid_init_rust
+     * using our cached hybrid keypair.  Falls back to classical X3DH for any
+     * other message shape.
+     *
+     * @param {string} peerId — initiator's user ID
+     * @param {object} aliceInit — Alice's hybrid_init_rust (or legacy init)
+     */
     async receiveHybridSession(peerId, aliceInit) {
-      // TODO: After dr_init supports two ss_ids, combine X3DH + ML-KEM
-      return this.receiveSession(peerId, aliceInit);
+      if (!_initialized) await this.init();
+      if (!aliceInit || aliceInit.type !== 'hybrid_init_rust') {
+        return this.receiveSession(peerId, aliceInit);
+      }
+
+      const bridge = _getRatchetBridge();
+      if (!bridge) throw new Error('[DR Adapter] Rust DR backend not available');
+
+      const cacheKey = this._hybridStorageKey();
+      let cached = null;
+      try { cached = JSON.parse(localStorage.getItem(cacheKey)); } catch (e) { cached = null; }
+      if (!cached || !cached.keyId) {
+        throw new Error('[DR Adapter] No hybrid pre-key cached — call ensureHybridPreKey() before accepting PQ sessions');
+      }
+
+      console.log('[DR Adapter] Hybrid PQ session accept from ' + peerId + ' (key_id=' + cached.keyId + ')');
+      const dr = await bridge.acceptHybridSession(peerId, cached.keyId, aliceInit.hybridEnc);
+
+      if (aliceInit.drPublicKey) {
+        await bridge.setPeerKey(dr.sessionId, aliceInit.drPublicKey);
+      }
+
+      const currentUserId = localStorage.getItem('fk_uid') || 'default';
+      const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
+      const myId = localStorage.getItem(identityKey) || null;
+      _sessionMap.set(peerId, {
+        sessionId: dr.sessionId,
+        identityId: myId,
+        version: DR_VERSION,
+        hybrid: true,
+        pqMode: 'x25519+mlkem768',
+        createdAt: Date.now()
+      });
+      _saveSessionMap();
+
+      return {
+        responseMessage: {
+          type: 'hybrid_accept_rust',
+          version: DR_VERSION,
+          protocol: DR_PROTOCOL,
+          drPublicKey: dr.ourPublicKeyHex
+        },
+        sessionEstablished: true,
+        sessionReady: true,
+        rustSession: true,
+        hybridSession: true
+      };
     },
 
   };
