@@ -379,16 +379,15 @@ const E2EEDisplay = (() => {
       return;
     }
 
-    // 检查后量子
-    if (PQ && PQ.isAvailable?.()) {
-      const securityStatus = await Crypto.getSecurityStatus?.(peerId);
-      _setStatus(bar, icon, text, detail, STATUS.POST_QUANTUM, `ML-KEM-768 · ${securityStatus?.messagesSent || 0} msgs`);
+    // 检查后量子（会话级 hybrid 优先，全局 PQ 能力兑底）
+    const securityStatus = await Crypto.getSecurityStatus?.(peerId);
+    if (securityStatus?.hybrid || securityStatus?.pqMode || (PQ && PQ.isAvailable?.())) {
+      _setStatus(bar, icon, text, detail, STATUS.POST_QUANTUM, `ML-KEM-768 · ${Number(securityStatus?.messagesSent) || 0} msgs`);
       return;
     }
 
     // 标准加密
-    const securityStatus = await Crypto.getSecurityStatus?.(peerId);
-    _setStatus(bar, icon, text, detail, STATUS.ENCRYPTED, `${securityStatus?.curve || 'P-256'} · ${(securityStatus?.messagesSent || 0) + (securityStatus?.messagesReceived || 0)} msgs`);
+    _setStatus(bar, icon, text, detail, STATUS.ENCRYPTED, `${securityStatus?.curve || 'P-256'} · ${(Number(securityStatus?.messagesSent) || 0) + (Number(securityStatus?.messagesReceived) || 0)} msgs`);
   }
 
   // ── 设置状态 ──
@@ -429,10 +428,15 @@ const E2EEDisplay = (() => {
     let e2eeStatus = STATUS.NONE;
     let protocolInfo = {};
     let safetyNumber = '—';
+    let pqActive = false;
 
     if (Crypto && await Crypto.hasSession(peerId)) {
       const sec = await Crypto.getSecurityStatus?.(peerId);
       protocolInfo = sec || {};
+
+      // 会话级 hybrid 判定优先，全局 PQ 能力兑底
+      const isHybridSession = !!(sec?.hybrid || sec?.pqMode);
+      pqActive = isHybridSession || !!(PQ && PQ.isAvailable?.());
 
       // Safety Number
       if (Crypto.getSessionFingerprint) {
@@ -445,7 +449,7 @@ const E2EEDisplay = (() => {
 
       if (Quantum && Quantum.isEnabled?.()) {
         e2eeStatus = STATUS.QUANTUM_ENHANCED;
-      } else if (PQ && PQ.isAvailable?.()) {
+      } else if (pqActive) {
         e2eeStatus = STATUS.POST_QUANTUM;
       } else {
         e2eeStatus = STATUS.ENCRYPTED;
@@ -471,7 +475,7 @@ const E2EEDisplay = (() => {
       </div>
       <div class="e2ee-info-row">
         <span class="e2ee-info-label">Key Exchange</span>
-        <span class="e2ee-info-value secure">${PQ?.isAvailable?.() ? 'X3DH + ML-KEM-768' : 'X3DH (4-DH)'}</span>
+        <span class="e2ee-info-value secure">${pqActive ? 'X25519 + ML-KEM-768' : 'X3DH (4-DH)'}</span>
       </div>
       <div class="e2ee-info-row">
         <span class="e2ee-info-label">Symmetric Cipher</span>
@@ -483,7 +487,7 @@ const E2EEDisplay = (() => {
       </div>
       <div class="e2ee-info-row">
         <span class="e2ee-info-label">Messages</span>
-        <span class="e2ee-info-value">${(protocolInfo.messagesSent || 0) + (protocolInfo.messagesReceived || 0)} sent & received</span>
+        <span class="e2ee-info-value">${(Number(protocolInfo.messagesSent) || 0) + (Number(protocolInfo.messagesReceived) || 0)} sent & received</span>
       </div>
       ${Quantum && Quantum.isEnabled?.() ? `
       <div class="e2ee-info-row">
@@ -509,7 +513,7 @@ const E2EEDisplay = (() => {
         </div>
         <div class="e2ee-protocol-layer">
           <span class="e2ee-protocol-layer-name">ML-KEM-768 (PQ)</span>
-          <span class="e2ee-protocol-layer-status ${PQ?.isAvailable?.() ? 'active' : 'inactive'}">${PQ?.isAvailable?.() ? 'ACTIVE' : 'INACTIVE'}</span>
+          <span class="e2ee-protocol-layer-status ${pqActive ? 'active' : 'inactive'}">${pqActive ? 'ACTIVE' : 'INACTIVE'}</span>
         </div>
         <div class="e2ee-protocol-layer">
           <span class="e2ee-protocol-layer-name">Quantum Enhanced</span>

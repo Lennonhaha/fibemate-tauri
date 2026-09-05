@@ -665,10 +665,14 @@
     async getSessionStatus(peerId) {
       const sessionInfo = _sessionMap.get(peerId);
       if (sessionInfo && sessionInfo.version >= DR_VERSION) {
+        const isHybrid = !!sessionInfo.hybrid;
         return {
           secured: true,
           protocol: DR_PROTOCOL,
-          curve: 'X25519',
+          curve: isHybrid ? 'X25519 + ML-KEM-768' : 'X25519',
+          pq: isHybrid ? 'ml-kem-768' : null,
+          pqMode: isHybrid ? (sessionInfo.pqMode || 'x25519+mlkem768') : null,
+          hybrid: isHybrid,
           kdf: 'HKDF-SHA-256',
           aead: 'AES-256-GCM',
           forwardSecrecy: true,

@@ -23,10 +23,14 @@ async function openChat(userId, name) {
     // 显示新版 E2EE 状态栏
     if (e2eeBar) {
       e2eeBar.style.display = 'inline-flex';
-      e2eeBar.className = 'e2ee-status-bar secure';
-      e2eeIcon.textContent = '🔒';
-      e2eeText.textContent = 'E2EE';
-      e2eeDetail.textContent = `${status.curve} · ${status.messagesSent + status.messagesReceived} msgs`;
+      const isPQ = !!(status.hybrid || status.pqMode);
+      e2eeBar.className = isPQ ? 'e2ee-status-bar pq' : 'e2ee-status-bar secure';
+      e2eeIcon.textContent = isPQ ? '🔐' : '🔒';
+      e2eeText.textContent = isPQ ? 'PQ-E2EE' : 'E2EE';
+      const sent = Number(status.messagesSent) || 0;
+      const received = Number(status.messagesReceived) || 0;
+      const msgs = (sent + received) > 0 ? ` · ${sent + received} msgs` : '';
+      e2eeDetail.textContent = `${status.curve || 'X25519'}${msgs}`;
     }
   } else if (Crypto) {
     document.getElementById('chatPeerStatus').textContent = 'Encrypted';
