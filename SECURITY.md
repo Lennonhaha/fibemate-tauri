@@ -14,7 +14,7 @@ FIBEMATE Tauri is a **research prototype** of post-quantum secure messaging. It 
 If you discover a security vulnerability:
 
 1. **Do NOT open a public issue.**
-2. Email: **security@fibemate.com** (PGP key available on request)
+2. Email: **security@fibemate.net** (PGP key available on request)
 3. Include: description, reproduction steps, impact assessment
 4. Response time: within 72 hours
 
@@ -53,7 +53,7 @@ If you discover a security vulnerability:
 ## Known Limitations
 
 - **No formal security audit** — research prototype only
-- **Double Ratchet has JS bridge** — not fully Rust-native yet
+- **Hybrid PQ Double Ratchet** — X25519 + ML-KEM-768 key exchange, Rust-native core (wasm/JS bridge removed in v3)
 - **No FIPS 140-3 validation** — uses pure Rust implementations
 - **Windows-only** — macOS/Linux not tested
 - **No P2P transport** — WebRTC planned but not implemented
