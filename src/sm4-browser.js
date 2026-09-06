@@ -1,4 +1,4 @@
-﻿/**
+/**
  * FIBEMATE SM4 Block Cipher Browser Edition
  * ==========================================
  * SM4-ECB + SM4-GCM (GB/T 32907-2016)

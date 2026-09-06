@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Schnorr Prover v2 - Correct Elliptic Curve Implementation
  * Uses P-256 elliptic curve point operations (not modular exponentiation)
  */
