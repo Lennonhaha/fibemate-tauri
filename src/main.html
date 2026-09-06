@@ -8,13 +8,6 @@
   <!-- Tauri Bridge: polyfills window.electronAPI for native desktop features -->
   <script src="tauri-bridge.js"></script>
   <!-- double-ratchet.js + message-crypto-v2.js removed in v3: all DR crypto in Rust -->
-  <!--
-    P0 FIX 2026-05-29: The Rust/WASM pq-wasm/lib.rs contains a PLACEHOLDER
-    implementation (random bytes + SHA-256, NOT real Kyber). Do NOT register
-    window.MLKEM768 from WASM — instead, the real JS time-domain implementation
-    (ml-kem-768.js + ml-kem-768-wrapper.js) must take priority.
-    When pq-wasm is rebuilt with real pqc_kyber, restore the WASM registration.
-  -->
   <!-- Real ML-KEM-768: Pure JS time-domain implementation (NTT-free Kyber) -->
   <script src="crypto/crypto/ml-kem-768.js"></script>
   <script src="crypto/crypto/ml-kem-768-wrapper.js"></script>
