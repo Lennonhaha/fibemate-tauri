@@ -24,10 +24,7 @@ let BurnAfterRead, ScreenshotDetector, AntiScreenshot, KeyRotation;
 let DeviceBinding, OfflineMessageStorage, EncryptedFileTransfer, SafetyNumbers;
 
 async function initPrivacyLayers() {
-    // Layer 1: Double Ratchet (already exists)
-    if (typeof DoubleRatchet === 'undefined') {
-        // Will be loaded from double-ratchet.js
-    }
+    // Layer 1: Double Ratchet (Rust-native via RatchetBridge, no JS fallback since v3)
     
     // Layer 2: ZK Authentication (already exists)
     if (typeof ZKAuth === 'undefined') {
