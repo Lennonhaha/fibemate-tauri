@@ -25,6 +25,27 @@ If you discover a security vulnerability:
 - **Day 3-30**: Fix development + testing
 - **Day 30**: Public disclosure (if fix available)
 
+## Bug Bounty
+
+FIBEMATE Tauri is a single-maintainer research prototype without funding. We **do not** operate a paid bounty program. We recognize good-faith security research as follows:
+
+| Severity | Reward |
+|----------|--------|
+| Critical (private key recovery, plaintext disclosure, KEM/DR break) | Public acknowledgment + named in `Acknowledgments` |
+| High (authentication bypass, key confusion, downgrade) | Public acknowledgment + named in `Acknowledgments` |
+| Medium (timing leak, non-catastrophic protocol flaw) | Named in `Acknowledgments` |
+| Low (documentation error, hardening suggestion) | Noted in release notes where applicable |
+
+**Eligibility**:
+- Report via `security@fibemate.net` (not a public issue)
+- Provide a reproducible proof-of-concept or clear impact assessment
+- Do not exfiltrate data, disrupt services, or access data beyond what is needed to demonstrate the issue
+- First reporter of a distinct issue receives the acknowledgment
+
+**Non-eligibility**: issues in third-party dependencies (report upstream), social engineering, physical access, or denial-of-service without a cryptographic component.
+
+This is a **recognition-only** program and may evolve into a paid program if the project later receives grant or sponsorship funding.
+
 ## Scope
 
 **In scope:**
