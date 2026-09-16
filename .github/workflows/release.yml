@@ -1,0 +1,78 @@
+# FIBEMATE (tauri) Release — 校验和 + 签名
+#
+# 触发: 手动 (workflow_dispatch) 或 tag push v*
+# 覆盖:
+#   - cargo test（PQC 后端快速回归）
+#   - 源码 + Cargo.lock 校验和（可复现构建基线）
+#   - cosign keyless 签名（Sigstore 透明日志）
+
+name: Release
+permissions:
+  contents: read
+  id-token: write  # cosign keyless signing (GitHub OIDC)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+
+  release-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Rust tests (PQC crypto backend)
+        working-directory: src-tauri
+        run: cargo test --all-features
+
+      - name: Generate SHA256 manifest
+        run: |
+          find . -type f \
+            ! -path './.git/*' \
+            ! -path './node_modules/*' \
+            ! -path './src-tauri/target/*' \
+            ! -path './src-tauri/.cargo-audit-db/*' \
+            ! -path './_fix-backup*' \
+            ! -name '*.log' \
+            | sort | xargs sha256sum > RELEASE_CHECKSUMS.txt 2>/dev/null
+          cat RELEASE_CHECKSUMS.txt | head -5
+          echo "... $(wc -l < RELEASE_CHECKSUMS.txt) files checksummed"
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign release checksums (keyless)
+        run: |
+          cosign sign-blob --yes \
+            --output-signature RELEASE_CHECKSUMS.sig \
+            --output-certificate RELEASE_CHECKSUMS.pem \
+            --bundle RELEASE_CHECKSUMS.bundle \
+            RELEASE_CHECKSUMS.txt
+
+      - name: Upload release checksums + signature
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-checksums
+          path: |
+            RELEASE_CHECKSUMS.txt
+            RELEASE_CHECKSUMS.sig
+            RELEASE_CHECKSUMS.pem
+            RELEASE_CHECKSUMS.bundle
