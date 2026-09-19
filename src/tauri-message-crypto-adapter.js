@@ -385,7 +385,7 @@
         }
         _sessionMap.set(peerId, { sessionId: dr.sessionId, identityId: myId, version: DR_VERSION, createdAt: Date.now() });
         _saveSessionMap();
-        console.log('[DR Adapter] Created session from x3dh_accept_rust for ' + safeLog(peerId));
+        console.log('[DR Adapter] Created session from x3dh_accept_rust for ' + encodeURIComponent(JSON.stringify(peerId)));
         return { confirmed: true, sessionEstablished: true, sessionReady: true, rustSession: true };
       }
 
@@ -393,7 +393,7 @@
       if (initMessage.drPublicKey) {
         await bridge.setPeerKey(sessionInfo.sessionId, initMessage.drPublicKey);
       }
-      console.log('[DR Adapter] Session confirmed (x3dh_accept_rust) for ' + safeLog(peerId));
+      console.log('[DR Adapter] Session confirmed (x3dh_accept_rust) for ' + encodeURIComponent(JSON.stringify(peerId)));
       return { confirmed: true, sessionEstablished: true, sessionReady: true, rustSession: true };
     },
 
@@ -435,7 +435,7 @@
           }
         }
         const ourSendKey = await bridge.getSendKey(existing.sessionId);
-        console.log(`[DR Adapter] Reusing existing session ${safeLog(existing.sessionId)} for ${safeLog(peerId)}`);
+        console.log(`[DR Adapter] Reusing existing session ${encodeURIComponent(JSON.stringify(existing.sessionId))} for ${encodeURIComponent(JSON.stringify(peerId))}`);
         return {
           responseMessage: {
             type: 'x3dh_accept_rust',
@@ -468,7 +468,7 @@
       const peerIdentityPkHex = initMessage.identityKey;
       const peerEphemeralPkHex = initMessage.ephemeralKey;
 
-      console.log(`[DR Adapter] X3DH respond to ${safeLog(peerId)} (X25519)`);
+      console.log(`[DR Adapter] X3DH respond to ${encodeURIComponent(JSON.stringify(peerId))} (X25519)`);
 
       // X3DH responder
       const x3dh = await bridge.x3dhRespond(myId, peerIdentityPkHex, peerEphemeralPkHex);
@@ -598,26 +598,26 @@
           const errMsg = (e && e.message) ? e.message : (typeof e === 'string' ? e : JSON.stringify(e));
           // MESSAGE_DROP = duplicate / replay → silently drop, don't show error to user
           if (errMsg === 'MESSAGE_DROP') {
-            console.debug(`[DR Adapter] Silent-drop duplicate message for ${safeLog(peerId)}`);
+            console.debug(`[DR Adapter] Silent-drop duplicate message for ${encodeURIComponent(JSON.stringify(peerId))}`);
             return null;
           }
           // 解密失败 → 自动重试一次（可能对方也刚做了 session 恢复）
-          console.warn(`[DR Adapter] Decrypt failed (first attempt) for ${safeLog(peerId)}: ${safeLog(errMsg)}`);
+          console.warn(`[DR Adapter] Decrypt failed (first attempt) for ${encodeURIComponent(JSON.stringify(peerId))}: ${encodeURIComponent(JSON.stringify(errMsg))}`);
           try {
             const retryResult = await bridge.decrypt(sessionInfo.sessionId, envelope.messageJson);
             if (retryResult === null) {
-              console.debug(`[DR Adapter] Silent-drop on retry for ${safeLog(peerId)}`);
+              console.debug(`[DR Adapter] Silent-drop on retry for ${encodeURIComponent(JSON.stringify(peerId))}`);
               return null;
             }
-            console.log(`[DR Adapter] Decrypt succeeded on retry for ${safeLog(peerId)}`);
+            console.log(`[DR Adapter] Decrypt succeeded on retry for ${encodeURIComponent(JSON.stringify(peerId))}`);
             return retryResult;
           } catch (retryErr) {
             const retryMsg = (retryErr && retryErr.message) ? retryErr.message : (typeof retryErr === 'string' ? retryErr : JSON.stringify(retryErr));
             if (retryMsg === 'MESSAGE_DROP') {
-              console.debug(`[DR Adapter] Silent-drop on retry for ${safeLog(peerId)}`);
+              console.debug(`[DR Adapter] Silent-drop on retry for ${encodeURIComponent(JSON.stringify(peerId))}`);
               return null;
             }
-            console.error(`[DR Adapter] Decrypt failed on retry for ${safeLog(peerId)}: ${safeLog(retryMsg)}`);
+            console.error(`[DR Adapter] Decrypt failed on retry for ${encodeURIComponent(JSON.stringify(peerId))}: ${encodeURIComponent(JSON.stringify(retryMsg))}`);
             throw new Error('Decrypt failed: ' + errMsg);
           }
         }
@@ -849,7 +849,7 @@
         throw new Error('[DR Adapter] No hybrid pre-key cached — call ensureHybridPreKey() before accepting PQ sessions');
       }
 
-      console.log('[DR Adapter] Hybrid PQ session accept from ' + safeLog(peerId) + ' (key_id=' + safeLog(cached.keyId) + ')');
+      console.log('[DR Adapter] Hybrid PQ session accept from ' + encodeURIComponent(JSON.stringify(peerId)) + ' (key_id=' + encodeURIComponent(JSON.stringify(cached.keyId)) + ')');
       const dr = await bridge.acceptHybridSession(peerId, cached.keyId, aliceInit.hybridEnc);
 
       if (aliceInit.drPublicKey) {
