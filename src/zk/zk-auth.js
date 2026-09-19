@@ -110,16 +110,27 @@ class ZKAuth {
     const data = username + ':' + password;
     const encoder = new TextEncoder();
     
+    // Salted iterative key stretching (PBKDF2-like) instead of a single SHA-256 pass.
+    const SALT = 'fibemate-zk-auth-v1:' + username;
+    const ITER = 120000;
     if (typeof require !== 'undefined') {
       const crypto = require('crypto');
-      const hash = crypto.createHash('sha256').update(data).digest('hex');
-      return BigInt('0x' + hash) % this.schnorr.curve.n;
+      const dk = crypto.pbkdf2Sync(data, SALT, ITER, 32, 'sha256');
+      return BigInt('0x' + dk.toString('hex')) % this.schnorr.curve.n;
     }
     
-    const hash = await crypto.subtle.digest('SHA-256', encoder.encode(data));
-    const hashHex = Array.from(new Uint8Array(hash))
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
+    // Browser branch: use the standard Web Crypto PBKDF2 KDF (constant-time,
+    // spec-mandated — never a hand-rolled SHA-256 loop).
+    const subtle = (typeof crypto !== 'undefined' && crypto.subtle) ? crypto.subtle : globalThis.crypto.subtle;
+    // Must match the node branch: PBKDF2 password input is `data` (= username:password).
+    const baseKey = await subtle.importKey(
+      'raw', encoder.encode(data), 'PBKDF2', false, ['deriveBits']
+    );
+    const dk = await subtle.deriveBits(
+      { name: 'PBKDF2', salt: encoder.encode(SALT), iterations: ITER, hash: 'SHA-256' },
+      baseKey, 256
+    );
+    const hashHex = Array.from(new Uint8Array(dk)).map(b => b.toString(16).padStart(2, '0')).join('');
     return BigInt('0x' + hashHex) % this.schnorr.curve.n;
   }
 

@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
 
       - name: Install Linux system dependencies
         run: |
@@ -57,7 +57,7 @@ jobs:
           echo "... $(wc -l < RELEASE_CHECKSUMS.txt) files checksummed"
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@f713795cb21599bc4e5c4b58cbad1da852d7eeb9
 
       - name: Sign release checksums (keyless)
         run: |

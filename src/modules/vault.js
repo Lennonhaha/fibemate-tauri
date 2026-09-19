@@ -316,9 +316,10 @@ async function previewFile(idx) {
     const info = document.createElement('div');
     info.innerHTML =
       '<div style="font-size:48px;text-align:center;margin-bottom:16px">' + (file.type?.startsWith('video/') ? '\uD83C\uDFAC' : file.type?.startsWith('audio/') ? '\uD83C\uDFB5' : '\uD83D\uDCC4') + '</div>' +
+      '<div class="file-type">' + escapeHtml(file.type || 'Unknown') + '</div>' +
       '<h3 style="text-align:center;word-break:break-all">' + escapeHtml(file.name) + '</h3>' +
       '<div style="margin-top:16px;font-size:13px;color:var(--text-secondary);line-height:1.8">' +
-        '<div>Type: ' + (file.type || 'Unknown') + '</div>' +
+        '<div>Type: ' + escapeHtml(file.type || 'Unknown') + '</div>' +
         '<div>Size: ' + (file.size ? (file.size / 1024).toFixed(1) + ' KB' : 'Unknown') + '</div>' +
         '<div>Uploaded: ' + (file.uploadedAt ? new Date(file.uploadedAt).toLocaleString() : 'Unknown') + '</div>' +
         '<div>Encryption: AES-256 \u2705</div>' +
