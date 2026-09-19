@@ -160,7 +160,7 @@ function connectWebSocket() {
                 console.debug('[WS v6] Skipping duplicate message from', msg.from);
                 return;
               }
-              console.log(`[WS v6] E2EE message decrypted (protocol=${safeLog(envelope.protocol)})`);
+              console.log(`[WS v6] E2EE message decrypted (protocol=${encodeURIComponent(JSON.stringify(envelope.protocol))})`);
             } catch (decryptErr) {
               // 断裂点 #3 修复：不静默降级，明确告警
               console.error('[WS v6] DECRYPT FAILED:', decryptErr && decryptErr.message ? decryptErr.message : decryptErr);
@@ -211,7 +211,7 @@ function connectWebSocket() {
               const acceptRust = msg.payload.responseMessage || msg.payload;
               if (acceptRust && acceptRust.type === 'x3dh_accept_rust') {
                 const result = await Crypto.receiveSession(msg.from, acceptRust);
-                console.log('[WS v9] Session confirmed from x3dh_accept_rust (from ' + safeLog(msg.from) + ')');
+                console.log('[WS v9] Session confirmed from x3dh_accept_rust (from ' + encodeURIComponent(JSON.stringify(msg.from)) + ')');
               }
             } catch (e) {
               console.error('[WS v9] receiveSession failed:', safeLog(e.message));

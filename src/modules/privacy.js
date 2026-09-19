@@ -543,7 +543,7 @@ async function handleX3DHInitMessage(msg) {
     
     // v6: Check for hybrid PQ + X3DH init
     if (envelope.pqCiphertext && envelope.kemPublicKey && Crypto.receiveHybridSession) {
-      console.log('[X3DH v6] Processing hybrid PQ+ECDH session init from', safeLog(msg.from));
+      console.log('[X3DH v6] Processing hybrid PQ+ECDH session init from', encodeURIComponent(JSON.stringify(msg.from)));
       const result = await Crypto.receiveHybridSession(msg.from, envelope);
       
       if (result.sessionReady || result.sessionEstablished) {
