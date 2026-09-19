@@ -76,7 +76,10 @@ let state = { convId: null, userIds: {}, polling: false };
 function log(msg, cls) {
   const el = document.getElementById('log-panel');
   const t = new Date().toLocaleTimeString('zh-CN', { hour12: false });
-  el.innerHTML += `<span class="${cls||''}">[${t}] ${msg}</span>\n`;
+  const s = document.createElement('span');
+  if (cls) s.className = cls || '';
+  s.textContent = `[${t}] ${msg}\n`;
+  el.appendChild(s);
   el.scrollTop = el.scrollHeight;
 }
 
@@ -101,7 +104,12 @@ function showToast(panel, msg) {
   const list = document.getElementById('msgs-'+panel);
   const div = document.createElement('div');
   div.className = 'msg recv';
-  div.innerHTML = `<div class="body" style="color:#d29922;font-style:italic">${msg}</div>`;
+  const body = document.createElement('div');
+  body.className = 'body';
+  body.style.color = '#d29922';
+  body.style.fontStyle = 'italic';
+  body.textContent = msg;
+  div.appendChild(body);
   list.appendChild(div);
   list.scrollTop = list.scrollHeight;
 }
