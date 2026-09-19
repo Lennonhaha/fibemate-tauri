@@ -82,7 +82,7 @@ function connectWebSocket() {
         const raw = _wsUnpad(e.data);
         if (raw == null) return; // cover traffic 丢弃
         const msg = JSON.parse(raw);
-        console.log('[WS v4] Received:', safeLog(msg.type));
+        console.log('[WS v4] Received:', String(msg.type).replace(/[\r\n]/g, " "));
 
         const Crypto = typeof MessageCryptoV2 !== 'undefined' ? MessageCryptoV2 : MessageCrypto;
 
@@ -103,7 +103,7 @@ function connectWebSocket() {
               }
             }
           } catch (initErr) {
-            console.error('[WS v8] Global X3DH receiveSession failed:', safeLog(initErr && initErr.message));
+            console.error('[WS v8] Global X3DH receiveSession failed:', String(initErr && initErr.message).replace(/[\r\n]/g, " "));
           }
         }
 
@@ -120,7 +120,7 @@ function connectWebSocket() {
                 try {
                   await Crypto.receiveSession(msg.from, wire.initMessage);
                 } catch (initErr) {
-                  console.error('[WS v7] X3DH receiveSession failed:', safeLog(initErr.message));
+                  console.error('[WS v7] X3DH receiveSession failed:', String(initErr.message).replace(/[\r\n]/g, " "));
                 }
                 wire = wire.message; // 取真正加密的消息
               }
@@ -160,7 +160,7 @@ function connectWebSocket() {
                 console.debug('[WS v6] Skipping duplicate message from', msg.from);
                 return;
               }
-              console.log(`[WS v6] E2EE message decrypted (protocol=${safeLog(envelope.protocol)})`);
+              console.log(`[WS v6] E2EE message decrypted (protocol=${String(envelope.protocol).replace(/[\r\n]/g, " ")})`);
             } catch (decryptErr) {
               // 断裂点 #3 修复：不静默降级，明确告警
               console.error('[WS v6] DECRYPT FAILED:', decryptErr && decryptErr.message ? decryptErr.message : decryptErr);
@@ -211,10 +211,10 @@ function connectWebSocket() {
               const acceptRust = msg.payload.responseMessage || msg.payload;
               if (acceptRust && acceptRust.type === 'x3dh_accept_rust') {
                 const result = await Crypto.receiveSession(msg.from, acceptRust);
-                console.log('[WS v9] Session confirmed from x3dh_accept_rust (from ' + safeLog(msg.from) + ')');
+                console.log('[WS v9] Session confirmed from x3dh_accept_rust (from ' + String(msg.from).replace(/[\r\n]/g, " ") + ')');
               }
             } catch (e) {
-              console.error('[WS v9] receiveSession failed:', safeLog(e.message));
+              console.error('[WS v9] receiveSession failed:', String(e.message).replace(/[\r\n]/g, " "));
             }
           }
         } else if (msg.type === 'message_recall') {
@@ -227,7 +227,7 @@ function connectWebSocket() {
           // 已读回执
           document.dispatchEvent(new CustomEvent('ws-read-receipt', { detail: msg }));
         } else if (msg.type === 'offline_messages') {
-          console.log('[WS v4] Offline messages:', safeLog(msg.count));
+          console.log('[WS v4] Offline messages:', String(msg.count).replace(/[\r\n]/g, " "));
         }
       } catch (err) {
         console.error('[WS v4] Parse error:', err);
