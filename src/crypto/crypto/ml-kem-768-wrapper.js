@@ -1,10 +1,16 @@
 /**
  * ML-KEM-768 Unified Wrapper
  * ───────────────────────────────────────────
- * Primary:  WASM (pqc_kyber v0.7.1) — ~200× faster, FIPS 203 compliant
- * Fallback: Pure JS time-domain — reference implementation
+ * Implementation: Pure JS time-domain reference implementation
+ *                  (NTT-free Kyber, defined in ml-kem-768.js as window.MLKEM768).
  *
- * API (unchanged from original wrapper):
+ * NOTE: The experimental WASM engine (pqc_kyber v0.7.1, KyberSlash-affected,
+ * abandoned upstream) was removed. The production desktop path uses the Rust
+ * `rustpq::ml_kem::mlkem768` backend via tauri-crypto-bridge and does NOT
+ * depend on this wrapper. This wrapper remains only as a non-Tauri JS fallback
+ * for the dev/test pages.
+ *
+ * API:
  *   MLKEM768.init()           → Promise<void>
  *   MLKEM768.keygen()         → { publicKey, secretKey }
  *   MLKEM768.encaps(pk)       → { ciphertext, sharedSecret }
@@ -13,38 +19,17 @@
  */
 
 // ============================================================
-// Capture pure JS implementation before we overwrite window.MLKEM768
+// Capture pure JS implementation (defined by ml-kem-768.js as window.MLKEM768)
 // ============================================================
 const _PureJS_MLKEM768 = typeof window !== 'undefined' ? window.MLKEM768 : undefined;
 
 // ============================================================
-// WASM loader — dynamic import + initSync (avoids file:// fetch issue)
-// ============================================================
-async function _loadWasmEngine() {
-  try {
-    // Dynamic import of wasm-bindgen glue code
-    const wasmModule = await import('./pq-wasm-pkg/fibemate_pq_wasm.js');
-
-    // Fetch WASM binary
-    const resp = await fetch('./pq-wasm-pkg/fibemate_pq_wasm_bg.wasm');
-    if (!resp.ok) throw new Error(`WASM fetch: HTTP ${resp.status}`);
-
-    const bytes = await resp.arrayBuffer();
-    wasmModule.initSync({ module: bytes });
-
-    return wasmModule;
-  } catch (e) {
-    throw e; // caller handles fallback
-  }
-}
-
-// ============================================================
-// Unified wrapper object
+// Unified wrapper object — pure JS only
 // ============================================================
 const MLKEM768Wrapper = {
   initialized: false,
-  _engine: null,       // 'wasm' | 'js'
-  _wasm: null,         // wasm-bindgen module reference
+  _engine: null,       // 'js'
+  _wasm: null,         // (unused — WASM engine removed)
   _initPromise: null,
 
   // ── init ──────────────────────────────────────────────────
@@ -53,25 +38,13 @@ const MLKEM768Wrapper = {
     if (this._initPromise) return this._initPromise;
 
     this._initPromise = (async () => {
-      // --- Stage 1: try WASM ---
-      try {
-        this._wasm = await _loadWasmEngine();
-        this._engine = 'wasm';
-        this.initialized = true;
-        console.log('[ML-KEM] ✅ WASM loaded (pqc_kyber v0.7.1, ~200× faster)');
-        return;
-      } catch (e) {
-        console.warn('[ML-KEM] WASM not available:', e.message);
-      }
-
-      // --- Stage 2: fall back to pure JS ---
       if (!_PureJS_MLKEM768) {
-        throw new Error('ML-KEM-768 not available — neither WASM nor pure JS loaded');
+        throw new Error('ML-KEM-768 not available — pure JS implementation (ml-kem-768.js) not loaded');
       }
 
       this._engine = 'js';
       this.initialized = true;
-      console.log('[ML-KEM] Using pure JS fallback');
+      console.log('[ML-KEM] Using pure JS implementation');
     })();
 
     return this._initPromise;
@@ -81,15 +54,6 @@ const MLKEM768Wrapper = {
   keygen() {
     if (!this.initialized) throw new Error('ML-KEM-768 not initialized');
 
-    if (this._engine === 'wasm') {
-      const kp = this._wasm.generateKeypair();
-      return {
-        publicKey: kp.public_key,
-        secretKey: kp.secret_key
-      };
-    }
-
-    // Pure JS fallback
     return _PureJS_MLKEM768.generateKeypair();
   },
 
@@ -97,15 +61,6 @@ const MLKEM768Wrapper = {
   encaps(publicKey) {
     if (!this.initialized) throw new Error('ML-KEM-768 not initialized');
 
-    if (this._engine === 'wasm') {
-      const result = this._wasm.encapsulate(publicKey);
-      return {
-        ciphertext: result.ciphertext,
-        sharedSecret: result.shared_secret
-      };
-    }
-
-    // Pure JS fallback
     const result = _PureJS_MLKEM768.encapsulate(publicKey);
     return {
       ciphertext: result.ciphertext,
@@ -117,11 +72,6 @@ const MLKEM768Wrapper = {
   decaps(secretKey, ciphertext) {
     if (!this.initialized) throw new Error('ML-KEM-768 not initialized');
 
-    if (this._engine === 'wasm') {
-      return this._wasm.decapsulate(secretKey, ciphertext);
-    }
-
-    // Pure JS fallback
     return _PureJS_MLKEM768.decapsulate(secretKey, ciphertext);
   },
 
@@ -129,11 +79,7 @@ const MLKEM768Wrapper = {
   hybridCombine(kemSecret, ecdhSecret) {
     if (!this.initialized) throw new Error('ML-KEM-768 not initialized');
 
-    if (this._engine === 'wasm' && this._wasm.hybridCombine) {
-      return this._wasm.hybridCombine(kemSecret, ecdhSecret);
-    }
-
-    console.warn('[ML-KEM] hybridCombine requires WASM engine; returning kemSecret as-is');
+    console.warn('[ML-KEM] hybridCombine is a no-op on the pure-JS path; returning kemSecret as-is');
     return kemSecret;
   },
 
@@ -141,8 +87,8 @@ const MLKEM768Wrapper = {
   getStatus() {
     return {
       initialized: this.initialized,
-      engine: this._engine || 'pending',
-      wasmAvailable: this._engine === 'wasm'
+      engine: this._engine || 'js',
+      wasmAvailable: false,  // WASM engine removed
     };
   }
 };
