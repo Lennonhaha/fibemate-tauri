@@ -422,8 +422,9 @@
           localStorage.setItem('fk_token', loginData.token);
           localStorage.setItem('fk_uid', loginData.userId);
           localStorage.setItem('fk_user_level', loginData.userLevel || '1');
-          localStorage.setItem('fk_phone', phone);
-          localStorage.setItem('fk_uname', phone);
+          // NOTE: phone is PII — do NOT persist to localStorage (clear-text storage).
+          // fk_uname is load-bearing (used by settings/main/two-factor), set from server displayName/username instead.
+          localStorage.setItem('fk_uname', loginData.displayName || loginData.username || '');
           showToast('\u767B\u5F55\u6210\u529F\uFF0C\u6B63\u5728\u8DF3\u8F6C...', 'success');
           setTimeout(() => { window.location.href = 'main.html'; }, 500);
         } else {

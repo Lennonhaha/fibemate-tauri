@@ -23,6 +23,11 @@ class ReadReceiptSystem {
 
   // 发送已读回执到服务器
   async sendReadReceipt(messageId) {
+    // Guard against request forgery: only allow sanctioned message id shapes in the URL.
+    if (typeof messageId !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/.test(messageId)) {
+      console.warn('[ReadReceipt] Refused read receipt for unsafe messageId');
+      return;
+    }
     try {
       const token = localStorage.getItem('fk_token');
       await fetch(`${API_BASE}/messages/${messageId}/read`, {

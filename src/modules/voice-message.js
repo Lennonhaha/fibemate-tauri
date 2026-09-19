@@ -571,7 +571,7 @@ const VoiceMessage = (() => {
 
     msg.innerHTML = `
       <div class="msg-bubble">
-        <div class="voice-message" data-audio-url="${audioUrl}" data-duration="${duration}">
+        <div class="voice-message" data-audio-url="${escapeHtml(audioUrl)}" data-duration="${escapeHtml(String(duration))}">
           <div class="voice-play-btn">
             <svg viewBox="0 0 24 24" fill="currentColor" stroke="none">
               <polygon points="5,3 19,12 5,21"/>
@@ -692,7 +692,7 @@ const VoiceMessage = (() => {
             await Crypto.receiveSession(msg.from, envelope.initMessage);
             console.log('[VoiceMsg] X3DH session established from init message');
           } catch (initErr) {
-            console.error('[VoiceMsg] receiveSession failed:', initErr.message);
+            console.error('[VoiceMsg] receiveSession failed:', safeLog(initErr.message));
           }
           envelope = envelope.message;
         }
@@ -700,7 +700,7 @@ const VoiceMessage = (() => {
         // 关键修复：decrypt 是 async，必须 await，否则 audioData 是 Promise 对象
         audioData = await Crypto.decrypt(msg.from, envelope);
       } catch (e) {
-        console.error('[VoiceMsg] Decrypt failed:', e.message);
+        console.error('[VoiceMsg] Decrypt failed:', safeLog(e.message));
         appendMessage(false, '⚠️ 语音解密失败', msg.createdAt || Date.now());
         return;
       }
