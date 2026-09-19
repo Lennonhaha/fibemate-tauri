@@ -80,6 +80,10 @@ function handleAPI(req, res, url, body) {
   const getMsgs = url.match(/^\/api\/conversations\/([^/]+)\/messages$/);
   if (req.method === 'GET' && getMsgs) {
     const convId = getMsgs[1];
+    if (!safeKey(convId)) {
+      sendJSON(res, 400, { error: 'invalid conversationId' });
+      return;
+    }
     const msgs = messages[convId] || [];
     const sorted = msgs.slice().sort((a, b) => a.createdAt - b.createdAt);
     sendJSON(res, 200, { messages: sorted });
