@@ -8,8 +8,15 @@ const path = require('path');
 const crypto = require('crypto');
 
 // ============ 内存存储 ============
-const conversations = {};  // id → { id, participants: Set, messages: [] }
-const messages = {};       // convId → [msgObj]
+// Use null-prototype maps so attacker-controlled conversationId/userId can never
+// clobber Object.prototype (remote-property-injection / prototype pollution).
+const conversations = Object.create(null);  // id → { id, participants: Set, messages: [] }
+const messages = Object.create(null);       // convId → [msgObj]
+
+// Reject dangerous keys that could pollute Object.prototype when used as a property.
+function safeKey(k) {
+  return typeof k === 'string' && k.length > 0 && !k.startsWith('__') && k !== 'constructor' && k !== 'prototype';
+}
 
 function uuid() {
   return crypto.randomUUID();
@@ -95,12 +102,12 @@ function handleAPI(req, res, url, body) {
   // POST /api/messages
   if (req.method === 'POST' && url === '/api/messages') {
     const { conversationId, ciphertext, messageType, senderUserId } = body;
-    if (!conversationId || !ciphertext) {
-      sendJSON(res, 400, { error: 'missing conversationId or ciphertext' });
+    if (!conversationId || !ciphertext || !safeKey(conversationId)) {
+      sendJSON(res, 400, { error: 'missing or invalid conversationId or ciphertext' });
       return;
     }
     // 确定发送者
-    const sender = senderUserId || 'alice';
+    const sender = safeKey(senderUserId) ? senderUserId : 'alice';
     const msgObj = {
       id: uuid(),
       conversationId,

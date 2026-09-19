@@ -543,11 +543,11 @@ async function handleX3DHInitMessage(msg) {
     
     // v6: Check for hybrid PQ + X3DH init
     if (envelope.pqCiphertext && envelope.kemPublicKey && Crypto.receiveHybridSession) {
-      console.log('[X3DH v6] Processing hybrid PQ+ECDH session init from', msg.from);
+      console.log('[X3DH v6] Processing hybrid PQ+ECDH session init from', safeLog(msg.from));
       const result = await Crypto.receiveHybridSession(msg.from, envelope);
       
       if (result.sessionReady || result.sessionEstablished) {
-        console.log('[X3DH v6] Hybrid session established with', msg.from);
+        console.log('[X3DH v6] Hybrid session established with', safeLog(msg.from));
         showToast(`🔐 安全会话已建立 (后量子)`, 'success');
         
         // Store PQ metadata
@@ -566,11 +566,11 @@ async function handleX3DHInitMessage(msg) {
     
     // v5: Standard X3DH init
     if (envelope.ephemeralPublicKey) {
-      console.log('[X3DH v5] Processing classical X3DH session init from', msg.from);
+      console.log('[X3DH v5] Processing classical X3DH session init from', safeLog(msg.from));
       const result = await Crypto.receiveSession(msg.from, envelope);
       
       if (result.sessionReady || result.sessionEstablished) {
-        console.log('[X3DH v5] Classical session established with', msg.from);
+        console.log('[X3DH v5] Classical session established with', safeLog(msg.from));
         showToast(`🔐 安全会话已建立`, 'success');
         return true;
       }
@@ -579,7 +579,7 @@ async function handleX3DHInitMessage(msg) {
     console.warn('[X3DH] Unknown init message format');
     return false;
   } catch (err) {
-    console.error('[X3DH] Failed to process init message:', err);
+    console.error('[X3DH] Failed to process init message:', safeLog(err));
     return false;
   }
 }
