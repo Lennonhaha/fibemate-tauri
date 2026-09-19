@@ -5,7 +5,7 @@
 <pre id="log"></pre>
 <script>
 const log = document.getElementById('log');
-function add(msg, cls) { log.innerHTML += `<span class="${cls||''}">${msg}</span>\n`; }
+function add(msg, cls) { const s = document.createElement('span'); if (cls) s.className = cls || ''; s.textContent = String(msg) + '\n'; log.appendChild(s); }
 
 window.addEventListener('error', e => {
   if (e.target && e.target.tagName === 'SCRIPT') add(`SCRIPT FAIL: ${e.target.src}`, 'fail');
