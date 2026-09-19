@@ -385,7 +385,7 @@
         }
         _sessionMap.set(peerId, { sessionId: dr.sessionId, identityId: myId, version: DR_VERSION, createdAt: Date.now() });
         _saveSessionMap();
-        console.log('[DR Adapter] Created session from x3dh_accept_rust for ' + safeLog(peerId));
+        console.log('[DR Adapter] Created session from x3dh_accept_rust for ' + String(peerId).replace(/[\r\n]/g, ' '));
         return { confirmed: true, sessionEstablished: true, sessionReady: true, rustSession: true };
       }
 
