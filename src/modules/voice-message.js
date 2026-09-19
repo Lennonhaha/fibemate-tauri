@@ -692,7 +692,7 @@ const VoiceMessage = (() => {
             await Crypto.receiveSession(msg.from, envelope.initMessage);
             console.log('[VoiceMsg] X3DH session established from init message');
           } catch (initErr) {
-            console.error('[VoiceMsg] receiveSession failed:', safeLog(initErr.message));
+            console.error('[VoiceMsg] receiveSession failed:', encodeURIComponent(JSON.stringify(initErr.message)));
           }
           envelope = envelope.message;
         }
@@ -700,7 +700,7 @@ const VoiceMessage = (() => {
         // 关键修复：decrypt 是 async，必须 await，否则 audioData 是 Promise 对象
         audioData = await Crypto.decrypt(msg.from, envelope);
       } catch (e) {
-        console.error('[VoiceMsg] Decrypt failed:', safeLog(e.message));
+        console.error('[VoiceMsg] Decrypt failed:', encodeURIComponent(JSON.stringify(e.message)));
         appendMessage(false, '⚠️ 语音解密失败', msg.createdAt || Date.now());
         return;
       }

@@ -277,7 +277,7 @@
         ourIdentityId: identity?.ourIdentityId,
         peerIdentityPkHex: identity?.peerIdentityPkHex
       });
-      console.log(`[RatchetBridge] DR session created: ${safeLog(result.session_id)} with ${safeLog(peerName)}`);
+      console.log(`[RatchetBridge] DR session created: ${encodeURIComponent(JSON.stringify(result.session_id))} with ${encodeURIComponent(JSON.stringify(peerName))}`);
       return {
         sessionId: result.session_id,
         ourPublicKeyHex: result.our_public_key
@@ -524,7 +524,7 @@
       if (!this.initialized) this.init();
       const acc = await this.hybridAccept(keyId, encHex);
       const dr = await this.initSession(acc.ssId, peerName, false);
-      console.log(`[RatchetBridge] Hybrid DR session created: ${safeLog(dr.sessionId)} with ${safeLog(peerName)}`);
+      console.log(`[RatchetBridge] Hybrid DR session created: ${encodeURIComponent(JSON.stringify(dr.sessionId))} with ${encodeURIComponent(JSON.stringify(peerName))}`);
       return {
         sessionId: dr.sessionId,
         ourPublicKeyHex: dr.ourPublicKeyHex
@@ -543,7 +543,7 @@
       if (!this.initialized) this.init();
       const beg = await this.hybridBegin(peerBundleHex);
       const dr = await this.initSession(beg.ssId, peerName, true);
-      console.log(`[RatchetBridge] Hybrid DR session created: ${safeLog(dr.sessionId)} with ${safeLog(peerName)}`);
+      console.log(`[RatchetBridge] Hybrid DR session created: ${encodeURIComponent(JSON.stringify(dr.sessionId))} with ${encodeURIComponent(JSON.stringify(peerName))}`);
       return {
         sessionId: dr.sessionId,
         ourPublicKeyHex: dr.ourPublicKeyHex,
