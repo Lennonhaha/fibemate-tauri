@@ -1,9 +1,9 @@
 use tauri::Manager;
 
 mod audit;
-mod commands;
-// pub: exposed for the `perf` criterion bench target (P2 performance
-// regression). No runtime impact — symbols already exist in the lib.
+pub mod commands; // pub: allows src-tauri/tests/ integration tests to reference command fns
+                  // pub: exposed for the `perf` criterion bench target (P2 performance
+                  // regression). No runtime impact — symbols already exist in the lib.
 pub mod double_ratchet;
 pub mod key_store;
 pub mod pq;
