@@ -99,6 +99,8 @@ pub fn run() {
             commands::identity::spk_rotate,
             // Approval-scoped audit records (JS device verification flow)
             commands::audit_cmd::audit_approval,
+            // Experiment feature flags (single Rust source of truth; default off)
+            commands::experiments_cmd::get_experiments,
             // Key-store controlled self-destruct (manual-only)
             commands::identity::keystore_selfdestruct,
             // X3DH Key Exchange
