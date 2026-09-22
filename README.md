@@ -46,6 +46,14 @@ secrets, or ratchet state — only opaque handles (`keyId`, `ss_id`,
 `session_id`) and public keys cross the IPC boundary. All cryptographic
 operations execute exclusively in the Rust backend.
 
+> ⚠️ **Exception — ZK module is experimental and default-off.** The `src/zk/*`
+> module (PBKDF2 key derivation + P-256 Schnorr/Bulletproofs proofs) currently
+> runs in the **JS/WebView layer** and is **not** wired to the Rust backend, so it
+> is an exception to the "all crypto in Rust" principle above. It is gated behind
+> the `FIBEMATE_EXPERIMENT_ZK` env flag and ships **disabled by default**; when
+> the flag is unset no `src/zk/*` code is loaded or executed. This is a known
+> technical-debt item tracked for a later P2 evaluation of moving it into Rust.
+
 ---
 
 ## 🧬 Cryptographic Suite
