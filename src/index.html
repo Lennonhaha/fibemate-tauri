@@ -17,12 +17,8 @@
   <script src="crypto/crypto/pq-integration.js"></script>
   <!-- Tauri Crypto Bridge: replaces WASM ML-KEM with Rust backend -->
   <script src="tauri-crypto-bridge.js"></script>
-  <script src="zk/zk-browser.js"></script>
-  <script src="zk/schnorr-prover-v2.js"></script>
-  <script src="zk/bulletproofs.js"></script>
-  <script src="zk/zk-auth.js"></script>
-  <script src="zk/zk-integration.js"></script>
-  <script src="zk-ui-integration.js"></script>
+  <!-- ZK experiment gate: only loads src/zk/* when FIBEMATE_EXPERIMENT_ZK is set (default off) -->
+  <script src="load-zk-if-enabled.js"></script>
 </head>
 <body>
   <div class="login-wrapper">
