@@ -2,6 +2,14 @@
 
 Zero-Knowledge Proof Authentication Module
 
+> ⚠️ **EXPERIMENTAL — DEFAULT OFF.** This module is a research/reference prototype,
+> **not** part of the production cryptographic baseline. It is gated behind the
+> `FIBEMATE_EXPERIMENT_ZK` env flag (Rust `get_experiments()`); when the flag is
+> unset the frontend does **not** load or execute any `src/zk/*` code. It does
+> **not** raise the security strength of the app and must never be relied upon for
+> production authentication. Known issue: `schnorr-prover.js` (v1) has a math bug;
+> use v2 only. See the parent repo work order for the default-off design.
+
 ## Architecture
 
 ```

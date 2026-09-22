@@ -73,6 +73,15 @@ jobs:
           cargo test --all-features -- --list > test_list.txt
           python3 scripts/check_readme_claims.py --list test_list.txt
 
+      # Assert the experimental ZK module stays default-off: its 6 source files
+      # must only be loaded dynamically by load-zk-if-enabled.js (when the
+      # FIBEMATE_EXPERIMENT_ZK env flag is set), never as unconditional <script>
+      # tags in either entry point. ubuntu only: the assertion is platform
+      # independent and a second CI runner would just duplicate the same check.
+      - name: Assert ZK module is default-off (gated, not static)
+        if: matrix.os == 'ubuntu-latest'
+        run: bash scripts/assert-no-unconditional-zk.sh
+
   bench:
     name: Perf regression gate (criterion)
     # Timing gates are only meaningful on a single consistent runner to avoid

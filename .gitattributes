@@ -1,0 +1,3 @@
+# Force LF line endings for shell scripts so they run under bash on CI (ubuntu)
+# regardless of the committer's platform. Prevents CRLF from breaking `set -euo pipefail`.
+*.sh text eol=lf

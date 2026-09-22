@@ -55,16 +55,8 @@
   <script src="performance-optimization.js" defer></script>
   <script src="webrtc-module.js" defer></script>
   <script src="video-call-ui.js" defer></script>
-  <!-- ZK Modules -->
-  <script src="zk/zk-browser.js" defer></script>
-  <!-- v1 disabled, using v2 (correct EC point operations) -->
-  <!-- <script src="zk/schnorr-prover.js" defer></script> -->
-  <script src="zk/schnorr-prover-v2.js" defer></script>
-  <!-- <script src="zk/schnorr-verifier.js" defer></script> -->
-  <script src="zk/bulletproofs.js" defer></script>
-  <script src="zk/zk-auth.js" defer></script>
-  <script src="zk/zk-integration.js" defer></script>
-  <script src="zk-ui-integration.js" defer></script>
+  <!-- ZK experiment gate: only loads src/zk/* when FIBEMATE_EXPERIMENT_ZK is set (default off) -->
+  <script src="load-zk-if-enabled.js" defer></script>
   <script src="user-levels.js" defer></script>
   <!-- Voice Message -->
   <script src="modules/voice-message.js" defer></script>

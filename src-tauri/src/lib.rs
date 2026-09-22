@@ -1,9 +1,9 @@
 use tauri::Manager;
 
 mod audit;
-mod commands;
-// pub: exposed for the `perf` criterion bench target (P2 performance
-// regression). No runtime impact — symbols already exist in the lib.
+pub mod commands; // pub: allows src-tauri/tests/ integration tests to reference command fns
+                  // pub: exposed for the `perf` criterion bench target (P2 performance
+                  // regression). No runtime impact — symbols already exist in the lib.
 pub mod double_ratchet;
 pub mod key_store;
 pub mod pq;
@@ -99,6 +99,8 @@ pub fn run() {
             commands::identity::spk_rotate,
             // Approval-scoped audit records (JS device verification flow)
             commands::audit_cmd::audit_approval,
+            // Experiment feature flags (single Rust source of truth; default off)
+            commands::experiments_cmd::get_experiments,
             // Key-store controlled self-destruct (manual-only)
             commands::identity::keystore_selfdestruct,
             // X3DH Key Exchange
