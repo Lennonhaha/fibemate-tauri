@@ -4,7 +4,7 @@
 Built on Tauri v2 (Rust backend + WebView frontend), designed for the quantum era.
 
 [![Rust](https://img.shields.io/badge/rust-1.85+-orange)]()
-[![Tests](https://img.shields.io/badge/tests-120%2F120%20passed-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-130%2F130%20passed-brightgreen)]()
 [![PQ](https://img.shields.io/badge/PQC-ML--KEM--768%20%7C%20ML--DSA--65-blue)]()
 [![License](https://img.shields.io/badge/license-GPLv3-blue)]()
 
@@ -23,7 +23,7 @@ Built on Tauri v2 (Rust backend + WebView frontend), designed for the quantum er
 ┌──────────────────────────────────────────────────────────────┐
 │  WebView (JS)                    Rust Backend                │
 │  ┌─────────────┐  invoke()      ┌─────────────────────────┐ │
-│  │  UI layer   │ ─────────────▶ │ 43 Tauri commands        │ │
+│  │  UI layer   │ ─────────────▶ │ 44 Tauri commands        │ │
 │  │ keyId only  │                │ ┌─────────────────────┐ │ │
 │  │ ss_id only  │                │ │ X3DH (3-DH, X25519) │ │ │
 │  │ session_id  │                │ │ Double Ratchet      │ │ │
@@ -143,11 +143,11 @@ npx tauri build        # production binary
 ```bash
 cd src-tauri
 cargo test --release --lib
-# Expected: 120 tests, 0 failures
+# Expected: 130 tests, 0 failures
 ```
 
 ```
-test result: ok. 120 passed; 0 failed; 0 ignored; 0 measured
+test result: ok. 130 passed; 0 failed; 0 ignored; 0 measured
 ```
 
 Coverage highlights (all real, verified 2026-09-02):
@@ -167,7 +167,7 @@ fibemate-tauri/
 ├── src/                          # Frontend (HTML/JS/CSS) — no key material
 ├── src-tauri/                    # Rust backend
 │   ├── src/
-│   │   ├── lib.rs                # App entry + 43 command registrations
+│   │   ├── lib.rs                # App entry + 44 command registrations
 │   │   ├── double_ratchet.rs     # Double Ratchet + X3DH + session encryption
 │   │   ├── key_store.rs          # AES-256-GCM + DPAPI encrypted storage
 │   │   ├── audit.rs              # Structured audit log
@@ -187,7 +187,7 @@ fibemate-tauri/
 └── package.json
 ```
 
-### Tauri Commands (43 registered, grouped by layer)
+### Tauri Commands (44 registered, grouped by layer)
 
 | Layer | Commands |
 |-------|----------|
@@ -245,7 +245,7 @@ fibemate-tauri/
 - [x] Double Ratchet fully in Rust
 - [x] X3DH with independent SPK (DH2 ≠ DH3)
 - [x] AES-256-GCM + DPAPI encrypted KeyStore
-- [x] 120/120 lib tests passing
+- [x] 130/130 lib tests passing
 - [ ] Hybrid PQ handshake (wire `pq/hybrid.rs` into X3DH) — P2
 - [ ] Session-level PQ ratchet (ML-KEM inside ratchet, PQXDH Level 3) — P2
 - [ ] P2P WebRTC with PQ key exchange
