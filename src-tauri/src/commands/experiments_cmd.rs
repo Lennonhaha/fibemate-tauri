@@ -55,33 +55,61 @@ pub fn get_experiments() -> Experiments {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// Serialize all env mutations: `std::env` is process-global and cargo runs
+    /// `#[test]`s multi-threaded by default, so bare set/remove_var across tests
+    /// race. Mirror the ENV_LOCK pattern used by tests/experiments_invoke.rs.
+    ///
+    /// NOTE: this unit-test `ENV_LOCK` and the integration-test `ENV_LOCK` in
+    /// `tests/experiments_invoke.rs` are *separate* `Mutex` instances in separate
+    /// compilation units, so they do NOT serialize env mutations across the two
+    /// test binaries. To stay safe under that race, `with_env` SAVES the prior
+    /// value and RESTORES it (not just remove_var), so each test is self-contained
+    /// regardless of what the other binary left behind.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_env<F: FnOnce()>(f: F) {
+        let _g = ENV_LOCK.lock().unwrap();
+        let prev = std::env::var("FIBEMATE_EXPERIMENT_ZK").ok();
+        f();
+        match prev {
+            Some(v) => std::env::set_var("FIBEMATE_EXPERIMENT_ZK", v),
+            None => std::env::remove_var("FIBEMATE_EXPERIMENT_ZK"),
+        }
+    }
 
     #[test]
     fn default_off_when_unset() {
-        std::env::remove_var("FIBEMATE_EXPERIMENT_ZK");
-        assert!(!zk_enabled(), "zk must default off when env unset");
-        let e = get_experiments();
-        assert!(!e.zk);
+        with_env(|| {
+            std::env::remove_var("FIBEMATE_EXPERIMENT_ZK");
+            assert!(!zk_enabled(), "zk must default off when env unset");
+            let e = get_experiments();
+            assert!(!e.zk);
+        });
     }
 
     #[test]
     fn enabled_on_true() {
-        std::env::set_var("FIBEMATE_EXPERIMENT_ZK", "true");
-        assert!(zk_enabled());
-        std::env::remove_var("FIBEMATE_EXPERIMENT_ZK");
+        with_env(|| {
+            std::env::set_var("FIBEMATE_EXPERIMENT_ZK", "true");
+            assert!(zk_enabled());
+        });
     }
 
     #[test]
     fn enabled_on_1() {
-        std::env::set_var("FIBEMATE_EXPERIMENT_ZK", "1");
-        assert!(zk_enabled());
-        std::env::remove_var("FIBEMATE_EXPERIMENT_ZK");
+        with_env(|| {
+            std::env::set_var("FIBEMATE_EXPERIMENT_ZK", "1");
+            assert!(zk_enabled());
+        });
     }
 
     #[test]
     fn disabled_on_other_value() {
-        std::env::set_var("FIBEMATE_EXPERIMENT_ZK", "yes");
-        assert!(!zk_enabled(), "only 1/true enable; 'yes' must not");
-        std::env::remove_var("FIBEMATE_EXPERIMENT_ZK");
+        with_env(|| {
+            std::env::set_var("FIBEMATE_EXPERIMENT_ZK", "yes");
+            assert!(!zk_enabled(), "only 1/true enable; 'yes' must not");
+        });
     }
 }
