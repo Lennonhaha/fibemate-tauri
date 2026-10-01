@@ -227,7 +227,5 @@ window.satelliteIntegration.detector.detect().then(type => {
 
 - v1.0.0 (2026-05-13): 初始版本
 
-## 参考
 
-- [卫星网络适配方案](../../FIBEMATE_P1_卫星网络适配方案.md)
-- [五网络融合战略](../../FIBEMATE_五网络融合战略.md)
+
