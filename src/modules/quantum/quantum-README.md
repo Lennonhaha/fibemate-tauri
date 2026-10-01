@@ -129,5 +129,4 @@ await runner.runAllTests();
 
 ## 参考
 
-- [五网络融合战略](../../FIBEMATE_五网络融合战略.md)
 - [卫星网络适配](../satellite/satellite-README.md)
