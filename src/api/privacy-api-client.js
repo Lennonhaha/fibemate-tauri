@@ -281,10 +281,15 @@ class PrivacyAPIClient {
   // Protocol version detection helper
   detectBundleVersion(bundle) {
     if (!bundle || typeof bundle !== 'object') return 0;
-    if (bundle.version >= 3 || bundle._rustVersion >= 3) return 3;          // X25519 hex
-    if (bundle.version === 2 || bundle.identitySigningKey !== undefined) return 2; // P-256 bytes
-    if (typeof bundle.identityKey === 'string' && bundle.identityKey.length === 64) return 3; // Heuristic: 64-char hex = X25519
-    if (Array.isArray(bundle.identityKey)) return 2;                          // Byte array = P-256
+    // v3 — X25519 + ML-DSA-65 (hex strings) or explicit version marker
+    if (bundle.version >= 3 || bundle._rustVersion >= 3) return 3;
+    if (typeof bundle.identityKey === 'string' && bundle.identityKey.length === 64) return 3;
+    // v2 — P-256 ECDSA (byte arrays)
+    if (bundle.version === 2) return 2;
+    if (Array.isArray(bundle.identityKey)) return 2;
+    if (Array.isArray(bundle.identitySigningKey)) return 2;
+    // Ambiguous — hex identitySigningKey with hex identityKey = v3 (ML-DSA-65)
+    if (typeof bundle.identitySigningKey === 'string') return 3;
     return 0;
   }
 
@@ -304,7 +309,9 @@ class PrivacyAPIClient {
       body: JSON.stringify({
         publicKey: bundle.identityKey,
         signedPrekey: bundle.signedPreKey || bundle.identityKey,
-        prekeySignature: bundle.signedPreKeySignature || ''
+        prekeySignature: bundle.signedPreKeySignature || '',
+        identitySigningKey: bundle.identitySigningKey || '',
+        signedPreKeySignature: bundle.signedPreKeySignature || ''
       })
     });
   }
@@ -323,8 +330,10 @@ class PrivacyAPIClient {
     const keysResp = await this.request(`/users/${userId}/keys`);
     return {
       identityKey: keysResp.identityKey,
+      identitySigningKey: keysResp.identitySigningKey || null,
       signedPreKey: keysResp.signedPrekey || keysResp.identityKey,
       signedPreKeyId: 0,
+      signedPreKeySignature: keysResp.signedPreKeySignature || keysResp.signedPrekeySignature || null,
       oneTimePreKeys: keysResp.oneTimePreKey ? [keysResp.oneTimePreKey] : [],
       oneTimePreKey: keysResp.oneTimePreKey || null,
       kemPublicKey: keysResp.kemPublicKey || null
