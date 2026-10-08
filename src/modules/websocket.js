@@ -262,9 +262,11 @@ function _wsSend(obj) {
   if (!STATE.ws || STATE.ws.readyState !== 1) return false;
   try {
     const json = JSON.stringify(obj);
+    // Use byte length (UTF-8), consistent with server-side buf.length
+    const byteLen = new TextEncoder().encode(json).length;
     // Large messages (voice, >8KB) bypass WsPadding to avoid binary frame truncation
     // Sent as text frame so event.data is a string on the receiver side
-    if (typeof WsPadding !== 'undefined' && json.length <= 8192) {
+    if (typeof WsPadding !== 'undefined' && byteLen <= 8192) {
       STATE.ws.send(WsPadding.pad(json));
     } else {
       STATE.ws.send(json);
