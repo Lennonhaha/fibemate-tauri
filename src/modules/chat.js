@@ -148,15 +148,27 @@ async function loadMessages(conversationId) {
             // 优先用后端返回的明文，否则占位显示
             text = m.content || m.plaintext || '[已发送]';
           } else {
+            // Short-circuit: 如果这条消息之前已解密失败，不再重试
+            const mid = m.id || m._id;
+            const failedKey = 'fibemate_df_' + mid;
+            if (mid && localStorage.getItem(failedKey)) {
+              text = '[解密失败]';
+              continue;
+            }
             text = await Crypto.decrypt(m.senderUserId, envelope);
             // null = duplicate / replay → silently skip this message
             if (text === null) {
-              console.debug('[Messages v5] Skipping duplicate message:', m.id || m._id);
+              console.debug('[Messages v5] Skipping duplicate message:', mid);
               continue;
             }
           }
         } catch (e) {
           console.error('[Messages v5] Decrypt failed:', e.message);
+          // 标记这条消息为解密失败，下次 loadMessages 不再重试
+          const mid = m.id || m._id;
+          if (mid) {
+            try { localStorage.setItem('fibemate_df_' + mid, '1'); } catch (_) {}
+          }
           text = isSent ? '[已发送]' : `⚠️ 解密失败: ${e.message}`;
         }
       } else if (m.encryptedContent && typeof MessageCrypto !== 'undefined') {

@@ -573,6 +573,66 @@ pub fn x3dh_respond(
     })
 }
 
+/// Get or create an identity key for a given user.
+///
+/// Reads the userId → identity_id map from disk. If an identity already
+/// exists for this userId, validates it still exists in KeyStore and returns
+/// it. Otherwise generates a new identity, records the mapping, and returns
+/// the new identity_id.
+///
+/// This replaces the fragile localStorage-based identity reference:
+/// the mapping is now persisted by Rust, so it survives WebView2 profile
+/// resets, binary recompiles, and account switches.
+#[tauri::command]
+pub fn get_identity_for_user(
+    state: State<CryptoState>,
+    user_id: String,
+) -> Result<String, String> {
+    println!("[get_identity_for_user] user_id={:?}", user_id);
+    use std::collections::HashMap;
+
+    let map_path = state.sessions_path.parent().unwrap().join("identity_map.json");
+
+    // Load existing map
+    let mut map: HashMap<String, String> = {
+        let raw = std::fs::read_to_string(&map_path).unwrap_or_default();
+        serde_json::from_str(&raw).unwrap_or_default()
+    };
+
+    // Check if userId already has an identity
+    if let Some(identity_id) = map.get(&user_id) {
+        let store = state.key_store.lock().map_err(|e| e.to_string())?;
+        if store.has_key(&ik_key_id(identity_id)) {
+            return Ok(identity_id.clone());
+        }
+        // Identity was deleted from KeyStore — remove stale map entry
+        drop(store);
+        map.remove(&user_id);
+    }
+
+    // Generate new identity (reuses ik_generate logic via internal helper)
+    let id = Uuid::new_v4().to_string();
+    let kp = RatchetKeyPair::generate();
+    let fingerprint = crate::pq::fingerprint(&kp.public_key);
+
+    {
+        let mut store = state.key_store.lock().map_err(|e| e.to_string())?;
+        store.store_secret_key(
+            &ik_key_id(&id),
+            &kp.public_key,
+            &kp.private_key,
+            &fingerprint,
+        )?;
+    }
+
+    // Write mapping
+    map.insert(user_id, id.clone());
+    let json = serde_json::to_string_pretty(&map).map_err(|e| e.to_string())?;
+    std::fs::write(&map_path, &json).map_err(|e| e.to_string())?;
+
+    Ok(id)
+}
+
 // ── Utility ─────────────────────────────────────────────────────
 
 fn hex_to_bytes_32(hex: &str, label: &str) -> Result<[u8; 32], String> {

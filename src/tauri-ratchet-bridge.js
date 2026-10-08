@@ -132,6 +132,22 @@
       };
     },
 
+    /**
+     * Get or create an identity for a given userId.
+     *
+     * Rust-side userId → identity_id map persists across restarts.
+     * Replaces fragile localStorage.getItem('fibemate_rust_identity_id_' + userId).
+     *
+     * @param {string} userId — the user's account ID (fk_uid)
+     * @returns {Promise<string>} identity_id string
+     */
+    async getIdentityForUser(userId) {
+      if (!this.initialized) this.init();
+      const identityId = await invoke()('get_identity_for_user', { userId });
+      this._identityId = identityId;
+      return identityId;
+    },
+
     /** List all stored identities. */
     async listIdentities() {
       if (!this.initialized) this.init();

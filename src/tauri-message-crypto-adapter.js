@@ -138,25 +138,16 @@
         _currentUserId = currentUserId;
       }
 
-      // Per-user identity isolation: 同机双账号时各用独立 identity
-      const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
+      // Per-user identity isolation via Rust-persisted map
+      //
+      // The localStorage identity reference was fragile — WebView2 profile
+      // resets or binary recompiles would orphan the identity on disk and
+      // generate a new one. Now Rust maintains a userId → identity_id map
+      // in identity_map.json, so the same identity is reused across restarts.
+      const identityId = await bridge.getIdentityForUser(currentUserId);
 
-      // Ensure we have an identity
-      let identityId = localStorage.getItem(identityKey);
-      let identity;
-      if (identityId) {
-        try {
-          identity = await bridge.getIdentityPublic(identityId);
-        } catch (e) {
-          console.warn('[DR Adapter] Identity not found, generating new...');
-          identityId = null;
-        }
-      }
-      if (!identityId) {
-        identity = await bridge.generateIdentity();
-        identityId = identity.identityId;
-        localStorage.setItem(identityKey, identityId);
-      }
+      // Load identity public metadata (no secret key exposure)
+      const identity = await bridge.getIdentityPublic(identityId);
       _identityBundles[identityId] = identity;
 
       // Build full pre-key bundle via Rust spk_get_public:
@@ -254,9 +245,7 @@
         _identityBundles = {};
         _currentUserId = currentUserId;
       }
-      const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
-      let myId = localStorage.getItem(identityKey);
-      if (!myId) throw new Error('No identity generated — call getMyPreKeyBundle() first');
+      const myId = await bridge.getIdentityForUser(currentUserId);
 
       // Extract peer's identity key from bundle
       let peerIdentityPkHex;
@@ -375,9 +364,7 @@
         _identityBundles = {};
         _currentUserId = currentUserId;
       }
-        const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
-        let myId = localStorage.getItem(identityKey);
-        if (!myId) throw new Error('No identity — call getMyPreKeyBundle() first');
+        const myId = await bridge.getIdentityForUser(currentUserId);
         const syntheticSsId = 'confirm_' + peerId;
         const dr = await bridge.initSession(syntheticSsId, peerId, false);
         if (initMessage.drPublicKey) {
@@ -427,9 +414,11 @@
         && existing.initEphemeralKey === initMessage.ephemeralKey;
       // 只要 Rust 侧 session 还在就复用（不要求 initEphemeralKey 匹配）
       if (existing && existing.sessionId && existingValid) {
-        if (peerDrPublicKeyHex) {
+        if (peerDrPublicKeyHex && !existing.peerKeyInitialized) {
           try {
             await bridge.setPeerKey(existing.sessionId, peerDrPublicKeyHex);
+            existing.peerKeyInitialized = true;
+            _saveSessionMap();
           } catch (e) {
             console.warn('[DR Adapter] setPeerKey (idempotent) failed:', e && e.message);
           }
@@ -460,9 +449,7 @@
         _identityBundles = {};
         _currentUserId = currentUserId;
       }
-      const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
-      let myId = localStorage.getItem(identityKey);
-      if (!myId) throw new Error('No identity generated — call getMyPreKeyBundle() first');
+      const myId = await bridge.getIdentityForUser(currentUserId);
 
       // Parse initiator's keys (hex strings)
       const peerIdentityPkHex = initMessage.identityKey;
@@ -485,7 +472,8 @@
         identityId: myId,
         version: DR_VERSION,
         createdAt: Date.now(),
-        initEphemeralKey: initMessage.ephemeralKey
+        initEphemeralKey: initMessage.ephemeralKey,
+        peerKeyInitialized: true
       });
       _saveSessionMap();
 
@@ -793,9 +781,7 @@
         _identityBundles = {};
         _currentUserId = currentUserId;
       }
-      const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
-      const myId = localStorage.getItem(identityKey);
-      if (!myId) throw new Error('No identity generated — call getMyPreKeyBundle() first');
+      const myId = await bridge.getIdentityForUser(currentUserId);
 
       console.log('[DR Adapter] Hybrid PQ session initiate with ' + peerId + ' (X25519 + ML-KEM-768)');
       const pq = await bridge.initiateHybridPQSession(peerId, peerHybridHex);
@@ -857,8 +843,7 @@
       }
 
       const currentUserId = localStorage.getItem('fk_uid') || 'default';
-      const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
-      const myId = localStorage.getItem(identityKey) || null;
+      const myId = await bridge.getIdentityForUser(currentUserId);
       _sessionMap.set(peerId, {
         sessionId: dr.sessionId,
         identityId: myId,
