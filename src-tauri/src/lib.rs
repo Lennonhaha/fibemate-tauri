@@ -103,6 +103,8 @@ pub fn run() {
             commands::experiments_cmd::get_experiments,
             // Key-store controlled self-destruct (manual-only)
             commands::identity::keystore_selfdestruct,
+            // Identity persistence (userId → identity_id map)
+            commands::identity::get_identity_for_user,
             // X3DH Key Exchange
             commands::identity::x3dh_initiate,
             commands::identity::x3dh_respond,

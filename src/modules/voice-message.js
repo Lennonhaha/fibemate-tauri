@@ -484,6 +484,9 @@ const VoiceMessage = (() => {
 
     // 插入到输入栏
     const btnAttach = document.getElementById('btnAttach');
+    // 点击覆盖层任意位置停止发送
+    overlay.addEventListener('click', () => stopRecording(true));
+
     if (btnAttach) {
       inputBar.insertBefore(overlay, btnAttach.nextSibling);
     }

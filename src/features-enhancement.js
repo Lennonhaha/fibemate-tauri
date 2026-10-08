@@ -548,7 +548,7 @@ function initEnhancedFeatures() {
   themeBtn.style.cssText = `
     position: fixed;
     bottom: 20px;
-    right: 20px;
+    right: 80px;
     width: 48px;
     height: 48px;
     border-radius: 50%;
