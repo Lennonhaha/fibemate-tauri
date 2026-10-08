@@ -261,10 +261,13 @@ function decodeCiphertext(ciphertext) {
 function _wsSend(obj) {
   if (!STATE.ws || STATE.ws.readyState !== 1) return false;
   try {
-    if (typeof WsPadding !== 'undefined') {
-      STATE.ws.send(WsPadding.pad(JSON.stringify(obj)));
+    const json = JSON.stringify(obj);
+    // Large messages (voice, >8KB) bypass WsPadding to avoid binary frame truncation
+    // Sent as text frame so event.data is a string on the receiver side
+    if (typeof WsPadding !== 'undefined' && json.length <= 8192) {
+      STATE.ws.send(WsPadding.pad(json));
     } else {
-      STATE.ws.send(JSON.stringify(obj));
+      STATE.ws.send(json);
     }
     return true;
   } catch (e) {
@@ -275,8 +278,13 @@ function _wsSend(obj) {
 
 function _wsUnpad(data) {
   try {
-    if (typeof WsPadding !== 'undefined') {
-      const buf = data instanceof ArrayBuffer ? new Uint8Array(data) : data;
+    // String data = text frame (bypassed WsPadding, e.g. large voice messages)
+    if (typeof data === 'string') {
+      return data;
+    }
+    // Binary frame = padded by WsPadding
+    if (typeof WsPadding !== 'undefined' && data instanceof ArrayBuffer) {
+      const buf = new Uint8Array(data);
       const un = WsPadding.unpad(buf);
       if (un.isCover) return null; // cover traffic，丢弃
       return new TextDecoder().decode(un.payload);
