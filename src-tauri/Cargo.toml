@@ -1,6 +1,6 @@
 [package]
 name = "fibemate"
-version = "3.0.0"
+version = "3.3.6"
 description = "FIBEMATE - Post-Quantum Secure Messaging"
 authors = ["FIBEMATE Team"]
 edition = "2021"
