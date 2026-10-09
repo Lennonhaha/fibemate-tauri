@@ -218,11 +218,15 @@
         for (let j = 0; j < 16; j++) Z[j] ^= V[j];
       }
       // V = (V >> 1) ⊕ (R if LSB was set)
+      // Big-endian 128-bit right shift: byte j's new MSB must come from byte j-1's
+      // old LSB. The previous loop iterated j=15..0 and carried the *next* (higher)
+      // byte's LSB — i.e. a left-shift carry — which corrupted every GHASH tag for
+      // non-empty input (empty input never exercises gfMul, so self-tests passed).
       const lsb = V[15] & 1;
       let carry = 0;
-      for (let j = 15; j >= 0; j--) {
-        const nextCarry = (V[j] & 1) << 7;
-        V[j] = ((V[j] >>> 1) | carry) & 0xFF;
+      for (let j = 0; j < 16; j++) {
+        const nextCarry = V[j] & 1;
+        V[j] = ((V[j] >>> 1) | (carry << 7)) & 0xFF;
         carry = nextCarry;
       }
       if (lsb) {
@@ -257,18 +261,24 @@
     const lenBlock = new Uint8Array(16);
     const aBits = A.length * 8;
     const cBits = C.length * 8;
-    lenBlock[4] = (aBits >>> 56) & 0xFF;
-    lenBlock[5] = (aBits >>> 48) & 0xFF;
-    lenBlock[6] = (aBits >>> 40) & 0xFF;
-    lenBlock[7] = (aBits >>> 32) & 0xFF;
-    lenBlock[8] = (aBits >>> 24) & 0xFF;
-    lenBlock[9] = (aBits >>> 16) & 0xFF;
-    lenBlock[10] = (aBits >>> 8) & 0xFF;
-    lenBlock[11] = aBits & 0xFF;
-    lenBlock[12] = (cBits >>> 56) & 0xFF;
-    lenBlock[13] = (cBits >>> 48) & 0xFF;
-    lenBlock[14] = (cBits >>> 40) & 0xFF;
-    lenBlock[15] = (cBits >>> 32) & 0xFF;
+    // Write each length as a 64-bit big-endian value. All shift amounts stay in
+    // 0..31 (the old >>> 56/48/40/32 relied on JS's mod-32 wraparound — it happened
+    // to yield the right bytes for <512 MB but CodeQL flagged it as
+    // js/shift-out-of-range, and it silently dropped the high 32 bits).
+    const put64 = (off, bits) => {
+      const hi = Math.floor(bits / 0x100000000);
+      const lo = bits >>> 0;
+      lenBlock[off] = (hi >>> 24) & 0xFF;
+      lenBlock[off + 1] = (hi >>> 16) & 0xFF;
+      lenBlock[off + 2] = (hi >>> 8) & 0xFF;
+      lenBlock[off + 3] = hi & 0xFF;
+      lenBlock[off + 4] = (lo >>> 24) & 0xFF;
+      lenBlock[off + 5] = (lo >>> 16) & 0xFF;
+      lenBlock[off + 6] = (lo >>> 8) & 0xFF;
+      lenBlock[off + 7] = lo & 0xFF;
+    };
+    put64(0, aBits);
+    put64(8, cBits);
     for (let j = 0; j < 16; j++) Y[j] ^= lenBlock[j];
     Y = gfMul(Y, H);
 
