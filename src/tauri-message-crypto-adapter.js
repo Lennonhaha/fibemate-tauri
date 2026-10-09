@@ -413,7 +413,9 @@
       const sameHandshake = existing && existing.initEphemeralKey && initMessage.ephemeralKey
         && existing.initEphemeralKey === initMessage.ephemeralKey;
       // 只要 Rust 侧 session 还在就复用（不要求 initEphemeralKey 匹配）
-      if (existing && existing.sessionId && existingValid) {
+      // ⚠️ 2026-10-09 修复：仅当已有 session 也是 classical 时才复用。
+      //    若已有是 hybrid 而收到 classical init → 重建，采用对端协议（否则双向失配）。
+      if (existing && existing.sessionId && existingValid && existing.hybrid !== true) {
         if (peerDrPublicKeyHex && !existing.peerKeyInitialized) {
           try {
             await bridge.setPeerKey(existing.sessionId, peerDrPublicKeyHex);
@@ -451,6 +453,9 @@
       }
       const myId = await bridge.getIdentityForUser(currentUserId);
 
+      if (existing && existing.sessionId && existing.hybrid === true) {
+        console.log('[DR Adapter] Protocol mismatch: stored=hybrid, init=classical -> rebuilding classical (adopt peer protocol)');
+      }
       // Parse initiator's keys (hex strings)
       const peerIdentityPkHex = initMessage.identityKey;
       const peerEphemeralPkHex = initMessage.ephemeralKey;
@@ -828,6 +833,40 @@
       const bridge = _getRatchetBridge();
       if (!bridge) throw new Error('[DR Adapter] Rust DR backend not available');
 
+      // ═══ [FIX] 幂等：已有有效 session 直接复用，不重建 ═══
+      const existing = _sessionMap.get(peerId);
+      // ⚠️ 2026-10-09 修复：仅当已有 session 也是 hybrid 时才复用。
+      //    否则（已有是 classical 而收到 hybrid init 的反向场景）重建，采用对端协议。
+      if (existing && existing.sessionId && existing.hybrid === true) {
+        let valid = false;
+        try { valid = await bridge.sessionExists(existing.sessionId); } catch { valid = false; }
+        if (valid) {
+          if (aliceInit.drPublicKey && !existing.peerKeyInitialized) {
+            try {
+              await bridge.setPeerKey(existing.sessionId, aliceInit.drPublicKey);
+              existing.peerKeyInitialized = true;
+              _saveSessionMap();
+            } catch (e) { /* ignore */ }
+          }
+          console.log('[DR Adapter] Reusing existing hybrid session for ' + encodeURIComponent(JSON.stringify(peerId)));
+          const ourSendKey = await bridge.getSendKey(existing.sessionId);
+          return {
+            responseMessage: {
+              type: 'hybrid_accept_rust',
+              version: DR_VERSION,
+              protocol: DR_PROTOCOL,
+              drPublicKey: ourSendKey
+            },
+            sessionEstablished: true,
+            sessionReady: true,
+            rustSession: true,
+            hybridSession: true,
+            reused: true
+          };
+        }
+      }
+      // ═══ [FIX END] ═══
+
       const cacheKey = this._hybridStorageKey();
       let cached = null;
       try { cached = JSON.parse(localStorage.getItem(cacheKey)); } catch (e) { cached = null; }
@@ -835,6 +874,9 @@
         throw new Error('[DR Adapter] No hybrid pre-key cached — call ensureHybridPreKey() before accepting PQ sessions');
       }
 
+      if (existing && existing.sessionId) {
+        console.log('[DR Adapter] Protocol mismatch: stored=classical, init=hybrid -> rebuilding hybrid (adopt peer protocol)');
+      }
       console.log('[DR Adapter] Hybrid PQ session accept from ' + encodeURIComponent(JSON.stringify(peerId)) + ' (key_id=' + encodeURIComponent(JSON.stringify(cached.keyId)) + ')');
       const dr = await bridge.acceptHybridSession(peerId, cached.keyId, aliceInit.hybridEnc);
 

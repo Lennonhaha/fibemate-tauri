@@ -46,3 +46,13 @@ Thumbs.db
 __MACOSX/
 ._*
 *.DS_Store
+
+# --- 双实例调试产物（2026-10-09）---
+src-tauri/target-liuxiu/
+src-tauri/src-tauri/
+src-tauri/configs/
+src-tauri/mod-config.cjs
+src-tauri/restore-config.cjs
+*.tauri.conf.json.bak.liuxiu
+*.bak.*
+*.working-backup

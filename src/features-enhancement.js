@@ -307,7 +307,7 @@ class AutoReconnect {
   async handleMessage(msg) {
     switch (msg.type) {
       case 'new_message':
-        if (msg.from === currentPeerId) {
+        if (msg.from === STATE.currentPeerId) {
           let text = msg.encryptedContent ? 
             await MessageCrypto.decrypt(msg.from, msg.encryptedContent) :
             decodeCiphertext(msg.ciphertext);
@@ -335,7 +335,7 @@ class AutoReconnect {
 
   showTypingIndicator(from) {
     const statusEl = document.getElementById('chatPeerStatus');
-    if (statusEl && from === currentPeerId) {
+    if (statusEl && from === STATE.currentPeerId) {
       statusEl.textContent = 'typing...';
       setTimeout(() => {
         statusEl.textContent = 'End-to-end encrypted · ML-KEM-768';
@@ -537,9 +537,23 @@ async function deleteMessage(messageId) {
 // ================================================
 
 function initEnhancedFeatures() {
-  // 替换原有的 WebSocket 连接
-  const originalConnect = connectWebSocket;
-  connectWebSocket = () => autoReconnect.enhancedConnect();
+  // [FIX 2026-10-09] 不再劫持 connectWebSocket。
+  // 原因：enhancedConnect() 是旧 API（msg.encryptedContent / MessageCrypto.decrypt），
+  // 且 handleMessage 引用裸 currentPeerId，会覆盖 websocket.js 中正确的 E2EE 处理器
+  // （MessageCryptoV2 + envelope/X3DH 全局握手），并额外新建第二条 WS。
+  // 连接统一走 websocket.js 的真实实现（含 WebRTC init + onclose 自动重连）。
+  // const originalConnect = connectWebSocket;
+  // connectWebSocket = () => autoReconnect.enhancedConnect();
+  
+  // [FIX] WebRTCModule 此时已加载（webrtc-module.js defer 在 features 之后）
+  // 在现有 WS-A 上补调 init，避免重连才创建第二条 WS
+  if (typeof WebRTCModule !== 'undefined' && STATE.ws && STATE.ws.readyState === WebSocket.OPEN) {
+    if (!STATE.ws._webrtcWrapped) {
+      WebRTCModule.init(STATE.ws);
+      STATE.ws._webrtcWrapped = true;
+      console.log('[WebRTC] Module initialized on existing WS');
+    }
+  }
   
   // 添加主题切换按钮
   const themeBtn = document.createElement('button');
