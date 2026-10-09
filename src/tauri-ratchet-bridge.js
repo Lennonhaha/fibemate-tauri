@@ -536,10 +536,10 @@
      * @param {string} encHex — from the initiator's hybridBegin()
      * @returns {Promise<{sessionId, ourPublicKeyHex}>}
      */
-    async acceptHybridSession(peerName, keyId, encHex) {
+    async acceptHybridSession(peerName, keyId, encHex, identity) {
       if (!this.initialized) this.init();
       const acc = await this.hybridAccept(keyId, encHex);
-      const dr = await this.initSession(acc.ssId, peerName, false);
+      const dr = await this.initSession(acc.ssId, peerName, false, identity);
       console.log(`[RatchetBridge] Hybrid DR session created: ${encodeURIComponent(JSON.stringify(dr.sessionId))} with ${encodeURIComponent(JSON.stringify(peerName))}`);
       return {
         sessionId: dr.sessionId,
@@ -555,10 +555,10 @@
      * @returns {Promise<{sessionId, ourPublicKeyHex, enc, initMessage}>}
      *   initMessage = { type:'hybrid_init', enc } — send to the responder.
      */
-    async initiateHybridPQSession(peerName, peerBundleHex) {
+    async initiateHybridPQSession(peerName, peerBundleHex, identity) {
       if (!this.initialized) this.init();
       const beg = await this.hybridBegin(peerBundleHex);
-      const dr = await this.initSession(beg.ssId, peerName, true);
+      const dr = await this.initSession(beg.ssId, peerName, true, identity);
       console.log(`[RatchetBridge] Hybrid DR session created: ${encodeURIComponent(JSON.stringify(dr.sessionId))} with ${encodeURIComponent(JSON.stringify(peerName))}`);
       return {
         sessionId: dr.sessionId,

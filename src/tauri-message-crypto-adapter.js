@@ -286,8 +286,8 @@
 
       const x3dh = await bridge.x3dhInitiate(myId, peerIdentityPkHex, peerSpkHex, peerSigningPkHex, peerSpkSigHex);
 
-      // Init DR session
-      const dr = await bridge.initSession(x3dh.ssId, peerId, true);
+      // Init DR session (bind identity keys so dr_safety_number works)
+      const dr = await bridge.initSession(x3dh.ssId, peerId, true, { ourIdentityId: myId, peerIdentityPkHex });
 
       // Store mapping
       _sessionMap.set(peerId, {
@@ -375,7 +375,8 @@
       }
         const myId = await bridge.getIdentityForUser(currentUserId);
         const syntheticSsId = 'confirm_' + peerId;
-        const dr = await bridge.initSession(syntheticSsId, peerId, false);
+        // 合成路径：有对端 identity 就绑，无则降级为 null（不阻断握手）
+        const dr = await bridge.initSession(syntheticSsId, peerId, false, { ourIdentityId: myId, peerIdentityPkHex: initMessage.identityKey || null });
         if (initMessage.drPublicKey) {
           await bridge.setPeerKey(dr.sessionId, initMessage.drPublicKey);
         }
@@ -474,8 +475,8 @@
       // X3DH responder
       const x3dh = await bridge.x3dhRespond(myId, peerIdentityPkHex, peerEphemeralPkHex);
 
-      // Init DR session
-      const dr = await bridge.initSession(x3dh.ssId, peerId, false);
+      // Init DR session (bind identity keys so dr_safety_number works)
+      const dr = await bridge.initSession(x3dh.ssId, peerId, false, { ourIdentityId: myId, peerIdentityPkHex });
 
       // Set peer DR key
       await bridge.setPeerKey(dr.sessionId, peerDrPublicKeyHex || peerEphemeralPkHex);
@@ -798,7 +799,20 @@
       const myId = await bridge.getIdentityForUser(currentUserId);
 
       console.log('[DR Adapter] Hybrid PQ session initiate with ' + peerId + ' (X25519 + ML-KEM-768)');
-      const pq = await bridge.initiateHybridPQSession(peerId, peerHybridHex);
+
+      // 安全码：hybrid 路径也要把身份键绑到 DR 会话（否则 dr_safety_number 报 our identity not bound）。
+      // 本端 identity pk 随 hybrid_init 发给对端；对端 identity pk 取 peer bundle 的 identityKey。
+      let ourIdentityPkHex = null;
+      try {
+        const idPub = await bridge.getIdentityPublic(myId);
+        ourIdentityPkHex = (idPub && idPub.publicKeyHex) || null;
+      } catch (e) { /* degrade: 无 identity 公钥时仅记录不阻断 */ }
+      const peerIdentityPkHexHybrid = (typeof bundle.identityKey === 'string')
+        ? bundle.identityKey
+        : (Array.isArray(bundle.identityKey)
+          ? Array.from(bundle.identityKey).map(b => b.toString(16).padStart(2, '0')).join('')
+          : null);
+      const pq = await bridge.initiateHybridPQSession(peerId, peerHybridHex, { ourIdentityId: myId, peerIdentityPkHex: peerIdentityPkHexHybrid });
 
       _sessionMap.set(peerId, {
         sessionId: pq.sessionId,
@@ -819,7 +833,9 @@
           protocol: DR_PROTOCOL,
           hybridEnc: pq.enc,
           drPublicKey: pq.ourPublicKeyHex,
-          hybridBundleId: bundle._hybridKeyId || null
+          hybridBundleId: bundle._hybridKeyId || null,
+          // 安全码（方案 A）：本端 X25519 身份公钥 hex，供对端绑定 peer identity
+          identityKey: ourIdentityPkHex
         },
         sessionEstablished: true,
         rustSession: true,
@@ -923,15 +939,18 @@
       if (existing && existing.sessionId) {
         console.log('[DR Adapter] Protocol mismatch: stored=classical, init=hybrid -> rebuilding hybrid (adopt peer protocol)');
       }
+      const currentUserId = localStorage.getItem('fk_uid') || 'default';
+      const myId = await bridge.getIdentityForUser(currentUserId);
+
       console.log('[DR Adapter] Hybrid PQ session accept from ' + encodeURIComponent(JSON.stringify(peerId)) + ' (key_id=' + encodeURIComponent(JSON.stringify(cached.keyId)) + ')');
-      const dr = await bridge.acceptHybridSession(peerId, cached.keyId, aliceInit.hybridEnc);
+      // 安全码：对端 identity pk 来自 hybrid_init.identityKey（方案 A）；旧版消息无此字段则降级 null
+      const peerIdentityPkHexHybrid = aliceInit.identityKey || null;
+      if (!peerIdentityPkHexHybrid) console.warn('[DR Adapter] hybrid_init missing identityKey — binding degraded for ' + peerId);
+      const dr = await bridge.acceptHybridSession(peerId, cached.keyId, aliceInit.hybridEnc, { ourIdentityId: myId, peerIdentityPkHex: peerIdentityPkHexHybrid });
 
       if (aliceInit.drPublicKey) {
         await bridge.setPeerKey(dr.sessionId, aliceInit.drPublicKey);
       }
-
-      const currentUserId = localStorage.getItem('fk_uid') || 'default';
-      const myId = await bridge.getIdentityForUser(currentUserId);
       _sessionMap.set(peerId, {
         sessionId: dr.sessionId,
         identityId: myId,
