@@ -20,10 +20,20 @@ async function trySessionRecovery(peerId, conversationId) {
     const bundle = {
       identityKey: keys.identityKey,
       signedPreKey: keys.signedPrekey || keys.identityKey,
-      signedPreKeyId: 0,
-      oneTimePreKeys: []
+      signedPreKeyId: keys.signedPrekeyId || 0,
+      oneTimePreKeys: [],
+      identitySigningKey: keys.identitySigningKey || null,
+      signedPreKeySignature: keys.signedPreKeySignature || null,
+      // ⚠️ 2026-10-09 修复：recovery 必须走与正常发送相同的协议。
+      //    之前缺 hybrid 字段 → recovery 总走 classical → 覆盖掉 hybrid session → 双向失配。
+      _hybridKeyId: keys.hybridKeyId || null,
+      _hybridBundleHex: keys.hybridBundleHex || null,
+      _hybridMode: keys.hybridMode || null
     };
-    const sr = await Crypto.initiateSession(peerId, bundle);
+    console.log('[Recovery DEBUG] bundle keys:', Object.keys(bundle).join(','), 'iskType:', typeof bundle.identitySigningKey, 'iskLen:', bundle.identitySigningKey?.length, 'spsType:', typeof bundle.signedPreKeySignature, 'spsLen:', bundle.signedPreKeySignature?.length, 'hybrid:', !!bundle._hybridBundleHex);
+    const sr = (bundle._hybridBundleHex && Crypto.initiateHybridSession)
+      ? await Crypto.initiateHybridSession(peerId, bundle)
+      : await Crypto.initiateSession(peerId, bundle);
     if (!sr || !sr.initialMessage) return false;
     const dummy = await Crypto.encrypt(peerId, '🔄 安全会话已重建');
     const wire = { initMessage: sr.initialMessage, message: dummy };
@@ -44,6 +54,36 @@ async function trySessionRecovery(peerId, conversationId) {
     console.error('[Recovery] failed:', err && err.message ? err.message : err);
     return false;
   }
+}
+
+// ════════════════════════════════════════════════════════════════
+// 2026-10-09 修复#1：恢复握手单侧化 —— 防「双侧同时 initiate → 交叉握手 → 活锁」
+//   约定：fk_uid 字典序小者 = initiator（两端判断确定性一致）；
+//   大者只等对方 initiate，10s 内没等到（对方离线/卡住）再兜底自己发起，避免单侧化死锁。
+// ════════════════════════════════════════════════════════════════
+const _recoveryFallbackTimers = {};
+function _iAmRecoveryInitiator(peerId) {
+  const myId = localStorage.getItem('fk_uid') || '';
+  if (!myId || !peerId) return true; // 信息不全 → 保持旧行为，不阻塞收发
+  return myId < peerId;
+}
+async function maybeRecoverSession(peerId, conversationId) {
+  if (_iAmRecoveryInitiator(peerId)) {
+    return await trySessionRecovery(peerId, conversationId);
+  }
+  console.log('[Recovery] waiting for peer to initiate (tie-break: myUid > peerId):', peerId);
+  if (_recoveryFallbackTimers[peerId]) return false;
+  _recoveryFallbackTimers[peerId] = setTimeout(async () => {
+    delete _recoveryFallbackTimers[peerId];
+    try {
+      const Crypto = (typeof MessageCryptoV2 !== 'undefined') ? MessageCryptoV2 : MessageCrypto;
+      const has = (Crypto && Crypto.hasSession) ? await Crypto.hasSession(peerId) : false;
+      if (has) { console.log('[Recovery] peer initiated in time — no fallback needed for', peerId); return; }
+      console.warn('[Recovery] peer did not initiate in 10s — fallback initiate for', peerId);
+      await trySessionRecovery(peerId, conversationId);
+    } catch (e) { console.warn('[Recovery] fallback failed:', e && e.message ? e.message : e); }
+  }, 10000);
+  return false;
 }
 
 function connectWebSocket() {
@@ -108,6 +148,13 @@ function connectWebSocket() {
         }
 
         if (msg.type === 'new_message' && msg.from === STATE.currentPeerId) {
+          // FIX(voice): dispatch BEFORE the text decrypt below. Else the text path consumes
+          // the ratchet step and handleIncomingVoiceMessage's own decrypt sees a duplicate
+          // → returns null → `if (!audioData) return` → nothing rendered (对面收不到).
+          if (msg.messageType === 'voice' && typeof VoiceMessage !== 'undefined') {
+            VoiceMessage.handleIncomingVoiceMessage(msg);
+            return;
+          }
           let text;
           console.log('[WS-DEBUG] msg.from:', msg.from, 'currentPeerId:', STATE.currentPeerId)// v6: 前向保密解密 — 支持 hybrid PQ + v2 envelope + v1 兼容
           if (msg.envelope && typeof Crypto !== 'undefined') {
@@ -164,7 +211,12 @@ function connectWebSocket() {
             } catch (decryptErr) {
               // 断裂点 #3 修复：不静默降级，明确告警
               console.error('[WS v6] DECRYPT FAILED:', decryptErr && decryptErr.message ? decryptErr.message : decryptErr);
-              const recovered = await trySessionRecovery(msg.from, msg.conversationId);
+              // recovery guard 期内（刚建过 session），静默忽略——消息是旧 session 加密的
+              if (_recoveryGuard[msg.from] && Date.now() - _recoveryGuard[msg.from] < 30000) {
+                console.debug('[WS v6] Silently skipping — recovery guard active for', msg.from);
+                return;
+              }
+              const recovered = await maybeRecoverSession(msg.from, msg.conversationId);
               if (recovered) {
                 appendMessage(false, '🔄 正在重建安全会话…', Date.now());
                 return;
@@ -209,9 +261,9 @@ function connectWebSocket() {
           if (Crypto && msg.payload) {
             try {
               const acceptRust = msg.payload.responseMessage || msg.payload;
-              if (acceptRust && acceptRust.type === 'x3dh_accept_rust') {
+              if (acceptRust && (acceptRust.type === 'x3dh_accept_rust' || acceptRust.type === 'hybrid_accept_rust')) {
                 const result = await Crypto.receiveSession(msg.from, acceptRust);
-                console.log('[WS v9] Session confirmed from x3dh_accept_rust (from ' + encodeURIComponent(JSON.stringify(msg.from)) + ')');
+                console.log('[WS v9] Session confirmed from ' + acceptRust.type + ' (from ' + encodeURIComponent(JSON.stringify(msg.from)) + ')');
               }
             } catch (e) {
               console.error('[WS v9] receiveSession failed:', encodeURIComponent(JSON.stringify(e.message)));

@@ -138,25 +138,16 @@
         _currentUserId = currentUserId;
       }
 
-      // Per-user identity isolation: 同机双账号时各用独立 identity
-      const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
+      // Per-user identity isolation via Rust-persisted map
+      //
+      // The localStorage identity reference was fragile — WebView2 profile
+      // resets or binary recompiles would orphan the identity on disk and
+      // generate a new one. Now Rust maintains a userId → identity_id map
+      // in identity_map.json, so the same identity is reused across restarts.
+      const identityId = await bridge.getIdentityForUser(currentUserId);
 
-      // Ensure we have an identity
-      let identityId = localStorage.getItem(identityKey);
-      let identity;
-      if (identityId) {
-        try {
-          identity = await bridge.getIdentityPublic(identityId);
-        } catch (e) {
-          console.warn('[DR Adapter] Identity not found, generating new...');
-          identityId = null;
-        }
-      }
-      if (!identityId) {
-        identity = await bridge.generateIdentity();
-        identityId = identity.identityId;
-        localStorage.setItem(identityKey, identityId);
-      }
+      // Load identity public metadata (no secret key exposure)
+      const identity = await bridge.getIdentityPublic(identityId);
       _identityBundles[identityId] = identity;
 
       // Build full pre-key bundle via Rust spk_get_public:
@@ -254,9 +245,7 @@
         _identityBundles = {};
         _currentUserId = currentUserId;
       }
-      const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
-      let myId = localStorage.getItem(identityKey);
-      if (!myId) throw new Error('No identity generated — call getMyPreKeyBundle() first');
+      const myId = await bridge.getIdentityForUser(currentUserId);
 
       // Extract peer's identity key from bundle
       let peerIdentityPkHex;
@@ -297,8 +286,8 @@
 
       const x3dh = await bridge.x3dhInitiate(myId, peerIdentityPkHex, peerSpkHex, peerSigningPkHex, peerSpkSigHex);
 
-      // Init DR session
-      const dr = await bridge.initSession(x3dh.ssId, peerId, true);
+      // Init DR session (bind identity keys so dr_safety_number works)
+      const dr = await bridge.initSession(x3dh.ssId, peerId, true, { ourIdentityId: myId, peerIdentityPkHex });
 
       // Store mapping
       _sessionMap.set(peerId, {
@@ -335,6 +324,15 @@
      */
     async receiveSession(peerId, initMessage) {
       if (!_initialized) await this.init();
+
+      // 2026-10-09 修复#3：过滤伪自环（历史 initMessage 路径会生成 peerId === 自己 的假 session）
+      {
+        const _myUid = localStorage.getItem('fk_uid');
+        if (_myUid && peerId === _myUid) {
+          console.warn('[DR Adapter] Ignoring self-initiate (peerId === myUid): ' + peerId);
+          return null;
+        }
+      }
 
       // Bob/Alice receives an accept (x3dh or hybrid) — set peer DR key on
       // the existing session.  MUST be checked BEFORE version check, since
@@ -375,11 +373,10 @@
         _identityBundles = {};
         _currentUserId = currentUserId;
       }
-        const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
-        let myId = localStorage.getItem(identityKey);
-        if (!myId) throw new Error('No identity — call getMyPreKeyBundle() first');
+        const myId = await bridge.getIdentityForUser(currentUserId);
         const syntheticSsId = 'confirm_' + peerId;
-        const dr = await bridge.initSession(syntheticSsId, peerId, false);
+        // 合成路径：有对端 identity 就绑，无则降级为 null（不阻断握手）
+        const dr = await bridge.initSession(syntheticSsId, peerId, false, { ourIdentityId: myId, peerIdentityPkHex: initMessage.identityKey || null });
         if (initMessage.drPublicKey) {
           await bridge.setPeerKey(dr.sessionId, initMessage.drPublicKey);
         }
@@ -426,10 +423,14 @@
       const sameHandshake = existing && existing.initEphemeralKey && initMessage.ephemeralKey
         && existing.initEphemeralKey === initMessage.ephemeralKey;
       // 只要 Rust 侧 session 还在就复用（不要求 initEphemeralKey 匹配）
-      if (existing && existing.sessionId && existingValid) {
-        if (peerDrPublicKeyHex) {
+      // ⚠️ 2026-10-09 修复：仅当已有 session 也是 classical 时才复用。
+      //    若已有是 hybrid 而收到 classical init → 重建，采用对端协议（否则双向失配）。
+      if (existing && existing.sessionId && existingValid && existing.hybrid !== true) {
+        if (peerDrPublicKeyHex && !existing.peerKeyInitialized) {
           try {
             await bridge.setPeerKey(existing.sessionId, peerDrPublicKeyHex);
+            existing.peerKeyInitialized = true;
+            _saveSessionMap();
           } catch (e) {
             console.warn('[DR Adapter] setPeerKey (idempotent) failed:', e && e.message);
           }
@@ -460,10 +461,11 @@
         _identityBundles = {};
         _currentUserId = currentUserId;
       }
-      const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
-      let myId = localStorage.getItem(identityKey);
-      if (!myId) throw new Error('No identity generated — call getMyPreKeyBundle() first');
+      const myId = await bridge.getIdentityForUser(currentUserId);
 
+      if (existing && existing.sessionId && existing.hybrid === true) {
+        console.log('[DR Adapter] Protocol mismatch: stored=hybrid, init=classical -> rebuilding classical (adopt peer protocol)');
+      }
       // Parse initiator's keys (hex strings)
       const peerIdentityPkHex = initMessage.identityKey;
       const peerEphemeralPkHex = initMessage.ephemeralKey;
@@ -473,8 +475,8 @@
       // X3DH responder
       const x3dh = await bridge.x3dhRespond(myId, peerIdentityPkHex, peerEphemeralPkHex);
 
-      // Init DR session
-      const dr = await bridge.initSession(x3dh.ssId, peerId, false);
+      // Init DR session (bind identity keys so dr_safety_number works)
+      const dr = await bridge.initSession(x3dh.ssId, peerId, false, { ourIdentityId: myId, peerIdentityPkHex });
 
       // Set peer DR key
       await bridge.setPeerKey(dr.sessionId, peerDrPublicKeyHex || peerEphemeralPkHex);
@@ -485,7 +487,8 @@
         identityId: myId,
         version: DR_VERSION,
         createdAt: Date.now(),
-        initEphemeralKey: initMessage.ephemeralKey
+        initEphemeralKey: initMessage.ephemeralKey,
+        peerKeyInitialized: true
       });
       _saveSessionMap();
 
@@ -793,12 +796,23 @@
         _identityBundles = {};
         _currentUserId = currentUserId;
       }
-      const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
-      const myId = localStorage.getItem(identityKey);
-      if (!myId) throw new Error('No identity generated — call getMyPreKeyBundle() first');
+      const myId = await bridge.getIdentityForUser(currentUserId);
 
       console.log('[DR Adapter] Hybrid PQ session initiate with ' + peerId + ' (X25519 + ML-KEM-768)');
-      const pq = await bridge.initiateHybridPQSession(peerId, peerHybridHex);
+
+      // 安全码：hybrid 路径也要把身份键绑到 DR 会话（否则 dr_safety_number 报 our identity not bound）。
+      // 本端 identity pk 随 hybrid_init 发给对端；对端 identity pk 取 peer bundle 的 identityKey。
+      let ourIdentityPkHex = null;
+      try {
+        const idPub = await bridge.getIdentityPublic(myId);
+        ourIdentityPkHex = (idPub && idPub.publicKeyHex) || null;
+      } catch (e) { /* degrade: 无 identity 公钥时仅记录不阻断 */ }
+      const peerIdentityPkHexHybrid = (typeof bundle.identityKey === 'string')
+        ? bundle.identityKey
+        : (Array.isArray(bundle.identityKey)
+          ? Array.from(bundle.identityKey).map(b => b.toString(16).padStart(2, '0')).join('')
+          : null);
+      const pq = await bridge.initiateHybridPQSession(peerId, peerHybridHex, { ourIdentityId: myId, peerIdentityPkHex: peerIdentityPkHexHybrid });
 
       _sessionMap.set(peerId, {
         sessionId: pq.sessionId,
@@ -806,6 +820,8 @@
         version: DR_VERSION,
         hybrid: true,
         pqMode: 'x25519+mlkem768',
+        // 2026-10-09 修复#2：记录本次握手指纹（本端 init 的 hybridEnc+drPublicKey）
+        hybridFingerprint: this._handshakeFingerprint(pq.enc, pq.ourPublicKeyHex),
         createdAt: Date.now()
       });
       _saveSessionMap();
@@ -817,12 +833,32 @@
           protocol: DR_PROTOCOL,
           hybridEnc: pq.enc,
           drPublicKey: pq.ourPublicKeyHex,
-          hybridBundleId: bundle._hybridKeyId || null
+          hybridBundleId: bundle._hybridKeyId || null,
+          // 安全码（方案 A）：本端 X25519 身份公钥 hex，供对端绑定 peer identity
+          identityKey: ourIdentityPkHex
         },
         sessionEstablished: true,
         rustSession: true,
         hybridSession: true
       };
+    },
+
+    /**
+     * 2026-10-09 修复#2：握手指纹。
+     * 取对端 init 的 hybridEnc + drPublicKey（每次握手唯一）做确定性摘要，
+     * 用于区分「同一次握手的重复到达」与「对端重新发起的新握手 / 分叉自救」。
+     * 同步、无依赖（FNV-1a 双通道 64-bit），非安全用途。
+     */
+    _handshakeFingerprint(hybridEnc, drPublicKey) {
+      if (!hybridEnc && !drPublicKey) return null;
+      const s = String(hybridEnc || '') + ':' + String(drPublicKey || '');
+      let h1 = 0x811c9dc5, h2 = 0x1000193;
+      for (let i = 0; i < s.length; i++) {
+        const c = s.charCodeAt(i);
+        h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+        h2 = Math.imul(h2 ^ (c + i), 0x85ebca6b) >>> 0;
+      }
+      return h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0');
     },
 
     /**
@@ -835,12 +871,63 @@
      */
     async receiveHybridSession(peerId, aliceInit) {
       if (!_initialized) await this.init();
+      // 2026-10-09 修复#3：过滤伪自环
+      {
+        const _myUid = localStorage.getItem('fk_uid');
+        if (_myUid && peerId === _myUid) {
+          console.warn('[DR Adapter] Ignoring self-initiate (peerId === myUid): ' + peerId);
+          return null;
+        }
+      }
       if (!aliceInit || aliceInit.type !== 'hybrid_init_rust') {
         return this.receiveSession(peerId, aliceInit);
       }
 
       const bridge = _getRatchetBridge();
       if (!bridge) throw new Error('[DR Adapter] Rust DR backend not available');
+
+      // ═══ [FIX] 幂等：已有有效 session 直接复用，不重建 ═══
+      const existing = _sessionMap.get(peerId);
+      // 2026-10-09 修复#2：握手指纹 —— 用对端 init 的 hybridEnc+drPublicKey 指纹区分
+      //   「同一次握手重复到达」（fp 相同 → 复用）与「对端重新发起 / 分叉自救」（fp 不同 → 重建）。
+      //   旧记录无 fingerprint 视为不匹配 → 重建（不再锁死）。
+      //   注：ss_id 是本地生成的、两端不同，不能用于比对。
+      const incomingFp = this._handshakeFingerprint(aliceInit.hybridEnc, aliceInit.drPublicKey);
+      // ⚠️ 2026-10-09 修复：仅当已有 session 也是 hybrid 时才复用。
+      //    否则（已有是 classical 而收到 hybrid init 的反向场景）重建，采用对端协议。
+      if (existing && existing.sessionId && existing.hybrid === true) {
+        let valid = false;
+        try { valid = await bridge.sessionExists(existing.sessionId); } catch { valid = false; }
+        const sameHandshakeFp = valid && !!incomingFp && existing.hybridFingerprint === incomingFp;
+        if (valid && !sameHandshakeFp) {
+          console.log('[DR Adapter] Hybrid fingerprint mismatch — rebuilding (old=' + String(existing.hybridFingerprint).slice(0, 12) + ' new=' + String(incomingFp).slice(0, 12) + ') for ' + encodeURIComponent(JSON.stringify(peerId)));
+        }
+        if (sameHandshakeFp) {
+          if (aliceInit.drPublicKey && !existing.peerKeyInitialized) {
+            try {
+              await bridge.setPeerKey(existing.sessionId, aliceInit.drPublicKey);
+              existing.peerKeyInitialized = true;
+              _saveSessionMap();
+            } catch (e) { /* ignore */ }
+          }
+          console.log('[DR Adapter] Reusing existing hybrid session for ' + encodeURIComponent(JSON.stringify(peerId)));
+          const ourSendKey = await bridge.getSendKey(existing.sessionId);
+          return {
+            responseMessage: {
+              type: 'hybrid_accept_rust',
+              version: DR_VERSION,
+              protocol: DR_PROTOCOL,
+              drPublicKey: ourSendKey
+            },
+            sessionEstablished: true,
+            sessionReady: true,
+            rustSession: true,
+            hybridSession: true,
+            reused: true
+          };
+        }
+      }
+      // ═══ [FIX END] ═══
 
       const cacheKey = this._hybridStorageKey();
       let cached = null;
@@ -849,22 +936,29 @@
         throw new Error('[DR Adapter] No hybrid pre-key cached — call ensureHybridPreKey() before accepting PQ sessions');
       }
 
+      if (existing && existing.sessionId) {
+        console.log('[DR Adapter] Protocol mismatch: stored=classical, init=hybrid -> rebuilding hybrid (adopt peer protocol)');
+      }
+      const currentUserId = localStorage.getItem('fk_uid') || 'default';
+      const myId = await bridge.getIdentityForUser(currentUserId);
+
       console.log('[DR Adapter] Hybrid PQ session accept from ' + encodeURIComponent(JSON.stringify(peerId)) + ' (key_id=' + encodeURIComponent(JSON.stringify(cached.keyId)) + ')');
-      const dr = await bridge.acceptHybridSession(peerId, cached.keyId, aliceInit.hybridEnc);
+      // 安全码：对端 identity pk 来自 hybrid_init.identityKey（方案 A）；旧版消息无此字段则降级 null
+      const peerIdentityPkHexHybrid = aliceInit.identityKey || null;
+      if (!peerIdentityPkHexHybrid) console.warn('[DR Adapter] hybrid_init missing identityKey — binding degraded for ' + peerId);
+      const dr = await bridge.acceptHybridSession(peerId, cached.keyId, aliceInit.hybridEnc, { ourIdentityId: myId, peerIdentityPkHex: peerIdentityPkHexHybrid });
 
       if (aliceInit.drPublicKey) {
         await bridge.setPeerKey(dr.sessionId, aliceInit.drPublicKey);
       }
-
-      const currentUserId = localStorage.getItem('fk_uid') || 'default';
-      const identityKey = 'fibemate_rust_identity_id_' + currentUserId;
-      const myId = localStorage.getItem(identityKey) || null;
       _sessionMap.set(peerId, {
         sessionId: dr.sessionId,
         identityId: myId,
         version: DR_VERSION,
         hybrid: true,
         pqMode: 'x25519+mlkem768',
+        // 2026-10-09 修复#2：记录本次接受的握手指纹，供后续握手比对
+        hybridFingerprint: incomingFp,
         createdAt: Date.now()
       });
       _saveSessionMap();

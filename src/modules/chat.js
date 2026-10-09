@@ -119,13 +119,31 @@ async function loadMessages(conversationId) {
           // 必须先 receiveSession 建立会话，再解密真正消息。
           // （与 websocket.js 实时接收逻辑对齐；缺失会导致历史首条消息无法解密）
           if (wire && wire.initMessage && Crypto.receiveSession) {
-            try {
-              await Crypto.receiveSession(m.senderUserId, wire.initMessage);
-              console.log('[Messages v5] X3DH session established from history initMessage');
-            } catch (initErr) {
-              console.error('[Messages v5] receiveSession failed:', initErr.message);
+            // 跳过历史 initMessage——如果已有有效 session（recovery 刚建好的），
+            // 防止覆盖导致 AEAD 失败无限循环
+            if (typeof Crypto.hasSession === 'function') {
+              const has = await Crypto.hasSession(m.senderUserId);
+              if (has) {
+                console.log('[Messages v5] Skipping receiveSession — valid session exists for ' + m.senderUserId);
+                wire = wire.message;
+              } else {
+                try {
+                  await Crypto.receiveSession(m.senderUserId, wire.initMessage);
+                  console.log('[Messages v5] X3DH session established from history initMessage');
+                } catch (initErr) {
+                  console.error('[Messages v5] receiveSession failed:', initErr.message);
+                }
+                wire = wire.message;
+              }
+            } else {
+              try {
+                await Crypto.receiveSession(m.senderUserId, wire.initMessage);
+                console.log('[Messages v5] X3DH session established from history initMessage');
+              } catch (initErr) {
+                console.error('[Messages v5] receiveSession failed:', initErr.message);
+              }
+              wire = wire.message;
             }
-            wire = wire.message; // 取真正加密的消息
           }
 
           const envelope = wire;
@@ -148,15 +166,27 @@ async function loadMessages(conversationId) {
             // 优先用后端返回的明文，否则占位显示
             text = m.content || m.plaintext || '[已发送]';
           } else {
+            // Short-circuit: 如果这条消息之前已解密失败，不再重试
+            const mid = m.id || m._id;
+            const failedKey = 'fibemate_df_' + mid;
+            if (mid && localStorage.getItem(failedKey)) {
+              text = '[解密失败]';
+              continue;
+            }
             text = await Crypto.decrypt(m.senderUserId, envelope);
             // null = duplicate / replay → silently skip this message
             if (text === null) {
-              console.debug('[Messages v5] Skipping duplicate message:', m.id || m._id);
+              console.debug('[Messages v5] Skipping duplicate message:', mid);
               continue;
             }
           }
         } catch (e) {
           console.error('[Messages v5] Decrypt failed:', e.message);
+          // 标记这条消息为解密失败，下次 loadMessages 不再重试
+          const mid = m.id || m._id;
+          if (mid) {
+            try { localStorage.setItem('fibemate_df_' + mid, '1'); } catch (_) {}
+          }
           text = isSent ? '[已发送]' : `⚠️ 解密失败: ${e.message}`;
         }
       } else if (m.encryptedContent && typeof MessageCrypto !== 'undefined') {

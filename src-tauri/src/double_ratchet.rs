@@ -381,15 +381,14 @@ impl SessionManager {
         let state = sessions.get_mut(session_id).ok_or("Session not found")?;
 
         if state.recv_public_key == [0u8; 32] {
-            // First peer key received — just store it. Chain keys were already
+            // First peer key received — store it. Chain keys were already
             // derived symmetrically at init, so both sides' message 1 decrypts.
             // A DH ratchet step is triggered later by decrypt_message only when
             // the peer rotates their DH public key.
             state.recv_public_key = peer_public_key;
-        } else {
-            // Subsequent key update — just store it.
-            state.recv_public_key = peer_public_key;
         }
+        // recv_public_key already set → skip.
+        // decrypt_message handles subsequent updates via ratchet_step.
 
         Ok(())
     }
@@ -483,6 +482,7 @@ impl SessionManager {
     ) -> Result<Option<Vec<u8>>, String> {
         let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
         let state = sessions.get_mut(session_id).ok_or("Session not found")?;
+        let saved_state = state.clone();
 
         // 1. Handshake / DH ratchet
         if state.recv_public_key == [0u8; 32] {
@@ -561,14 +561,23 @@ impl SessionManager {
             state.recv_message_num = message.message_num + 1;
         }
 
-        // 4. Decrypt
+        // 4. Decrypt — MUST restore state on failure (2026-10-06 fix:
+        //    without rollback, a message rejected by AEAD permanently advances
+        //    the ratchet + chain state, causing retransmissions to be
+        //    misidentified as replay and silently dropped forever).
         let associated_data = &message.public_key;
-        let plaintext = AesGcmEncryptor::decrypt(
+        let plaintext = match AesGcmEncryptor::decrypt(
             &message_key,
             &message.nonce,
             &message.ciphertext,
             associated_data,
-        )?;
+        ) {
+            Ok(p) => p,
+            Err(e) => {
+                *state = saved_state;
+                return Err(format!("AEAD decrypt failed: {}", e));
+            }
+        };
         Ok(Some(plaintext))
     }
 

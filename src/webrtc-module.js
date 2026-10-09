@@ -35,7 +35,8 @@ const WebRTCModule = (() => {
 
     // 设置 WebSocket 通话信令处理
     function setupWebSocketHandlers() {
-        if (!ws) return;
+        if (!ws || ws._webrtcWrapped) return;
+        ws._webrtcWrapped = true;
 
         // 后端 WS 消息均经 WsPadding 混淆，需 unpad 后解析
         const originalHandler = ws.onmessage;
@@ -173,8 +174,10 @@ const WebRTCModule = (() => {
                 video: callType === 'video'
             });
 
-            // 创建 PeerConnection
-            createPeerConnection();
+            // 复用 handleIncomingOffer 已建的 PC（已有 remote offer），避免 InvalidStateError
+            if (!peerConnection) {
+                createPeerConnection();
+            }
 
             // 添加本地轨道
             localStream.getTracks().forEach(track => {

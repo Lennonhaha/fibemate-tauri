@@ -132,6 +132,22 @@
       };
     },
 
+    /**
+     * Get or create an identity for a given userId.
+     *
+     * Rust-side userId → identity_id map persists across restarts.
+     * Replaces fragile localStorage.getItem('fibemate_rust_identity_id_' + userId).
+     *
+     * @param {string} userId — the user's account ID (fk_uid)
+     * @returns {Promise<string>} identity_id string
+     */
+    async getIdentityForUser(userId) {
+      if (!this.initialized) this.init();
+      const identityId = await invoke()('get_identity_for_user', { userId });
+      this._identityId = identityId;
+      return identityId;
+    },
+
     /** List all stored identities. */
     async listIdentities() {
       if (!this.initialized) this.init();
@@ -520,10 +536,10 @@
      * @param {string} encHex — from the initiator's hybridBegin()
      * @returns {Promise<{sessionId, ourPublicKeyHex}>}
      */
-    async acceptHybridSession(peerName, keyId, encHex) {
+    async acceptHybridSession(peerName, keyId, encHex, identity) {
       if (!this.initialized) this.init();
       const acc = await this.hybridAccept(keyId, encHex);
-      const dr = await this.initSession(acc.ssId, peerName, false);
+      const dr = await this.initSession(acc.ssId, peerName, false, identity);
       console.log(`[RatchetBridge] Hybrid DR session created: ${encodeURIComponent(JSON.stringify(dr.sessionId))} with ${encodeURIComponent(JSON.stringify(peerName))}`);
       return {
         sessionId: dr.sessionId,
@@ -539,10 +555,10 @@
      * @returns {Promise<{sessionId, ourPublicKeyHex, enc, initMessage}>}
      *   initMessage = { type:'hybrid_init', enc } — send to the responder.
      */
-    async initiateHybridPQSession(peerName, peerBundleHex) {
+    async initiateHybridPQSession(peerName, peerBundleHex, identity) {
       if (!this.initialized) this.init();
       const beg = await this.hybridBegin(peerBundleHex);
-      const dr = await this.initSession(beg.ssId, peerName, true);
+      const dr = await this.initSession(beg.ssId, peerName, true, identity);
       console.log(`[RatchetBridge] Hybrid DR session created: ${encodeURIComponent(JSON.stringify(dr.sessionId))} with ${encodeURIComponent(JSON.stringify(peerName))}`);
       return {
         sessionId: dr.sessionId,

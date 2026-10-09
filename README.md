@@ -4,7 +4,7 @@
 Built on Tauri v2 (Rust backend + WebView frontend), designed for the quantum era.
 
 [![Rust](https://img.shields.io/badge/rust-1.85+-orange)]()
-[![Tests](https://img.shields.io/badge/tests-130%2F130%20passed-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-131%2F131%20passed-brightgreen)]()
 [![PQ](https://img.shields.io/badge/PQC-ML--KEM--768%20%7C%20ML--DSA--65-blue)]()
 [![License](https://img.shields.io/badge/license-GPLv3-blue)]()
 
@@ -23,7 +23,7 @@ Built on Tauri v2 (Rust backend + WebView frontend), designed for the quantum er
 ┌──────────────────────────────────────────────────────────────┐
 │  WebView (JS)                    Rust Backend                │
 │  ┌─────────────┐  invoke()      ┌─────────────────────────┐ │
-│  │  UI layer   │ ─────────────▶ │ 44 Tauri commands        │ │
+│  │  UI layer   │ ─────────────▶ │ 45 Tauri commands        │ │
 │  │ keyId only  │                │ ┌─────────────────────┐ │ │
 │  │ ss_id only  │                │ │ X3DH (3-DH, X25519) │ │ │
 │  │ session_id  │                │ │ Double Ratchet      │ │ │
@@ -143,11 +143,11 @@ npx tauri build        # production binary
 ```bash
 cd src-tauri
 cargo test --release --lib
-# Expected: 130 tests, 0 failures
+# Expected: 131 tests, 0 failures
 ```
 
 ```
-test result: ok. 130 passed; 0 failed; 0 ignored; 0 measured
+test result: ok. 131 passed; 0 failed; 0 ignored; 0 measured
 ```
 
 Coverage highlights (all real, verified 2026-09-02):
@@ -167,7 +167,7 @@ fibemate-tauri/
 ├── src/                          # Frontend (HTML/JS/CSS) — no key material
 ├── src-tauri/                    # Rust backend
 │   ├── src/
-│   │   ├── lib.rs                # App entry + 44 command registrations
+│   │   ├── lib.rs                # App entry + 45 command registrations
 │   │   ├── double_ratchet.rs     # Double Ratchet + X3DH + session encryption
 │   │   ├── key_store.rs          # AES-256-GCM + DPAPI encrypted storage
 │   │   ├── audit.rs              # Structured audit log
@@ -187,7 +187,7 @@ fibemate-tauri/
 └── package.json
 ```
 
-### Tauri Commands (44 registered, grouped by layer)
+### Tauri Commands (45 registered, grouped by layer)
 
 | Layer | Commands |
 |-------|----------|
@@ -234,7 +234,7 @@ fibemate-tauri/
 - **RFC 5869**: HKDF-SHA256
 - **RFC 7748**: X25519
 - **Signal Protocol**: Double Ratchet + X3DH
-- **GB/T 32918 / 32905**: SM2 / SM3 (GM interop)
+- **GB/T 32918 / 32905 / 32907**: SM2 / SM3 / SM4 (GM interop)
 
 ---
 
@@ -245,13 +245,39 @@ fibemate-tauri/
 - [x] Double Ratchet fully in Rust
 - [x] X3DH with independent SPK (DH2 ≠ DH3)
 - [x] AES-256-GCM + DPAPI encrypted KeyStore
-- [x] 130/130 lib tests passing
+- [x] 131/131 lib tests passing
 - [ ] Hybrid PQ handshake (wire `pq/hybrid.rs` into X3DH) — P2
 - [ ] Session-level PQ ratchet (ML-KEM inside ratchet, PQXDH Level 3) — P2
 - [ ] P2P WebRTC with PQ key exchange
 - [ ] Mobile (Tauri Mobile)
 - [ ] Formal security audit
 - [ ] FIPS 140-3 validation
+
+---
+
+## ⚖️ 商用密码合规声明 / Commercial Cryptography Compliance
+
+> 以下为工程口径的合规说明，**不构成法律意见**；发布/商用前请自行或由律师核定。
+
+### 🇨🇳 中国境内
+- 本项目使用的 **SM2 / SM3 / SM4** 均依据公开国家标准实现（GB/T 32918、GB/T 32905、GB/T 32907）——算法本身为公开标准，不含国家秘密。
+- 依据《中华人民共和国密码法》与《商用密码管理条例》（2023 年修订）：
+  - **本仓库**是开源参考实现，不销售密码产品/服务，不自行声明为“商用密码产品”；
+  - **若使用者**将其作为商用密码产品/服务对外提供，或属于关键信息基础设施运营者，则需自行满足商用密码**检测认证 / 应用安全性评估**等法定义务；
+  - 商用密码的**进出口**可能需依规办理许可；跨境提供亦受相关法规约束。
+- 面向中国境内公众提供**即时通信服务**另有实名与许可要求（《互联网用户账号信息管理规定》《电信条例》等）。**本项目为工程演示平台，非运营服务，不承担即时通信服务提供者义务；若使用者将其部署为公开服务，须自行完成实名认证、ICP 备案及内容审核。**
+
+### 🔑 密钥与凭据
+- 本仓库**不包含**任何私钥、口令、令牌或生产配置；密钥在本地生成并存放于**仓库之外**（桌面端为应用数据目录 + 操作系统凭据保护）。
+- 请勿向仓库提交 `.env`、`*.pem`、`*.key`、`*.jks` 等；`.gitignore` 已默认忽略。
+- CI 与仓库中不使用生产凭据。
+
+### 🌐 出口与许可
+- 密码软件在部分司法辖区（例如 EU 双重用途条例、美国 EAR）可能属于受控物项；分发/出口前请自行判定适用分类与申报义务。**本仓库不含加密硬件，为纯软件实现；出口管制分类责任在部署方。**
+
+### 📄 许可证
+- 本项目以 **GPL-3.0-only** 发布：分发衍生作品须以相同许可开源并提供源码。**使用者若将其集成至闭源产品，须自行评估 GPL 传染性，或寻求商业许可。**
+- GPLv3 **不要求**“网络服务即开源”（区别于 AGPL）——若未来需要网络级 copyleft，需单独评估。
 
 ---
 

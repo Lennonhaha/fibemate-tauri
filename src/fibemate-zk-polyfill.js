@@ -20,6 +20,7 @@
       return {
         success: true,
         token: data.token,
+        refreshToken: data.refreshToken || null, // TokenGuard: needed for silent renewal
         userId: data.userId || data.user_id,
         displayName: data.displayName || data.display_name || username,
         publicKey: data.publicKey || ''
@@ -58,6 +59,7 @@
       return {
         success: true,
         token: data.token,
+        refreshToken: data.refreshToken || null, // TokenGuard: needed for silent renewal
         userId: data.userId || data.user_id,
         displayName: data.displayName || data.display_name || username,
         publicKey: publicKeyHex

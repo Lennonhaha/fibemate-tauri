@@ -226,6 +226,21 @@ class AutoReconnect {
 
   // 增强的 WebSocket 连接
   enhancedConnect() {
+    // FIX(ws-single-handler 2026-10-10): 本函数原先自行新建第二条 WebSocket 并安装旧版
+    // onmessage 处理器，绕过 websocket.js 的正规接收路径（导致首条消息被丢弃 /
+    // 'Received: undefined' 噪声）。现统一复用 connectWebSocket()，仅补 onclose 重连钩子。
+    if (typeof connectWebSocket === 'function') {
+      console.log('[WS Enhanced] delegating to connectWebSocket()');
+      connectWebSocket();
+      if (STATE.ws) {
+        const prevClose = STATE.ws.onclose;
+        STATE.ws.onclose = (ev) => {
+          try { if (typeof prevClose === 'function') prevClose(ev); } catch (e) {}
+          this.attemptReconnect();
+        };
+      }
+      return;
+    }
     const token = localStorage.getItem('fk_token');
     if (!token) return;
 
@@ -264,6 +279,8 @@ class AutoReconnect {
         console.error('[WS Enhanced] Error:', err);
       };
       
+      // FIX(ws-single-handler 2026-10-10): 已停用——见上文 enhancedConnect() 复用 connectWebSocket()。
+      /*
       STATE.ws.onmessage = async (e) => {
         try {
           let raw;
@@ -280,6 +297,7 @@ class AutoReconnect {
           console.error('[WS Enhanced] Parse error:', err);
         }
       };
+      */
     } catch (err) {
       console.error('[WS Enhanced] Connect error:', err);
       this.attemptReconnect();
@@ -307,7 +325,7 @@ class AutoReconnect {
   async handleMessage(msg) {
     switch (msg.type) {
       case 'new_message':
-        if (msg.from === currentPeerId) {
+        if (msg.from === STATE.currentPeerId) {
           let text = msg.encryptedContent ? 
             await MessageCrypto.decrypt(msg.from, msg.encryptedContent) :
             decodeCiphertext(msg.ciphertext);
@@ -335,7 +353,7 @@ class AutoReconnect {
 
   showTypingIndicator(from) {
     const statusEl = document.getElementById('chatPeerStatus');
-    if (statusEl && from === currentPeerId) {
+    if (statusEl && from === STATE.currentPeerId) {
       statusEl.textContent = 'typing...';
       setTimeout(() => {
         statusEl.textContent = 'End-to-end encrypted · ML-KEM-768';
@@ -537,9 +555,23 @@ async function deleteMessage(messageId) {
 // ================================================
 
 function initEnhancedFeatures() {
-  // 替换原有的 WebSocket 连接
-  const originalConnect = connectWebSocket;
-  connectWebSocket = () => autoReconnect.enhancedConnect();
+  // [FIX 2026-10-09] 不再劫持 connectWebSocket。
+  // 原因：enhancedConnect() 是旧 API（msg.encryptedContent / MessageCrypto.decrypt），
+  // 且 handleMessage 引用裸 currentPeerId，会覆盖 websocket.js 中正确的 E2EE 处理器
+  // （MessageCryptoV2 + envelope/X3DH 全局握手），并额外新建第二条 WS。
+  // 连接统一走 websocket.js 的真实实现（含 WebRTC init + onclose 自动重连）。
+  // const originalConnect = connectWebSocket;
+  // connectWebSocket = () => autoReconnect.enhancedConnect();
+  
+  // [FIX] WebRTCModule 此时已加载（webrtc-module.js defer 在 features 之后）
+  // 在现有 WS-A 上补调 init，避免重连才创建第二条 WS
+  if (typeof WebRTCModule !== 'undefined' && STATE.ws && STATE.ws.readyState === WebSocket.OPEN) {
+    if (!STATE.ws._webrtcWrapped) {
+      WebRTCModule.init(STATE.ws);
+      STATE.ws._webrtcWrapped = true;
+      console.log('[WebRTC] Module initialized on existing WS');
+    }
+  }
   
   // 添加主题切换按钮
   const themeBtn = document.createElement('button');
@@ -548,7 +580,7 @@ function initEnhancedFeatures() {
   themeBtn.style.cssText = `
     position: fixed;
     bottom: 20px;
-    right: 20px;
+    right: 80px;
     width: 48px;
     height: 48px;
     border-radius: 50%;

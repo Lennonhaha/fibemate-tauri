@@ -357,6 +357,9 @@ function handleSearch(query) {
  */
 async function initBackendIntegrations() {
   console.log('[Backend] Initializing integrations...');
+
+  // TokenGuard: refresh the 2h access token before it expires (refresh token valid 7d)
+  try { if (window.TokenGuard) TokenGuard.start(); } catch (e) { console.warn('[TokenGuard] start failed:', e && e.message); }
   
   try {
     // Register device on first run
