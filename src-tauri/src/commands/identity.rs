@@ -585,7 +585,6 @@ pub fn x3dh_respond(
 /// resets, binary recompiles, and account switches.
 #[tauri::command]
 pub fn get_identity_for_user(state: State<CryptoState>, user_id: String) -> Result<String, String> {
-    println!("[get_identity_for_user] user_id={:?}", user_id);
     use std::collections::HashMap;
 
     let map_path = state
