@@ -287,21 +287,21 @@ async function verifyContactSafetyNumbers(contactId) {
     // Priority 1: Use MessageCryptoV2 with real X3DH identity keys
     if (typeof MessageCryptoV2 !== 'undefined' && MessageCryptoV2.getSafetyNumberFingerprint) {
       try {
-        // Get contact's identity key from session
-        const session = await MessageCryptoV2._getSession(contactId);
-        
-        if (session && session.theirIdentityKey) {
-          // Use real X3DH identity keys to generate safety numbers
-          const fingerprint = await MessageCryptoV2.getSafetyNumberFingerprint(
-            localStorage.getItem('fk_user_id') || 'me',
-            contactId,
-            session.theirIdentityKey
-          );
-          
-          // Parse fingerprint string into array of 5-digit numbers
-          safetyNumbers = fingerprint.split(' ').filter(s => s.length === 5);
-          keySource = 'x3dh_session';
-          console.log('[Safety] Generated from real X3DH identity keys');
+        // Rust `dr_safety_number` is session-based: one arg = peerId.
+        const hasSession = MessageCryptoV2.hasSession
+          ? await MessageCryptoV2.hasSession(contactId)
+          : false;
+
+        if (hasSession) {
+          const sn = await MessageCryptoV2.getSafetyNumberFingerprint(contactId);
+          const fingerprint = sn && sn.fingerprint;
+
+          if (fingerprint) {
+            // "XXXXX XXXXX XXXXX XXXXX XXXXX" -> 5 groups of 5
+            safetyNumbers = String(fingerprint).split(' ').filter(s => s.length === 5);
+            keySource = 'x3dh_session';
+            console.log('[Safety] Generated from real X3DH identity keys (rust dr_safety_number)');
+          }
         }
       } catch (cryptoErr) {
         console.warn('[Safety] Session key generation failed:', cryptoErr);
@@ -318,13 +318,10 @@ async function verifyContactSafetyNumbers(contactId) {
         if (bundleRes.ok) {
           const bundle = await bundleRes.json();
           if (bundle.identityKey) {
-            const fingerprint = await MessageCryptoV2.getSafetyNumberFingerprint(
-              localStorage.getItem('fk_user_id') || 'me',
-              contactId,
-              new Uint8Array(bundle.identityKey)
-            );
-            
-            safetyNumbers = fingerprint.split(' ').filter(s => s.length === 5);
+            const sn = await MessageCryptoV2.getSafetyNumberFingerprint(contactId);
+            const fingerprint = sn && sn.fingerprint;
+
+            safetyNumbers = String(fingerprint || '').split(' ').filter(s => s.length === 5);
             keySource = 'prekey_bundle';
             console.log('[Safety] Generated from pre-key bundle');
           }
@@ -343,13 +340,10 @@ async function verifyContactSafetyNumbers(contactId) {
         // For ECDSA P-256 keys (130 hex chars = 65 bytes), we need to hash to get consistent length
         // For X3DH, the identity key is typically 65 bytes (uncompressed P-256)
         if (pubKeyBytes.length === 65) {
-          const fingerprint = await MessageCryptoV2.getSafetyNumberFingerprint(
-            localStorage.getItem('fk_user_id') || 'me',
-            contactId,
-            pubKeyBytes
-          );
-          
-          safetyNumbers = fingerprint.split(' ').filter(s => s.length === 5);
+          const sn = await MessageCryptoV2.getSafetyNumberFingerprint(contactId);
+          const fingerprint = sn && sn.fingerprint;
+
+          safetyNumbers = String(fingerprint || '').split(' ').filter(s => s.length === 5);
           keySource = 'contact_pubkey';
           console.log('[Safety] Generated from contact public key');
         }
@@ -375,7 +369,7 @@ async function verifyContactSafetyNumbers(contactId) {
     }
     
     // If no real keys available, show error (NEVER use fake data)
-    if (!safetyNumbers || safetyNumbers.length !== 12) {
+    if (!safetyNumbers || safetyNumbers.length !== 5) {
       console.error('[Safety] No real identity keys available for', contactId);
       showToast('⚠️ Cannot verify: No secure session established. Start a conversation first.', 'warning');
       
