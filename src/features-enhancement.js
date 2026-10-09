@@ -226,6 +226,21 @@ class AutoReconnect {
 
   // 增强的 WebSocket 连接
   enhancedConnect() {
+    // FIX(ws-single-handler 2026-10-10): 本函数原先自行新建第二条 WebSocket 并安装旧版
+    // onmessage 处理器，绕过 websocket.js 的正规接收路径（导致首条消息被丢弃 /
+    // 'Received: undefined' 噪声）。现统一复用 connectWebSocket()，仅补 onclose 重连钩子。
+    if (typeof connectWebSocket === 'function') {
+      console.log('[WS Enhanced] delegating to connectWebSocket()');
+      connectWebSocket();
+      if (STATE.ws) {
+        const prevClose = STATE.ws.onclose;
+        STATE.ws.onclose = (ev) => {
+          try { if (typeof prevClose === 'function') prevClose(ev); } catch (e) {}
+          this.attemptReconnect();
+        };
+      }
+      return;
+    }
     const token = localStorage.getItem('fk_token');
     if (!token) return;
 
@@ -264,6 +279,8 @@ class AutoReconnect {
         console.error('[WS Enhanced] Error:', err);
       };
       
+      // FIX(ws-single-handler 2026-10-10): 已停用——见上文 enhancedConnect() 复用 connectWebSocket()。
+      /*
       STATE.ws.onmessage = async (e) => {
         try {
           let raw;
@@ -280,6 +297,7 @@ class AutoReconnect {
           console.error('[WS Enhanced] Parse error:', err);
         }
       };
+      */
     } catch (err) {
       console.error('[WS Enhanced] Connect error:', err);
       this.attemptReconnect();
