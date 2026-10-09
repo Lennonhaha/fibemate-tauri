@@ -529,8 +529,9 @@ fn ipc_dr_encrypt_decrypt_roundtrip_json() {
         ),
     )
     .expect("Alice dr_init over IPC should succeed");
-    let alice: serde_json::Value =
-        alice_res.deserialize().expect("Alice response must be valid JSON");
+    let alice: serde_json::Value = alice_res
+        .deserialize()
+        .expect("Alice response must be valid JSON");
     let alice_sid = alice["session_id"].as_str().unwrap().to_string();
     let alice_pk = alice["our_public_key"].as_str().unwrap().to_string();
 
@@ -546,8 +547,9 @@ fn ipc_dr_encrypt_decrypt_roundtrip_json() {
         ),
     )
     .expect("Bob dr_init over IPC should succeed");
-    let bob: serde_json::Value =
-        bob_res.deserialize().expect("Bob response must be valid JSON");
+    let bob: serde_json::Value = bob_res
+        .deserialize()
+        .expect("Bob response must be valid JSON");
     let bob_sid = bob["session_id"].as_str().unwrap().to_string();
     let bob_pk = bob["our_public_key"].as_str().unwrap().to_string();
 
@@ -577,11 +579,7 @@ fn ipc_dr_encrypt_decrypt_roundtrip_json() {
     .expect("Bob set_peer should succeed");
 
     // ─── 辅助函数：加密后立即解密（同侧或跨侧） ───
-    fn dr_enc(
-        wv: &tauri::WebviewWindow<tauri::test::MockRuntime>,
-        sid: &str,
-        msg: &str,
-    ) -> String {
+    fn dr_enc(wv: &tauri::WebviewWindow<tauri::test::MockRuntime>, sid: &str, msg: &str) -> String {
         let r = tauri::test::get_ipc_response(
             wv,
             invoke_request(

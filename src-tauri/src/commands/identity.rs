@@ -584,14 +584,15 @@ pub fn x3dh_respond(
 /// the mapping is now persisted by Rust, so it survives WebView2 profile
 /// resets, binary recompiles, and account switches.
 #[tauri::command]
-pub fn get_identity_for_user(
-    state: State<CryptoState>,
-    user_id: String,
-) -> Result<String, String> {
+pub fn get_identity_for_user(state: State<CryptoState>, user_id: String) -> Result<String, String> {
     println!("[get_identity_for_user] user_id={:?}", user_id);
     use std::collections::HashMap;
 
-    let map_path = state.sessions_path.parent().unwrap().join("identity_map.json");
+    let map_path = state
+        .sessions_path
+        .parent()
+        .unwrap()
+        .join("identity_map.json");
 
     // Load existing map
     let mut map: HashMap<String, String> = {
