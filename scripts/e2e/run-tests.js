@@ -53,6 +53,13 @@ const waitStable = async (x, peerId, ms = 20000) => {
   }
   return false;
 };
+// armRecv：发送前先把「接收端」的目标设稳（连设两次、间隔 400ms）。
+// 真因（2026-10-10 实测）：接收端 peer 若在首帧到达时为空，会被 msg.from===currentPeerId 守卫丢弃 → T1a/T3 假 FAIL。
+const armRecv = async (x, X) => {
+  await x.eval(`STATE.currentPeerId=${JSON.stringify(X.peer)};STATE.currentPeerName=${JSON.stringify(X.name)};`);
+  await sleep(400);
+  await x.eval(`STATE.currentPeerId=${JSON.stringify(X.peer)};`);
+};
 // 窄清 session：删 peer 的 Rust session + 删 sessions 映射键，保留 fibemate_rust_hybrid_* 与 fk_token
 const RESET = `(async()=>{ const uid=localStorage.getItem('fk_uid'); const map=JSON.parse(localStorage.getItem('fibemate_rust_sessions_'+uid)||'{}'); const peers=Object.keys(map); for(const p of peers){ try{ await MessageCryptoV2.deleteSession(p); }catch(e){} } localStorage.removeItem('fibemate_rust_sessions_'+uid); return JSON.stringify({deleted:peers, hybridKept:!!localStorage.getItem('fibemate_rust_hybrid_'+uid), tokenKept:!!localStorage.getItem('fk_token')}); })()`;
 // 轮询等待气泡（替代固定 sleep）：重载/首条后握手可能需 >5s，固定等待会“假 FAIL”
@@ -83,10 +90,12 @@ const waitRecv = async (x, want, setPeer = '', ms = 25000) => {
   console.log('\n=== T1 双向语音短 ===');
   await a.eval(CLEAR); await b.eval(CLEAR); await boot(a); await boot(b);
   await snapA('T1a-before'); await snapB('T1a-before');
+  await armRecv(b, B);
   await a.eval(SEND_VOICE(A, 2400));
   let r1a = await waitRecv(b, i => i.v === 1 && i.self === 0, SET(B)); let bl = r1a.l;
   rec('T1a A→B 语音', r1a.ok, JSON.stringify(bl));
   await snapA('T1a-after'); await snapB('T1a-after');
+  await armRecv(a, A);
   await b.eval(SEND_VOICE(B, 2600));
   let r1b = await waitRecv(a, i => i.v === 1 && i.self === 0, SET(A)); let al = r1b.l;
   rec('T1b B→A 语音', r1b.ok, JSON.stringify(al));
@@ -94,11 +103,13 @@ const waitRecv = async (x, want, setPeer = '', ms = 25000) => {
 
   console.log('\n=== T2 长语音 (>64KB) ===');
   await a.eval(CLEAR); await b.eval(CLEAR);
+  await armRecv(b, B);
   await a.eval(SEND_VOICE(A, 11000)); await sleep(7000);
   let bf = parse(await b.eval(READF)); bl = parse(await b.eval(LIST));
   const bigF = bf && bf.find(x => x.mt === 'voice');
   rec('T2a A→B 长语音 收', !!(bl && bl.items.some(i => i.v === 1 && i.self === 0)), JSON.stringify(bl));
   rec('T2a 帧>64KB', !!(bigF && bigF.bytes > 65536), bigF ? ('bytes=' + bigF.bytes) : 'no voice frame');
+  await armRecv(a, A);
   await b.eval(SEND_VOICE(B, 11000)); await sleep(7000);
   al = parse(await a.eval(LIST));
   rec('T2b B→A 长语音 收', !!(al && al.items.some(i => i.v === 1 && i.self === 0)), JSON.stringify(al));
@@ -106,6 +117,7 @@ const waitRecv = async (x, want, setPeer = '', ms = 25000) => {
 
   console.log('\n=== T4 消息顺序 ===');
   await a.eval(CLEAR); await b.eval(CLEAR);
+  await armRecv(b, B);
   await a.eval(SEND_MANY(A, ['1', '2', '3', '4', '5'])); await sleep(3500);
   bl = parse(await b.eval(LIST));
   const nums = bl ? bl.items.filter(i => i.self === 0).map(i => (i.txt || '').match(/^(\d+)/)?.[1] || '').filter(Boolean).join(',') : '';
@@ -113,6 +125,7 @@ const waitRecv = async (x, want, setPeer = '', ms = 25000) => {
 
   console.log('\n=== T5 双方同时发 ===');
   await a.eval(CLEAR); await b.eval(CLEAR);
+  await armRecv(a, A); await armRecv(b, B);
   await Promise.all([a.eval(SEND_TEXT(A, 'Aconcurrent')), b.eval(SEND_TEXT(B, 'Bconcurrent'))]);
   await sleep(3500);
   bl = parse(await b.eval(LIST)); al = parse(await a.eval(LIST));
@@ -122,6 +135,7 @@ const waitRecv = async (x, want, setPeer = '', ms = 25000) => {
   console.log('\n=== T6 特殊字符 ===');
   await a.eval(CLEAR); await b.eval(CLEAR);
   const special = `"引号" {花} [方] \\反斜\\ 😀中文'单'`;
+  await armRecv(b, B);
   await a.eval(SEND_TEXT(A, special)); await sleep(2500);
   bl = parse(await b.eval(LIST));
   rec('T6 特殊字符', !!(bl && bl.items.some(i => i.self === 0 && /引号/.test(i.txt) && /中文/.test(i.txt))), JSON.stringify(bl));
@@ -129,6 +143,7 @@ const waitRecv = async (x, want, setPeer = '', ms = 25000) => {
   console.log('\n=== T7 长文字 5000 ===');
   await a.eval(CLEAR); await b.eval(CLEAR);
   const longTxt = 'A'.repeat(2500) + '中'.repeat(2500);
+  await armRecv(b, B);
   await a.eval(SEND_TEXT(A, longTxt)); await sleep(4000);
   bl = parse(await b.eval(LIST));
   const gotLen = bl && bl.items.filter(i => i.self === 0 && i.txt.startsWith('AAAA')).length;
@@ -145,6 +160,7 @@ const waitRecv = async (x, want, setPeer = '', ms = 25000) => {
   let sa1 = await boot(a); let sb1 = await boot(b);
   await snapA('T3a-afterReload'); await snapB('T3a-afterReload');
   await a.eval(CLEAR); await b.eval(CLEAR);
+  await armRecv(b, B);
   await a.eval(SEND_TEXT(A, 'restart-both'));
   let r3a = await waitRecv(b, i => i.self === 0, SET(B)); bl = r3a.l;
   rec('T3a 两端重启后 A→B', r3a.ok, 'A:' + JSON.stringify(sa1 && sa1.hasSession) + ' B:' + JSON.stringify(sb1 && sb1.hasSession) + ' | ' + JSON.stringify(bl));
@@ -154,6 +170,7 @@ const waitRecv = async (x, want, setPeer = '', ms = 25000) => {
   sa1 = await boot(a);
   await snapA('T3b-afterReload'); await snapB('T3b-afterReload');
   await a.eval(CLEAR); await b.eval(CLEAR);
+  await armRecv(b, B);
   await a.eval(SEND_TEXT(A, 'restart-A'));
   let r3b = await waitRecv(b, i => i.self === 0, SET(B)); bl = r3b.l;
   rec('T3b 仅 A 重启后 A→B', r3b.ok, 'A:' + JSON.stringify(sa1 && sa1.hasSession) + ' | ' + JSON.stringify(bl));
@@ -163,6 +180,7 @@ const waitRecv = async (x, want, setPeer = '', ms = 25000) => {
   sa1 = await boot(a); sb1 = await boot(b);
   await snapA('T3c-afterReload'); await snapB('T3c-afterReload');
   await a.eval(CLEAR); await b.eval(CLEAR);
+  await armRecv(b, B);
   await a.eval(SEND_TEXT(A, 'restart-B'));
   let r3c = await waitRecv(b, i => i.self === 0, SET(B)); bl = r3c.l;
   rec('T3c 仅 B 重启后 A→B', r3c.ok, 'B:' + JSON.stringify(sb1 && sb1.hasSession) + ' | ' + JSON.stringify(bl));
