@@ -300,6 +300,7 @@
           localStorage.setItem('fk_token', data.token);
           localStorage.setItem('fk_uid', data.userId);
         }
+        if (data.refreshToken) localStorage.setItem('fk_refresh_token', data.refreshToken);
         if (data.publicKey) localStorage.setItem('fk_public_key', data.publicKey);
         if (data.displayName) {
           localStorage.setItem('fk_displayName', data.displayName);
@@ -417,6 +418,7 @@
         if (loginData.success) {
           localStorage.setItem('fk_token', loginData.token);
           localStorage.setItem('fk_uid', loginData.userId);
+          if (loginData.refreshToken) localStorage.setItem('fk_refresh_token', loginData.refreshToken);
           localStorage.setItem('fk_user_level', loginData.userLevel || '1');
           // NOTE: phone is PII — do NOT persist to localStorage (clear-text storage).
           // fk_uname is load-bearing (used by settings/main/two-factor), set from server displayName/username instead.
@@ -479,6 +481,7 @@
           localStorage.setItem('fk_token', data.token);
           localStorage.setItem('fk_uid', data.userId);
         }
+        if (data.refreshToken) localStorage.setItem('fk_refresh_token', data.refreshToken);
         if (data.publicKey) localStorage.setItem('fk_public_key', data.publicKey);
         if (data.displayName) {
           localStorage.setItem('fk_displayName', data.displayName);
