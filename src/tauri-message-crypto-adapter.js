@@ -325,6 +325,15 @@
     async receiveSession(peerId, initMessage) {
       if (!_initialized) await this.init();
 
+      // 2026-10-09 修复#3：过滤伪自环（历史 initMessage 路径会生成 peerId === 自己 的假 session）
+      {
+        const _myUid = localStorage.getItem('fk_uid');
+        if (_myUid && peerId === _myUid) {
+          console.warn('[DR Adapter] Ignoring self-initiate (peerId === myUid): ' + peerId);
+          return null;
+        }
+      }
+
       // Bob/Alice receives an accept (x3dh or hybrid) — set peer DR key on
       // the existing session.  MUST be checked BEFORE version check, since
       // both accept types carry version:3.
@@ -797,6 +806,8 @@
         version: DR_VERSION,
         hybrid: true,
         pqMode: 'x25519+mlkem768',
+        // 2026-10-09 修复#2：记录本次握手指纹（本端 init 的 hybridEnc+drPublicKey）
+        hybridFingerprint: this._handshakeFingerprint(pq.enc, pq.ourPublicKeyHex),
         createdAt: Date.now()
       });
       _saveSessionMap();
@@ -817,6 +828,24 @@
     },
 
     /**
+     * 2026-10-09 修复#2：握手指纹。
+     * 取对端 init 的 hybridEnc + drPublicKey（每次握手唯一）做确定性摘要，
+     * 用于区分「同一次握手的重复到达」与「对端重新发起的新握手 / 分叉自救」。
+     * 同步、无依赖（FNV-1a 双通道 64-bit），非安全用途。
+     */
+    _handshakeFingerprint(hybridEnc, drPublicKey) {
+      if (!hybridEnc && !drPublicKey) return null;
+      const s = String(hybridEnc || '') + ':' + String(drPublicKey || '');
+      let h1 = 0x811c9dc5, h2 = 0x1000193;
+      for (let i = 0; i < s.length; i++) {
+        const c = s.charCodeAt(i);
+        h1 = Math.imul(h1 ^ c, 0x01000193) >>> 0;
+        h2 = Math.imul(h2 ^ (c + i), 0x85ebca6b) >>> 0;
+      }
+      return h1.toString(16).padStart(8, '0') + h2.toString(16).padStart(8, '0');
+    },
+
+    /**
      * Receive a hybrid session (Bob side).  Handles Alice's hybrid_init_rust
      * using our cached hybrid keypair.  Falls back to classical X3DH for any
      * other message shape.
@@ -826,6 +855,14 @@
      */
     async receiveHybridSession(peerId, aliceInit) {
       if (!_initialized) await this.init();
+      // 2026-10-09 修复#3：过滤伪自环
+      {
+        const _myUid = localStorage.getItem('fk_uid');
+        if (_myUid && peerId === _myUid) {
+          console.warn('[DR Adapter] Ignoring self-initiate (peerId === myUid): ' + peerId);
+          return null;
+        }
+      }
       if (!aliceInit || aliceInit.type !== 'hybrid_init_rust') {
         return this.receiveSession(peerId, aliceInit);
       }
@@ -835,12 +872,21 @@
 
       // ═══ [FIX] 幂等：已有有效 session 直接复用，不重建 ═══
       const existing = _sessionMap.get(peerId);
+      // 2026-10-09 修复#2：握手指纹 —— 用对端 init 的 hybridEnc+drPublicKey 指纹区分
+      //   「同一次握手重复到达」（fp 相同 → 复用）与「对端重新发起 / 分叉自救」（fp 不同 → 重建）。
+      //   旧记录无 fingerprint 视为不匹配 → 重建（不再锁死）。
+      //   注：ss_id 是本地生成的、两端不同，不能用于比对。
+      const incomingFp = this._handshakeFingerprint(aliceInit.hybridEnc, aliceInit.drPublicKey);
       // ⚠️ 2026-10-09 修复：仅当已有 session 也是 hybrid 时才复用。
       //    否则（已有是 classical 而收到 hybrid init 的反向场景）重建，采用对端协议。
       if (existing && existing.sessionId && existing.hybrid === true) {
         let valid = false;
         try { valid = await bridge.sessionExists(existing.sessionId); } catch { valid = false; }
-        if (valid) {
+        const sameHandshakeFp = valid && !!incomingFp && existing.hybridFingerprint === incomingFp;
+        if (valid && !sameHandshakeFp) {
+          console.log('[DR Adapter] Hybrid fingerprint mismatch — rebuilding (old=' + String(existing.hybridFingerprint).slice(0, 12) + ' new=' + String(incomingFp).slice(0, 12) + ') for ' + encodeURIComponent(JSON.stringify(peerId)));
+        }
+        if (sameHandshakeFp) {
           if (aliceInit.drPublicKey && !existing.peerKeyInitialized) {
             try {
               await bridge.setPeerKey(existing.sessionId, aliceInit.drPublicKey);
@@ -892,6 +938,8 @@
         version: DR_VERSION,
         hybrid: true,
         pqMode: 'x25519+mlkem768',
+        // 2026-10-09 修复#2：记录本次接受的握手指纹，供后续握手比对
+        hybridFingerprint: incomingFp,
         createdAt: Date.now()
       });
       _saveSessionMap();

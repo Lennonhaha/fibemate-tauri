@@ -56,6 +56,36 @@ async function trySessionRecovery(peerId, conversationId) {
   }
 }
 
+// ════════════════════════════════════════════════════════════════
+// 2026-10-09 修复#1：恢复握手单侧化 —— 防「双侧同时 initiate → 交叉握手 → 活锁」
+//   约定：fk_uid 字典序小者 = initiator（两端判断确定性一致）；
+//   大者只等对方 initiate，10s 内没等到（对方离线/卡住）再兜底自己发起，避免单侧化死锁。
+// ════════════════════════════════════════════════════════════════
+const _recoveryFallbackTimers = {};
+function _iAmRecoveryInitiator(peerId) {
+  const myId = localStorage.getItem('fk_uid') || '';
+  if (!myId || !peerId) return true; // 信息不全 → 保持旧行为，不阻塞收发
+  return myId < peerId;
+}
+async function maybeRecoverSession(peerId, conversationId) {
+  if (_iAmRecoveryInitiator(peerId)) {
+    return await trySessionRecovery(peerId, conversationId);
+  }
+  console.log('[Recovery] waiting for peer to initiate (tie-break: myUid > peerId):', peerId);
+  if (_recoveryFallbackTimers[peerId]) return false;
+  _recoveryFallbackTimers[peerId] = setTimeout(async () => {
+    delete _recoveryFallbackTimers[peerId];
+    try {
+      const Crypto = (typeof MessageCryptoV2 !== 'undefined') ? MessageCryptoV2 : MessageCrypto;
+      const has = (Crypto && Crypto.hasSession) ? await Crypto.hasSession(peerId) : false;
+      if (has) { console.log('[Recovery] peer initiated in time — no fallback needed for', peerId); return; }
+      console.warn('[Recovery] peer did not initiate in 10s — fallback initiate for', peerId);
+      await trySessionRecovery(peerId, conversationId);
+    } catch (e) { console.warn('[Recovery] fallback failed:', e && e.message ? e.message : e); }
+  }, 10000);
+  return false;
+}
+
 function connectWebSocket() {
   const token = localStorage.getItem('fk_token');
   if (!token) return;
@@ -186,7 +216,7 @@ function connectWebSocket() {
                 console.debug('[WS v6] Silently skipping — recovery guard active for', msg.from);
                 return;
               }
-              const recovered = await trySessionRecovery(msg.from, msg.conversationId);
+              const recovered = await maybeRecoverSession(msg.from, msg.conversationId);
               if (recovered) {
                 appendMessage(false, '🔄 正在重建安全会话…', Date.now());
                 return;
