@@ -56,3 +56,6 @@ src-tauri/restore-config.cjs
 *.tauri.conf.json.bak.liuxiu
 *.bak.*
 *.working-backup
+
+# --- e2e 输出 ---
+scripts/e2e/shots/
