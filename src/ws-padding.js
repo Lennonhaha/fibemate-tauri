@@ -99,6 +99,10 @@ class WsPadding {
     }
     const flags = padded[0];
     const originalLen = (padded[1] << 8) | padded[2];
+    // 防误判：如果 originalLen 超出 padded 范围，说明输入不是 padded 格式，直接返回原始数据
+    if (originalLen > padded.length - 3) {
+      return { payload: padded, isCover: false, originalLen: padded.length };
+    }
     const isCover = !!(flags & 0x02);
     const payload = padded.subarray(3, 3 + originalLen);
     return { payload, isCover, originalLen };

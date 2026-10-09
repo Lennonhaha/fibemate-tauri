@@ -428,22 +428,20 @@ const VoiceMessage = (() => {
         return;
       }
 
-      // WebSocket 发送（带流量混淆）
-      if (STATE.ws && STATE.ws.readyState === WebSocket.OPEN) {
-        _wsSend({
-          type: 'message',
-          to: STATE.currentPeerId,
-          ...payload
-        });
-      } else {
-        // REST 备选
-        const token = localStorage.getItem('fk_token');
-        await fetch(`${API_BASE}/messages`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-          body: JSON.stringify(payload)
-        });
+      // 语音走 REST API（WS 文本帧对大数据包不可靠）
+      const token = localStorage.getItem('fk_token');
+      const resp = await fetch(`${API_BASE}/messages`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify(payload)
+      });
+      if (!resp.ok) {
+        console.error('[VoiceMsg] REST send failed:', resp.status, await resp.text().catch(()=>''));
+        showToast('语音发送失败', 'error');
+        return;
       }
+      const result = await resp.json();
+      console.log('[VoiceMsg] REST send success:', result.messageId);
     } catch (err) {
       console.error('[VoiceMsg] Send failed:', err);
       showToast('语音发送失败', 'error');
@@ -680,12 +678,17 @@ const VoiceMessage = (() => {
   }
 
   // ── 处理收到的语音消息 ──
-  // ── 处理收到的语音消息 ──
-  async function handleIncomingVoiceMessage(msg) {
+  // preDecryptedAudio：调用方（websocket.js）已用第一解密得到的 base64 音频。
+  // Double Ratchet 每条密文只能解一次——若此处再解密，Rust 判 replay 静默丢弃，
+  // 语音气泡会无声消失（修复 2026-10-09 double-decrypt bug）。
+  async function handleIncomingVoiceMessage(msg, preDecryptedAudio) {
     let audioData;
     const Crypto = typeof MessageCryptoV2 !== 'undefined' ? MessageCryptoV2 : (typeof MessageCrypto !== 'undefined' ? MessageCrypto : null);
 
-    if (msg.envelope && Crypto) {
+    if (preDecryptedAudio) {
+      // 第一解密已由调用方完成（DR 状态已推进），直接使用，禁止二次解密
+      audioData = preDecryptedAudio;
+    } else if (msg.envelope && Crypto) {
       try {
         let envelope = JSON.parse(msg.envelope);
 

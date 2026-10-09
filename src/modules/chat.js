@@ -120,10 +120,15 @@ async function loadMessages(conversationId) {
           // （与 websocket.js 实时接收逻辑对齐；缺失会导致历史首条消息无法解密）
           if (wire && wire.initMessage && Crypto.receiveSession) {
             try {
-              await Crypto.receiveSession(m.senderUserId, wire.initMessage);
-              console.log('[Messages v5] X3DH session established from history initMessage');
+              const hasExistingSession = await Crypto.hasSession(m.senderUserId);
+              if (!hasExistingSession) {
+                await Crypto.receiveSession(m.senderUserId, wire.initMessage);
+                console.log('[Messages v5] X3DH session established from history initMessage');
+              } else {
+                console.log('[Messages v5] Skipping receiveSession — session already exists for', m.senderUserId);
+              }
             } catch (initErr) {
-              console.error('[Messages v5] receiveSession failed:', initErr.message);
+              console.error('[Messages v5] receiveSession check failed:', initErr.message);
             }
             wire = wire.message; // 取真正加密的消息
           }
@@ -159,6 +164,19 @@ async function loadMessages(conversationId) {
             // null = duplicate / replay → silently skip this message
             if (text === null) {
               console.debug('[Messages v5] Skipping duplicate message:', mid);
+              continue;
+            }
+            // 语音历史消息：解密结果就是 base64 音频，交给 VoiceMessage 渲染气泡，
+            // 不走下方文本 appendMessage（否则历史语音显示为一屏 base64 乱码）。
+            // 传入 text 作为 preDecryptedAudio，避免二次解密触发 Rust replay 判定。
+            if (m.messageType === 'voice' && typeof VoiceMessage !== 'undefined') {
+              VoiceMessage.handleIncomingVoiceMessage({
+                from: m.senderUserId,
+                envelope: m.envelope,
+                voiceDuration: m.voiceDuration,
+                voiceMimeType: m.voiceMimeType,
+                createdAt: m.createdAt
+              }, text);
               continue;
             }
           }

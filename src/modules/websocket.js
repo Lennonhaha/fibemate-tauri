@@ -81,6 +81,9 @@ function connectWebSocket() {
       try {
         const raw = _wsUnpad(e.data);
         if (raw == null) return; // cover traffic 丢弃
+        const len = typeof e.data === 'string' ? e.data.length : (e.data?.byteLength || 0);
+        const recvPrefix = typeof e.data === 'string' ? 'TXT' : 'BIN';
+        console.log('[RECV-LEN]', recvPrefix, len, 'bytes');
         const msg = JSON.parse(raw);
         console.log('[WS v4] Received:', encodeURIComponent(JSON.stringify(msg.type)));
 
@@ -90,7 +93,7 @@ function connectWebSocket() {
         // 首条消息可能带 initMessage（发送方附加）。若接收方未打开该聊天窗口，
         // 旧逻辑会忽略 initMessage → 不回传 key_exchange_response →
         // 发起方 confirmSession 永远不来 → recv_public_key 全零 → 后续互发全部乱码。
-        if (msg.type === 'new_message') {
+        if (msg.type === 'new_message' && msg.from !== STATE.currentPeerId) {
           try {
             if (msg.envelope && Crypto && Crypto.receiveSession) {
               const wire = JSON.parse(msg.envelope);
@@ -107,9 +110,9 @@ function connectWebSocket() {
           }
         }
 
-        if (msg.type === 'new_message' && msg.from === STATE.currentPeerId) {
+        if (msg.type === 'new_message' && msg.from !== STATE.currentPeerId) {
           let text;
-          console.log('[WS-DEBUG] msg.from:', msg.from, 'currentPeerId:', STATE.currentPeerId)// v6: 前向保密解密 — 支持 hybrid PQ + v2 envelope + v1 兼容
+          console.log('[WS-DEBUG] msg.from:', JSON.stringify(msg.from), 'len:', msg.from ? msg.from.length : 0, 'currentPeerId:', JSON.stringify(STATE.currentPeerId), 'len:', STATE.currentPeerId ? STATE.currentPeerId.length : 0)// v6: 前向保密解密 — 支持 hybrid PQ + v2 envelope + v1 兼容
           if (msg.envelope && typeof Crypto !== 'undefined') {
             // v6 opaque envelope 格式
             try {
@@ -194,8 +197,12 @@ function connectWebSocket() {
           }
 
           // Voice message handling
+          // 修复 double-decrypt：上面 157 行已解密一次并推进 DR 状态（recv_message_num++），
+          // 若 handleIncomingVoiceMessage 内再对同一 envelope 解密，Rust 会判 replay
+          // （double_ratchet.rs:540 Ok(None)）→ 静默丢弃 → 语音气泡无声消失。
+          // 因此必须把第一解密结果 text（base64 音频）直接传入，禁止二次解密。
           if (msg.messageType === 'voice' && typeof VoiceMessage !== 'undefined') {
-            VoiceMessage.handleIncomingVoiceMessage(msg);
+            VoiceMessage.handleIncomingVoiceMessage(msg, text);
             return;
           }
 
