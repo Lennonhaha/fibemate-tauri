@@ -1,15 +1,38 @@
-# FIBEMATE (tauri) Release — 校验和 + 签名
+# FIBEMATE (tauri) Release — 构建 + 校验和 + cosign 签名 + SLSA provenance
+#                                                        —— v2（2026-10-10 03:2x 审阅后修订）
 #
-# 触发: 手动 (workflow_dispatch) 或 tag push v*
-# 覆盖:
-#   - cargo test（PQC 后端快速回归）
-#   - 源码 + Cargo.lock 校验和（可复现构建基线）
-#   - cosign keyless 签名（Sigstore 透明日志）
+# v2 变更（对 v1 的 3 处改动）：
+#   [A] 修 `RELEASE_CHECKSUMS.txt` 自指：shell 会先创建重定向目标再跑 find，
+#       导致清单把自己（空文件）也算进去 → 加 `! -name 'RELEASE_CHECKSUMS.txt'`。
+#   [B] 去掉 `gh attestation download ... || true` —— `|| true` 吞错，违反本仓纪律
+#       （CI 脚本禁止吞错；见 TOOLS.md 2026-10-10 条）→ 改 `2>&1 | tee`，失败即红。
+#   [C] 版本一致性门禁从 3 文件扩到 5 文件：补 package-lock.json（顶层 + packages[""]）
+#       与 src-tauri/Cargo.lock（[[package]] name = "fibemate" 块）。
+#   [D] 不动：publish 对 RELEASE_CHECKSUMS.txt 重复签名（无害冗余）。
+#   [E] 保持：门禁位置正确 —— 今天的 3.3.6 对齐前它会 FAIL，现在能过。
+#
+# 未采纳（待定，记此备忘）：
+#   [F] `workflow_dispatch` 手动触发时 GITHUB_REF_NAME 是分支名而非 tag → 版本门禁会误 FAIL。
+#       可选修法：给该 step 加 `if: github.ref_type == 'tag'`，或 dispatch 时走单独校验分支。
+#
+# 背景（2026-10-10 实测）：原 release.yml 在 v3.3.3 / v3.3.4 / v3.3.5 / v3.3.6
+# 四个 tag 上 4/4 全部失败 —— 根因 "Generate SHA256 manifest" exit 123：
+# 仓库有 19 个文件名带空格（src/test-vectors/intermediate-2023/PQC Intermediate Values/*.txt），
+# `find | xargs sha256sum` 按空白分词 → 读不到文件 → xargs 聚合退出 123，且 2>/dev/null 吞了报错。
+# 修法：-print0 / sort -z / xargs -0。
+#
+# OpenSSF Scorecard 的 Signed-Releases 只认 **Release 资产**（认 *.sig / *.intoto.jsonl，
+# 不认 Actions artifact，也不认 *.bundle）→ 校验和/签名/attestation 必须作为 Release 资产上传。
+#
+# 注意：本仓 bundle.targets = "nsis"（仅 Windows NSIS），SECURITY.md 亦声明 Windows-only；
+# 所以不采用 macOS/ubuntu matrix，也不假设 .msi/.dmg/.AppImage 存在。
 
 name: Release
+
 permissions:
-  contents: read
-  id-token: write  # cosign keyless signing (GitHub OIDC)
+  contents: write       # 创建 Release + 上传资产（原来只有 read → 永远建不了 Release）
+  id-token: write       # cosign keyless 签名 + attestation 的 OIDC
+  attestations: write   # actions/attest-build-provenance
 
 on:
   workflow_dispatch:
@@ -22,57 +45,174 @@ env:
 
 jobs:
 
+  # ── 1) 后端回归 + 校验和清单（快，Linux）────────────────────────────
   release-check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install Linux system dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev
+            libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev
 
       - name: Rust tests (PQC crypto backend)
         working-directory: src-tauri
         run: cargo test --all-features
 
+      # [C] tag / 版本号一致性门禁（5 文件 6 处）
+      - name: Verify version fields match the tag
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          PKG=$(node -e "process.stdout.write(require('./package.json').version)")
+          CONF=$(node -e "process.stdout.write(require('./src-tauri/tauri.conf.json').version)")
+          CARGO=$(grep -m1 '^version' src-tauri/Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          PKGLOCK_TOP=$(node -e "process.stdout.write(require('./package-lock.json').version)")
+          PKGLOCK_ROOT=$(node -e "process.stdout.write(require('./package-lock.json').packages[''].version)")
+          CARGOLOCK=$(awk '/^name = "fibemate"$/{getline; if ($1=="version") {gsub(/[" ]/,"",$3); print $3; exit}}' src-tauri/Cargo.lock)
+          echo "tag=$TAG"
+          echo "package.json=$PKG  tauri.conf.json=$CONF  Cargo.toml=$CARGO"
+          echo "package-lock.json(version)=$PKGLOCK_TOP  package-lock.json(packages[\"\"])=$PKGLOCK_ROOT  Cargo.lock(fibemate)=$CARGOLOCK"
+          [ "$PKG" = "$TAG" ]          || { echo "::error::package.json $PKG != tag $TAG"; exit 1; }
+          [ "$CONF" = "$TAG" ]         || { echo "::error::tauri.conf.json $CONF != tag $TAG"; exit 1; }
+          [ "$CARGO" = "$TAG" ]        || { echo "::error::Cargo.toml $CARGO != tag $TAG"; exit 1; }
+          [ "$PKGLOCK_TOP" = "$TAG" ]  || { echo "::error::package-lock.json(version) $PKGLOCK_TOP != tag $TAG"; exit 1; }
+          [ "$PKGLOCK_ROOT" = "$TAG" ] || { echo "::error::package-lock.json(packages[\"\"]) $PKGLOCK_ROOT != tag $TAG"; exit 1; }
+          [ "$CARGOLOCK" = "$TAG" ]    || { echo "::error::Cargo.lock(fibemate) $CARGOLOCK != tag $TAG"; exit 1; }
+
+      # 修复：[A] 排除清单自身 + -print0 / sort -z / xargs -0（带空格文件名不再被分词）
       - name: Generate SHA256 manifest
         run: |
           find . -type f \
+            ! -name 'RELEASE_CHECKSUMS.txt' \
             ! -path './.git/*' \
             ! -path './node_modules/*' \
             ! -path './src-tauri/target/*' \
             ! -path './src-tauri/.cargo-audit-db/*' \
             ! -path './_fix-backup*' \
             ! -name '*.log' \
-            | sort | xargs sha256sum > RELEASE_CHECKSUMS.txt 2>/dev/null
-          cat RELEASE_CHECKSUMS.txt | head -5
+            -print0 | sort -z | xargs -0 sha256sum > RELEASE_CHECKSUMS.txt
+          head -5 RELEASE_CHECKSUMS.txt
           echo "... $(wc -l < RELEASE_CHECKSUMS.txt) files checksummed"
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@f713795cb21599bc4e5c4b58cbad1da852d7eeb9
+        uses: sigstore/cosign-installer@v3
 
+      # 命名改为 <asset>.sig —— Scorecard 认 asset.sig，不认 xxx.bundle
       - name: Sign release checksums (keyless)
         run: |
           cosign sign-blob --yes \
-            --output-signature RELEASE_CHECKSUMS.sig \
-            --output-certificate RELEASE_CHECKSUMS.pem \
-            --bundle RELEASE_CHECKSUMS.bundle \
+            --output-signature RELEASE_CHECKSUMS.txt.sig \
+            --output-certificate RELEASE_CHECKSUMS.txt.pem \
             RELEASE_CHECKSUMS.txt
 
-      - name: Upload release checksums + signature
+      - name: Upload checksums (staging artifact)
         uses: actions/upload-artifact@v4
         with:
-          name: release-checksums
+          name: checksums
           path: |
             RELEASE_CHECKSUMS.txt
-            RELEASE_CHECKSUMS.sig
-            RELEASE_CHECKSUMS.pem
-            RELEASE_CHECKSUMS.bundle
+            RELEASE_CHECKSUMS.txt.sig
+            RELEASE_CHECKSUMS.txt.pem
+
+  # ── 2) Windows 构建（NSIS 安装包）──────────────────────────────────
+  build-windows:
+    needs: release-check
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install npm deps
+        run: npm ci
+
+      - name: Build Tauri app (NSIS)
+        run: npm run build
+
+      - name: Collect installer + SHA256SUMS
+        shell: bash
+        run: |
+          mkdir -p dist-assets
+          find src-tauri/target/release/bundle/nsis -name '*.exe' -exec cp {} dist-assets/ \;
+          (cd dist-assets && sha256sum *.exe > SHA256SUMS.txt)
+          ls -l dist-assets
+
+      - name: Upload installer (staging artifact)
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-installer
+          path: dist-assets/*
+
+  # ── 3) 签名 + provenance + 建 Release（资产在 Release 上，不是 artifact）──
+  publish:
+    needs: [release-check, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: staging
+
+      - name: Flatten assets
+        run: |
+          mkdir -p rel
+          find staging -type f -exec cp {} rel/ \;
+          ls -l rel
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign every releasable asset (keyless)
+        run: |
+          cd rel
+          for f in *.exe RELEASE_CHECKSUMS.txt; do
+            [ -f "$f" ] || continue
+            cosign sign-blob --yes --output-signature "$f.sig" --output-certificate "$f.pem" "$f"
+          done
+          ls -l
+
+      - name: Generate SLSA build provenance
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: |
+            rel/*.exe
+            rel/RELEASE_CHECKSUMS.txt
+
+      # [B] 不再用 `|| true` 吞错：失败即红，并把输出留档
+      - name: Export provenance as <asset>.intoto.jsonl
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p att
+          for f in rel/*.exe rel/RELEASE_CHECKSUMS.txt; do
+            [ -f "$f" ] || continue
+            gh attestation download "$f" --repo "$GITHUB_REPOSITORY" -D att 2>&1 | tee -a attestation.log
+            # 不用 2>/dev/null 吞错：目录为空时 ls 的报错保留在日志，失败由下一行显式判定
+            src=$(ls att/*.jsonl | tail -1)
+            [ -n "$src" ] || { echo "::error::no attestation jsonl produced for $f"; exit 1; }
+            cp "$src" "rel/$(basename "$f").intoto.jsonl"
+          done
+          ls -l rel
+
+      - name: Create GitHub Release + upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" rel/* \
+            --title "FIBEMATE $GITHUB_REF_NAME" \
+            --generate-notes \
+            --verify-tag
