@@ -59,3 +59,12 @@ src-tauri/restore-config.cjs
 
 # --- e2e 输出 ---
 scripts/e2e/shots/
+
+# --- 敏感文件（2026-10-10 合规加固）---
+secrets/
+*.jks
+*.p8
+*.kdbx
+*.tfvars
+id_rsa*
+id_ed25519*

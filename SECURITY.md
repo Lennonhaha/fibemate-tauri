@@ -86,3 +86,14 @@ Do not use this software for real-world encrypted communications.
 - **`pqc_kyber` 0.7.1 — KyberSlash (GHSA-x5j2-g63m-f8g4, High)**: Division timings depending on secrets. No upstream fix available. The `pqc_kyber` crate is used only in the WASM experimental layer (`src/crypto/crypto/pq-wasm/`), not in the production key exchange path. Mitigation: migrate to `ml-kem` crate in a future release. Not a production-critical-path risk.
 - **`glib` 0.18.5 — Unsoundness in VariantStrIter (GHSA-wrw7-89jp-8q8g, Medium)**: Transitive dependency via Tauri's `webkit2gtk`/`gtk` chain (Linux-only). Tauri 2.x constrains `glib = "0.18"`; upgrading to 0.20 requires a Tauri upstream change or `[patch.crates-io]` override. Windows/macOS builds do not link glib. Not a production-critical-path risk.
 - **`serde_with` 3.20.0 → 3.23.0 (GHSA-7gcf-g7xr-8hxj, Medium)**: KeyValueMap serialization panic on empty sequence/map entries. Fixed by upgrading to 3.21.0+ (this PR applies 3.23.0).
+
+## 商用密码合规 / Commercial Cryptography Compliance
+
+SM2 / SM3 / SM4 are implemented per public Chinese national standards
+(GB/T 32918 / 32905 / 32907). This repository ships **no** keys, credentials,
+or production config, and claims **no** commercial-cryptography product
+certification. Operators who deploy it as a commercial cryptography
+product/service, or who are critical-information-infrastructure operators,
+are responsible for their own certification, security assessment, and
+import/export compliance. See the README section
+“商用密码合规声明 / Commercial Cryptography Compliance” for details.
