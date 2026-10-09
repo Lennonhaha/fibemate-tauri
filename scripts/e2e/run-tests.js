@@ -149,9 +149,17 @@ const waitRecv = async (x, want, setPeer = '', ms = 25000) => {
   const gotLen = bl && bl.items.filter(i => i.self === 0 && i.txt.startsWith('AAAA')).length;
   rec('T7 长文字5000 收', !!gotLen, JSON.stringify(bl && bl.items.map(i => i.txt.slice(0, 10))));
 
-  console.log('\n=== T10 Safety Number ===');
-  const sa = await a.eval(SAFETY); const sb = await b.eval(SAFETY);
-  rec('T10 safety fn 存在', /"g":"function"|"m":"M"/.test(sa || '') || (parse(sa) && (parse(sa).g === 'function' || parse(sa).m === 'M')), 'A=' + sa + ' B=' + sb);
+  console.log('\n=== T10 Safety Number（两端一致）===');
+  // T10 升级（2026-10-10）：从「函数存在」→「两端安全码一字不差」。
+  // 前置：必须先有一次成功握手（下面 A→B 一条），否则 dr_safety_number 无 session 可取。
+  const SNX = (X) => `(async()=>{ try{ const r=await MessageCryptoV2.getSafetyNumberFingerprint(${JSON.stringify(X.peer)}); return JSON.stringify({ok:true, fp:(r&&r.fingerprint)||null, our:(r&&r.ourFingerprint)||null, peer:(r&&r.peerFingerprint)||null}); }catch(e){ return JSON.stringify({ok:false, err:(e&&e.message)||String(e)}); } })()`;
+  await armRecv(b, B);
+  await a.eval(SEND_TEXT(A, 't10-handshake'));
+  await waitRecv(b, i => i.self === 0, SET(B));
+  const snA = parse(await a.eval(SNX(A))); const snB = parse(await b.eval(SNX(B)));
+  console.log('[T10] A=' + JSON.stringify(snA) + ' B=' + JSON.stringify(snB));
+  console.log('[T10] mirror(A.our==B.peer && A.peer==B.our): ' + !!(snA && snB && snA.our && snB.peer && snA.our === snB.peer && snA.peer === snB.our));
+  rec('T10 两端安全码一致', !!(snA && snB && snA.ok && snB.ok && snA.fp && snA.fp === snB.fp), 'fp=' + ((snA && snA.fp) || '?') + ' / ' + ((snB && snB.fp) || '?'));
 
   console.log('\n=== T3 冷重启 ===');
   await a.eval(RELOAD); await b.eval(RELOAD);
