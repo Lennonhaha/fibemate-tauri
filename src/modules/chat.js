@@ -119,13 +119,31 @@ async function loadMessages(conversationId) {
           // 必须先 receiveSession 建立会话，再解密真正消息。
           // （与 websocket.js 实时接收逻辑对齐；缺失会导致历史首条消息无法解密）
           if (wire && wire.initMessage && Crypto.receiveSession) {
-            try {
-              await Crypto.receiveSession(m.senderUserId, wire.initMessage);
-              console.log('[Messages v5] X3DH session established from history initMessage');
-            } catch (initErr) {
-              console.error('[Messages v5] receiveSession failed:', initErr.message);
+            // 跳过历史 initMessage——如果已有有效 session（recovery 刚建好的），
+            // 防止覆盖导致 AEAD 失败无限循环
+            if (typeof Crypto.hasSession === 'function') {
+              const has = await Crypto.hasSession(m.senderUserId);
+              if (has) {
+                console.log('[Messages v5] Skipping receiveSession — valid session exists for ' + m.senderUserId);
+                wire = wire.message;
+              } else {
+                try {
+                  await Crypto.receiveSession(m.senderUserId, wire.initMessage);
+                  console.log('[Messages v5] X3DH session established from history initMessage');
+                } catch (initErr) {
+                  console.error('[Messages v5] receiveSession failed:', initErr.message);
+                }
+                wire = wire.message;
+              }
+            } else {
+              try {
+                await Crypto.receiveSession(m.senderUserId, wire.initMessage);
+                console.log('[Messages v5] X3DH session established from history initMessage');
+              } catch (initErr) {
+                console.error('[Messages v5] receiveSession failed:', initErr.message);
+              }
+              wire = wire.message;
             }
-            wire = wire.message; // 取真正加密的消息
           }
 
           const envelope = wire;
