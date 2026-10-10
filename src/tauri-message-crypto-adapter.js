@@ -945,7 +945,7 @@
       console.log('[DR Adapter] Hybrid PQ session accept from ' + encodeURIComponent(JSON.stringify(peerId)) + ' (key_id=' + encodeURIComponent(JSON.stringify(cached.keyId)) + ')');
       // 安全码：对端 identity pk 来自 hybrid_init.identityKey（方案 A）；旧版消息无此字段则降级 null
       const peerIdentityPkHexHybrid = aliceInit.identityKey || null;
-      if (!peerIdentityPkHexHybrid) console.warn('[DR Adapter] hybrid_init missing identityKey — binding degraded for ' + peerId);
+      if (!peerIdentityPkHexHybrid) console.warn('[DR Adapter] hybrid_init missing identityKey — binding degraded for ' + encodeURIComponent(JSON.stringify(peerId)));
       const dr = await bridge.acceptHybridSession(peerId, cached.keyId, aliceInit.hybridEnc, { ourIdentityId: myId, peerIdentityPkHex: peerIdentityPkHexHybrid });
 
       if (aliceInit.drPublicKey) {
