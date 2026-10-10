@@ -69,11 +69,10 @@ jobs:
 
       # PR: short smoke run (300s). Nightly / manual: long run (3600s).
       - name: Run ${{ matrix.target }}
-        working-directory: fuzz
         env:
           FUZZ_SECONDS: ${{ github.event_name == 'schedule' && '3600' || '300' }}
         run: |
-          cargo +nightly fuzz run ${{ matrix.target }} -- \
+          cargo +nightly fuzz run --fuzz-dir fuzz ${{ matrix.target }} -- \
             -max_total_time="${FUZZ_SECONDS}" -max_len=4096 -rss_limit_mb=2048
 
       - name: Save accumulated corpus
