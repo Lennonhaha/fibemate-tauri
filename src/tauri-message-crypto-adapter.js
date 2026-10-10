@@ -24,6 +24,9 @@
   let _identityBundles = {};               // identityId → { identityId, publicKeyHex, fingerprint }
   let _sessionMap = new Map();             // peerId → { sessionId, identityId, version }
   let _opkUploadCallback = null;
+  let _hybridUploadCallback = null;        // main.js registers the hybrid pre-key publisher
+  let _hybridKeyPromise = null;            // single-flight guard for ensureHybridPreKey()
+  let _publishingBundle = false;           // re-entrancy guard while a bundle upload is in flight
 
   // Session persistence key
   // Per-user session storage key to isolate same-machine multi-account sessions.
@@ -197,6 +200,22 @@
 
     setOPKUploadCallback(cb) {
       _opkUploadCallback = cb;
+    },
+
+    /**
+     * Register the publisher used to push a changed hybrid pre-key to the
+     * server. Called by main.js once the API client is ready.
+     */
+    setHybridUploadCallback(cb) {
+      _hybridUploadCallback = cb;
+    },
+
+    /** Record that the given hybrid keyId is now published on the server. */
+    markHybridUploaded(keyId) {
+      try {
+        if (keyId) localStorage.setItem(this._hybridUploadedKey(), keyId);
+        localStorage.removeItem(this._hybridPendingKey());
+      } catch (e) { /* ignore */ }
     },
 
     async checkAndReplenishOPKs() {
@@ -745,27 +764,85 @@
       return 'fibemate_rust_hybrid_' + (localStorage.getItem('fk_uid') || 'default');
     },
 
+    // Per-user markers: which hybrid keyId the server already has (uploaded),
+    // and one waiting to be published (pending) because no uploader existed yet.
+    _hybridUploadedKey() {
+      return 'fibemate_rust_hybrid_uploaded_' + (localStorage.getItem('fk_uid') || 'default');
+    },
+    _hybridPendingKey() {
+      return 'fibemate_rust_hybrid_pending_' + (localStorage.getItem('fk_uid') || 'default');
+    },
+
     /**
      * Lazily create (and cache) our hybrid responder keypair, then return
      * the parts that must ride along in the pre-key bundle.
+     *
+     * Single-flight: concurrent callers share one generation. Two parallel
+     * calls used to mint two different keypairs, and the later localStorage
+     * write could then disagree with the bundle built by the earlier caller —
+     * the same "server holds a stale hybrid key" fork as the 2026-10-09 outage.
      *
      * @param {'classic'|'hybrid'} [mode='hybrid']
      * @returns {Promise<{keyId, bundleHex, mode}>}
      */
     async ensureHybridPreKey(mode) {
       if (!_initialized) await this.init();
-      const bridge = _getRatchetBridge();
-      const cacheKey = this._hybridStorageKey();
-      let cached = null;
-      try { cached = JSON.parse(localStorage.getItem(cacheKey)); } catch (e) { cached = null; }
-      if (cached && cached.keyId && cached.bundleHex) {
-        return cached;
+      if (_hybridKeyPromise) return _hybridKeyPromise;
+      _hybridKeyPromise = (async () => {
+        const bridge = _getRatchetBridge();
+        const cacheKey = this._hybridStorageKey();
+        let cached = null;
+        try { cached = JSON.parse(localStorage.getItem(cacheKey)); } catch (e) { cached = null; }
+        if (cached && cached.keyId && cached.bundleHex) {
+          await this._maybeUploadHybridKey(cached);
+          return cached;
+        }
+        const kg = await bridge.hybridKeygen(mode || 'hybrid');
+        const entry = { keyId: kg.keyId, bundleHex: kg.bundle, mode: kg.mode, createdAt: Date.now() };
+        try { localStorage.setItem(cacheKey, JSON.stringify(entry)); } catch (e) { /* ignore */ }
+        console.log('[DR Adapter] Hybrid pre-key ready (' + entry.mode + ') key_id=' + entry.keyId);
+        await this._maybeUploadHybridKey(entry);
+        return entry;
+      })();
+      try {
+        return await _hybridKeyPromise;
+      } finally {
+        _hybridKeyPromise = null;
       }
-      const kg = await bridge.hybridKeygen(mode || 'hybrid');
-      const entry = { keyId: kg.keyId, bundleHex: kg.bundle, mode: kg.mode, createdAt: Date.now() };
-      try { localStorage.setItem(cacheKey, JSON.stringify(entry)); } catch (e) { /* ignore */ }
-      console.log('[DR Adapter] Hybrid pre-key ready (' + entry.mode + ') key_id=' + entry.keyId);
-      return entry;
+    },
+
+    /**
+     * Publish our hybrid pre-key whenever the cached keyId has not been
+     * uploaded yet. Idempotent (skips when already published), never throws,
+     * and records a pending marker when no uploader is registered yet so the
+     * next bundle upload can flush it.
+     */
+    async _maybeUploadHybridKey(entry) {
+      if (!entry || !entry.keyId) return;
+      if (_publishingBundle) return; // re-entrancy: an upload is already running
+      const uploadedKey = this._hybridUploadedKey();
+      const pendingKey = this._hybridPendingKey();
+      let uploaded = null;
+      try { uploaded = localStorage.getItem(uploadedKey); } catch (e) { uploaded = null; }
+      if (uploaded === entry.keyId) return;
+      if (typeof _hybridUploadCallback !== 'function') {
+        try { localStorage.setItem(pendingKey, entry.keyId); } catch (e) { /* ignore */ }
+        return;
+      }
+      try {
+        _publishingBundle = true;
+        await _hybridUploadCallback(entry);
+        try {
+          localStorage.setItem(uploadedKey, entry.keyId);
+          localStorage.removeItem(pendingKey);
+        } catch (e) { /* ignore */ }
+        console.log('[DR Adapter] Hybrid pre-key published (key_id=' + entry.keyId + ')');
+      } catch (e) {
+        try { localStorage.setItem(pendingKey, entry.keyId); } catch (e2) { /* ignore */ }
+        console.warn('[DR Adapter] Hybrid pre-key upload deferred:', e && e.message ? e.message : e);
+      } finally {
+        _publishingBundle = false;
+      }
     },
 
     /**
