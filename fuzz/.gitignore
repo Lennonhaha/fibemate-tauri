@@ -1,0 +1,8 @@
+# cargo-fuzz build / run outputs (never committed)
+/target
+/artifacts
+/coverage
+
+# Seed corpus under corpus/<target>/ IS tracked (see scripts/gen-corpus.mjs).
+# Only the fuzzer's own generated corpus additions are ignored.
+/corpus/*/findings/
