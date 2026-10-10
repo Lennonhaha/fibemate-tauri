@@ -1,0 +1,93 @@
+name: Fuzz
+
+on:
+  pull_request:
+    paths:
+      - 'src-tauri/**'
+      - 'fuzz/**'
+      - '.github/workflows/fuzz.yml'
+  schedule:
+    - cron: '0 6 * * *'   # daily 06:00 UTC
+  workflow_dispatch:
+
+# Least privilege: fuzzing only reads the repo.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  fuzz:
+    name: cargo-fuzz (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - hybrid_init_parse
+          - envelope_parse
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      # cargo-fuzz needs a nightly toolchain (libfuzzer + sanitizer flags).
+      - name: Install Rust (nightly)
+        uses: dtolnay/rust-toolchain@f0d5300ba8908d942c808f4d31c08471d7798ba3 # nightly
+        with:
+          toolchain: nightly
+
+      # The fuzzed lib (`fibemate` -> `fibemate_lib`) depends on `tauri`, whose
+      # Linux build needs the webview/GTK stack even for a lib rlib.
+      - name: Install Linux system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: fuzz -> target
+          shared-key: fuzz
+
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz --locked
+
+      # Seeds live in git (fuzz/corpus/<target>/); the cache layers on whatever
+      # earlier runs discovered, so coverage grows across runs instead of
+      # restarting from the committed seeds every time.
+      - name: Restore accumulated corpus
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+
+      # PR: short smoke run (300s). Nightly / manual: long run (3600s).
+      - name: Run ${{ matrix.target }}
+        working-directory: fuzz
+        env:
+          FUZZ_SECONDS: ${{ github.event_name == 'schedule' && '3600' || '300' }}
+        run: |
+          cargo +nightly fuzz run ${{ matrix.target }} -- \
+            -max_total_time="${FUZZ_SECONDS}" -max_len=4096 -rss_limit_mb=2048
+
+      - name: Save accumulated corpus
+        if: always()
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: fuzz/corpus
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: fuzz/artifacts/${{ matrix.target }}/
+          if-no-files-found: ignore
+          retention-days: 30
