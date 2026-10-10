@@ -32,9 +32,7 @@
 name: Release
 
 permissions:
-  contents: write       # 创建 Release + 上传资产（原来只有 read → 永远建不了 Release）
-  id-token: write       # cosign keyless 签名 + attestation 的 OIDC
-  attestations: write   # actions/attest-build-provenance
+  contents: read   # 最小化：写权限下沉到真正需要的 job（release-check 的 id-token、publish 的三项）
 
 on:
   workflow_dispatch:
@@ -49,6 +47,8 @@ jobs:
 
   # ── 1) 后端回归 + 校验和清单（快，Linux）────────────────────────────
   release-check:
+    permissions:
+      id-token: write   # keyless cosign sign-blob（checksums）
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -164,6 +164,10 @@ jobs:
 
   # ── 3) 签名 + provenance + 建 Release（资产在 Release 上，不是 artifact）──
   publish:
+    permissions:
+      contents: write      # 创建 Release + 上传资产
+      id-token: write      # keyless cosign sign-blob（installer/checksums）
+      attestations: write  # actions/attest-build-provenance
     needs: [release-check, build-windows]
     runs-on: ubuntu-latest
     steps:
