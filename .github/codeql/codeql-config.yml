@@ -1,0 +1,11 @@
+# CodeQL configuration — auto-loaded from .github/codeql/codeql-config.yml
+# Rationale: scripts/e2e/** is a CDP-driven test harness that intentionally uses
+# eval/new Function and reads fixture files; those js/bad-code-sanitization and
+# js/file-access-to-http alerts are false positives for test scaffolding, not
+# product code. Local diag/gm scratch pages are likewise not shipped.
+name: "FIBEMATE Tauri CodeQL config"
+paths-ignore:
+  - scripts/e2e/**
+  - src/diag.html
+  - src/gm-chat-local.html
+  - src/gm-test.html
