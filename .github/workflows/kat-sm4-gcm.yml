@@ -1,0 +1,30 @@
+name: SM4-GCM KAT
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/sm4-browser.js'
+      - 'src/test-vectors/sm4-gcm/**'
+      - '.github/workflows/kat-sm4-gcm.yml'
+  pull_request:
+    paths:
+      - 'src/sm4-browser.js'
+      - 'src/test-vectors/sm4-gcm/**'
+      - '.github/workflows/kat-sm4-gcm.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sm4-gcm-kat:
+    name: SM4-GCM KAT (30 vectors)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Run SM4-GCM KAT verifier
+        run: node src/test-vectors/sm4-gcm/verify-sm4-gcm.js
