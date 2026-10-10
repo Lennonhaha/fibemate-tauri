@@ -311,7 +311,12 @@ class PrivacyAPIClient {
         signedPrekey: bundle.signedPreKey || bundle.identityKey,
         prekeySignature: bundle.signedPreKeySignature || '',
         identitySigningKey: bundle.identitySigningKey || '',
-        signedPreKeySignature: bundle.signedPreKeySignature || ''
+        signedPreKeySignature: bundle.signedPreKeySignature || '',
+        // Hybrid PQ advertisement — must ride along: without it a re-upload
+        // wipes the peer's ML-KEM-768 bundle and forces a classical fallback.
+        hybridKeyId: bundle._hybridKeyId || bundle.hybridKeyId || null,
+        hybridBundleHex: bundle._hybridBundleHex || bundle.hybridBundleHex || null,
+        hybridMode: bundle._hybridMode || bundle.hybridMode || null
       })
     });
   }

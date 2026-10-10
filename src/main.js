@@ -40,32 +40,54 @@ document.addEventListener('DOMContentLoaded', async () => {
         console.log('[Init v5] OPK auto-replenish callback registered');
       }
 
+      // Single upload path for the full pre-key bundle (identity + SPK + hybrid PQ).
+      const uploadMyBundle = async (bundle) => {
+        const userId = localStorage.getItem('fk_uid') || localStorage.getItem('fk_uname');
+        const token = localStorage.getItem('fk_token');
+        const res = await fetch(`${API_BASE}/auth/update-keys`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({
+            publicKey: bundle.identityKey,
+            // SPK 独立化新字段（Tauri >= 2c3b021）
+            identitySigningKey: bundle.identitySigningKey || null,
+            signedPreKey: bundle.signedPreKey || bundle.identityKey,
+            signedPreKeySignature: bundle.signedPreKeySignature || null,
+            // backward compat (server accepts both naming conventions)
+            signedPrekey: bundle.signedPreKey || bundle.identityKey,
+            prekeySignature: bundle.signedPreKeySignature || '',
+            // Hybrid PQ advertisement (X25519 + ML-KEM-768 responder bundle)
+            // — additive fields; peers without support fall back to X3DH
+            hybridKeyId: bundle._hybridKeyId || bundle.hybridKeyId || null,
+            hybridBundleHex: bundle._hybridBundleHex || bundle.hybridBundleHex || null,
+            hybridMode: bundle._hybridMode || bundle.hybridMode || null
+          })
+        });
+        if (!res.ok) throw new Error('update-keys HTTP ' + res.status);
+        const hybridKeyId = bundle._hybridKeyId || bundle.hybridKeyId;
+        if (hybridKeyId && typeof MessageCryptoV2.markHybridUploaded === 'function') {
+          MessageCryptoV2.markHybridUploaded(hybridKeyId);
+        }
+        return res;
+      };
+
+      // A hybrid pre-key regenerated after init (cache cleared, account switch)
+      // must reach the server too — otherwise peers keep encapsulating to the
+      // stale key and every message fails with 'AEAD decrypt failed'.
+      if (typeof MessageCryptoV2.setHybridUploadCallback === 'function') {
+        MessageCryptoV2.setHybridUploadCallback(async () => {
+          const fresh = await MessageCryptoV2.getMyPreKeyBundle();
+          await uploadMyBundle(fresh);
+        });
+        console.log('[Init v5] Hybrid pre-key uploader registered');
+      }
+
       // 预生成 pre-key bundle（后台异步，不阻塞 UI）
       MessageCryptoV2.getMyPreKeyBundle().then(async bundle => {
         console.log('[Init v5] Pre-key bundle ready, identity key established');
         // 上传 bundle 到服务器（后端无 /pre-keys 路由，用 /api/auth/update-keys）
-        const userId = localStorage.getItem('fk_uid') || localStorage.getItem('fk_uname');
         try {
-          const token = localStorage.getItem('fk_token');
-          await fetch(`${API_BASE}/auth/update-keys`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-            body: JSON.stringify({
-              publicKey: bundle.identityKey,
-              // SPK 独立化新字段（Tauri >= 2c3b021）
-              identitySigningKey: bundle.identitySigningKey || null,
-              signedPreKey: bundle.signedPreKey || bundle.identityKey,
-              signedPreKeySignature: bundle.signedPreKeySignature || null,
-              // backward compat (server accepts both naming conventions)
-              signedPrekey: bundle.signedPreKey || bundle.identityKey,
-              prekeySignature: bundle.signedPreKeySignature || '',
-              // Hybrid PQ advertisement (X25519 + ML-KEM-768 responder bundle)
-              // — additive fields; peers without support fall back to X3DH
-              hybridKeyId: bundle._hybridKeyId || null,
-              hybridBundleHex: bundle._hybridBundleHex || null,
-              hybridMode: bundle._hybridMode || null
-            })
-          });
+          await uploadMyBundle(bundle);
           console.log('[Init v5] Pre-key bundle uploaded to server (update-keys)');
         } catch (uploadErr) {
           console.warn('[Init v5] Pre-key upload failed:', uploadErr.message);
