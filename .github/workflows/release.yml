@@ -12,6 +12,8 @@
 #   [E] 保持：门禁位置正确 —— 今天的 3.3.6 对齐前它会 FAIL，现在能过。
 #
 # 未采纳（待定，记此备忘）：
+#   [G] 修 Export provenance：gh attestation download 无 -D/--output-dir → 去掉 `-D att`，
+#       bundle 落在 CWD（sha256-<digest>.jsonl），用 `ls -t sha256*.jsonl | head -1` 取新产出。
 #   [F] `workflow_dispatch` 手动触发时 GITHUB_REF_NAME 是分支名而非 tag → 版本门禁会误 FAIL。
 #       可选修法：给该 step 加 `if: github.ref_type == 'tag'`，或 dispatch 时走单独校验分支。
 #
@@ -201,12 +203,15 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          mkdir -p att
           for f in rel/*.exe rel/RELEASE_CHECKSUMS.txt; do
             [ -f "$f" ] || continue
-            gh attestation download "$f" --repo "$GITHUB_REPOSITORY" -D att 2>&1 | tee -a attestation.log
-            # 不用 2>/dev/null 吞错：目录为空时 ls 的报错保留在日志，失败由下一行显式判定
-            src=$(ls att/*.jsonl | tail -1)
+            # gh attestation download 没有输出目录参数（可选项仅 -d/--digest-alg、--hostname、
+            # -L/--limit、-o/--owner、--predicate-type、-R/--repo）→ bundle 落在当前目录，
+            # 文件名按摘要：sha256-<digest>.jsonl。传 -D 会报 "unknown shorthand flag: 'D'"。
+            rm -f sha256*.jsonl
+            gh attestation download "$f" --repo "$GITHUB_REPOSITORY" 2>&1 | tee -a attestation.log
+            # 不用 2>/dev/null 吞错：取不到 bundle 时 ls 报错留在日志，失败由下一行显式判定
+            src=$(ls -t sha256*.jsonl 2>/dev/null | head -1)
             [ -n "$src" ] || { echo "::error::no attestation jsonl produced for $f"; exit 1; }
             cp "$src" "rel/$(basename "$f").intoto.jsonl"
           done
