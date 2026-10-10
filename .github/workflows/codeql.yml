@@ -9,6 +9,10 @@ on:
   schedule:
     - cron: "0 6 * * 3"  # Wednesdays 06:00 UTC
 
+# Least-privilege: CodeQL only reads the repo; the analyze job needs security-events.
+permissions:
+  contents: read
+
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})
