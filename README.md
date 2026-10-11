@@ -8,6 +8,7 @@ Built on Tauri v2 (Rust backend + WebView frontend), designed for the quantum er
 [![PQ](https://img.shields.io/badge/PQC-ML--KEM--768%20%7C%20ML--DSA--65-blue)]()
 [![License](https://img.shields.io/badge/license-GPLv3-blue)]()
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/Lennonhaha/fibemate-tauri/badge)](https://securityscorecards.dev/viewer/?uri=github.com/Lennonhaha/fibemate-tauri)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/15379/badge)](https://www.bestpractices.dev/projects/15379)
 
 > ⚠️ **Honest scope note:** the X3DH handshake DH layer is **classical X25519** today.
 > Post-quantum primitives (ML-KEM-768 / ML-DSA-65) are wired in as an **independent KEM
