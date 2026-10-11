@@ -11,10 +11,11 @@
 //!   - `hybrid_accept`  : responder, loads persisted keys, derives same secret
 //!
 //! Wire format (matches `pq::hybrid`):
-//!   - bundle: 0x01 ‖ x25519_pk(32)                   [classic]
-//!             0x02 ‖ x25519_pk(32) ‖ mlkem_pk(1184)  [hybrid]
-//!   - enc:    0x01 ‖ x25519_epk(32)                  [classic]
-//!             0x02 ‖ x25519_epk(32) ‖ mlkem_ct(1088) [hybrid]
+//!
+//! - bundle: `0x01` — x25519_pk(32) [classic]
+//! - bundle: `0x02` — x25519_pk(32) — mlkem_pk(1184) [hybrid]
+//! - enc:    `0x01` — x25519_epk(32) [classic]
+//! - enc:    `0x02` — x25519_epk(32) — mlkem_ct(1088) [hybrid]
 
 use serde::Serialize;
 use tauri::State;

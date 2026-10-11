@@ -171,7 +171,7 @@ fn write_device_key_to_disk(key_path: &Path, key: &[u8; DEVICE_KEY_LEN]) -> Resu
         out.extend_from_slice(DPAPI_MAGIC);
         out.extend_from_slice(&protected);
         fs::write(key_path, &out).map_err(|e| format!("Failed to write device key: {e}"))?;
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(windows))]
     {

@@ -260,7 +260,7 @@ pub fn dr_decrypt(
 #[tauri::command]
 pub fn dr_session_exists(state: State<CryptoState>, session_id: String) -> Result<bool, String> {
     let sessions = state.sessions.lock().map_err(|e| e.to_string())?;
-    Ok(sessions.has_session(&session_id)?)
+    sessions.has_session(&session_id)
 }
 
 /// Get this session's current sending public key.
