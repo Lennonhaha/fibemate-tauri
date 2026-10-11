@@ -62,6 +62,11 @@ fn rfc7748_section_5_2() {
         let s = sk(k);
         let u_bytes: [u8; 32] = hex::decode(u).unwrap().as_slice().try_into().unwrap();
         let got = s.diffie_hellman(&PublicKey::from(u_bytes));
-        assert_eq!(hex::encode(got.as_bytes()), *out, "RFC 7748 §5.2 case {}", i + 1);
+        assert_eq!(
+            hex::encode(got.as_bytes()),
+            *out,
+            "RFC 7748 §5.2 case {}",
+            i + 1
+        );
     }
 }
