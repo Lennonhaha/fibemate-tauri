@@ -208,7 +208,6 @@
   //  GF(2^128) Multiplication (for GCM authentication)
   // ================================================================
   function gfMul(x, y) {
-    let R = new Uint8Array(16);
     const Z = new Uint8Array(16);
     let V = new Uint8Array(y);
 
