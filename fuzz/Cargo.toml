@@ -1,0 +1,36 @@
+[package]
+name = "fibemate-tauri-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+
+[dependencies.fibemate]
+path = "../src-tauri"
+
+# Keep the fuzz crate out of any enclosing workspace and give it its own
+# Cargo.lock / target dir.
+[workspace]
+
+[[bin]]
+name = "hybrid_init_parse"
+path = "fuzz_targets/hybrid_init_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "envelope_parse"
+path = "fuzz_targets/envelope_parse.rs"
+test = false
+doc = false
+bench = false
+
+# Optimised, but keep line info so crash reports point at real source lines.
+[profile.release]
+debug = 1
