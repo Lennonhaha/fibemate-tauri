@@ -49,6 +49,7 @@ __MACOSX/
 
 # --- 双实例调试产物（2026-10-09）---
 src-tauri/target-liuxiu/
+/target-liuxiu/
 src-tauri/src-tauri/
 src-tauri/configs/
 src-tauri/mod-config.cjs
