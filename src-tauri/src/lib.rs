@@ -22,6 +22,9 @@ mod persistence_tests;
 #[cfg(test)]
 mod destructive_tests;
 
+#[cfg(test)]
+mod dr_state_tests;
+
 use commands::CryptoState;
 
 // ================================================
