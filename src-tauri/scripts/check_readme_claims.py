@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Verify the counts documented in README match the code.
 
-The README states the number of passing tests and the number of registered
-Tauri commands, in several places each: "expected output" snippets, a roadmap
-checklist, an architecture diagram and a command table. Every one is
-hand-typed, so they drift the moment anyone adds a test or a command - and
-nothing fails when they do, so the docs quietly start lying.
+The README states the number of passing tests (once, in the "Run Tests"
+snippet) and the number of registered Tauri commands (in an architecture
+diagram and a command table). Every one is hand-typed, so they drift the
+moment anyone adds a test or a command - and nothing fails when they do, so
+the docs quietly start lying.
 
 (The test badge is a live CI-status badge, so it no longer carries a number;
 its workflow URL is asserted separately by FORMAT_CLAIMS.)
@@ -70,12 +70,6 @@ def count_commands() -> int:
 # (label, regex, replacement) - every capture group must equal the real value.
 TEST_CLAIMS = [
     ("expected tests comment", re.compile(r"Expected:\s*(\d+)\s+tests"), r"Expected: {n} tests"),
-    (
-        "sample test result",
-        re.compile(r"^test result: ok\. (\d+) passed", re.M),
-        r"test result: ok. {n} passed",
-    ),
-    ("roadmap checklist", re.compile(r"(\d+)/(\d+) lib tests passing"), r"{n}/{n} lib tests passing"),
 ]
 
 COMMAND_CLAIMS = [
