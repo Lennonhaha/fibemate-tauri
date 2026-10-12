@@ -232,3 +232,10 @@ mod tests {
 // ── KAT: X25519 (RFC 7748) ─────────────────────────────────────
 #[cfg(test)]
 mod x25519_kat;
+
+// KAT: ML-KEM-768 / ML-DSA-65 — final FIPS 203/204 (ACVP) + draft-era (Oct 2023) vectors
+#[cfg(test)]
+mod mlkem_kat;
+
+#[cfg(test)]
+mod mldsa_kat;
