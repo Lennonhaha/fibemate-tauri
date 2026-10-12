@@ -11,26 +11,6 @@ function escapeHtml(str) {
   return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-/**
- * Sanitize a log argument to prevent log injection (CR/LF + control chars).
- * Attacker-controlled taint (peerId, msg.from, conversationId, urls...) must
- * pass through this before being interpolated into console.* / fs writes.
- *
- * Implemented via encodeURIComponent so that:
- *  - at runtime, control chars (incl. CR/LF) become %0D %0A (no forged log lines);
- *  - CodeQL's js/log-injection query recognizes URL-encoding (encodeURIComponent)
- *    as a sanitizer, so wrapping console.*(safeLog(x)) clears the alert.
- * @param {*} val
- * @returns {string}
- */
-function safeLog(val) {
-  if (val == null) return 'null';
-  const s = (typeof val === 'string') ? val : JSON.stringify(val);
-  if (s == null) return 'null';
-  // URL-encode: CR/LF -> %0D%0A, so no raw newline can reach the log sink.
-  return encodeURIComponent(s);
-}
-
 function formatTime(ts) {
   if (!ts) return '';
   const d = new Date(ts);
