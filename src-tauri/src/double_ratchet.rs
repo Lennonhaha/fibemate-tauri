@@ -22,7 +22,7 @@ use zeroize::Zeroize;
 
 /// Maximum number of messages that may be skipped in a single ratchet step.
 /// Bounds the skipped-key pool to prevent memory-exhaustion DoS.
-const MAX_SKIP: u32 = 1000;
+pub(crate) const MAX_SKIP: u32 = 1000;
 /// Maximum entries kept in previous_send_keys to bound memory growth.
 /// On insertion, if the map exceeds this size the oldest key (lowest message_num) is evicted.
 const MAX_PREVIOUS_SEND_KEYS: usize = 100;
@@ -99,6 +99,27 @@ pub struct RatchetState {
     /// The peer's identity public key from X3DH (X25519, 32 bytes)
     #[serde(default)]
     pub peer_identity_pk: Option<[u8; 32]>,
+}
+
+/// Read-only snapshot of a session's ratchet state (tests only).
+///
+/// Exists so `dr_state_tests` can assert on pool sizes / chain state without
+/// widening the public API of `SessionManager`. `#[cfg(test)]`-gated, so it is
+/// absent from release builds.
+#[cfg(test)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StateSnapshot {
+    pub recv_public_key: [u8; 32],
+    pub send_public_key: [u8; 32],
+    pub recv_message_num: u32,
+    pub send_message_num: u32,
+    pub skipped_keys_len: usize,
+    pub previous_send_keys_len: usize,
+    pub previous_chain_pubkeys_len: usize,
+    pub previous_chain_pubkeys: Vec<[u8; 32]>,
+    pub root_key: [u8; 32],
+    pub send_chain_key: [u8; 32],
+    pub recv_chain_key: [u8; 32],
 }
 
 impl RatchetState {
@@ -407,6 +428,29 @@ impl SessionManager {
         let mut sessions = self.sessions.lock().map_err(|e| e.to_string())?;
         let state = sessions.get_mut(session_id).ok_or("Session not found")?;
         state.ratchet_step(their_pub)
+    }
+
+    /// Test-only: read a consistent snapshot of one session's ratchet state.
+    ///
+    /// `#[cfg(test)]`-gated like `debug_ratchet_step`, so release builds expose
+    /// no extra accessor. Used by `dr_state_tests` to assert on pool sizes and
+    /// chain state that are otherwise unobservable through the public API.
+    #[cfg(test)]
+    pub fn debug_state_snapshot(&self, session_id: &str) -> Option<StateSnapshot> {
+        let sessions = self.sessions.lock().unwrap();
+        sessions.get(session_id).map(|s| StateSnapshot {
+            recv_public_key: s.recv_public_key,
+            send_public_key: s.send_public_key,
+            recv_message_num: s.recv_message_num,
+            send_message_num: s.send_message_num,
+            skipped_keys_len: s.skipped_keys.len(),
+            previous_send_keys_len: s.previous_send_keys.len(),
+            previous_chain_pubkeys_len: s.previous_chain_pubkeys.len(),
+            previous_chain_pubkeys: s.previous_chain_pubkeys.clone(),
+            root_key: s.root_key,
+            send_chain_key: s.send_chain_key,
+            recv_chain_key: s.recv_chain_key,
+        })
     }
 
     /// Check if a session exists.
