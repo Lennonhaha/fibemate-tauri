@@ -10,21 +10,11 @@
     "fs:default",
     {
       "identifier": "fs:allow-read",
-      "allow": [
-        { "path": "$APPDATA/**" },
-        { "path": "$DOCUMENT/**" },
-        { "path": "$DOWNLOAD/**" },
-        { "path": "$DESKTOP/**" }
-      ]
+      "allow": [{ "path": "$APPDATA/**" }]
     },
     {
       "identifier": "fs:allow-write",
-      "allow": [
-        { "path": "$APPDATA/**" },
-        { "path": "$DOCUMENT/**" },
-        { "path": "$DOWNLOAD/**" },
-        { "path": "$DESKTOP/**" }
-      ]
+      "allow": [{ "path": "$APPDATA/**" }]
     },
     {
       "identifier": "fs:allow-exists",
