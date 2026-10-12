@@ -177,12 +177,8 @@ npx tauri build        # production binary
 
 ```bash
 cd src-tauri
-cargo test --release --lib
+cargo test --release
 # Expected: 141 tests, 0 failures
-```
-
-```
-test result: ok. 141 passed; 0 failed; 0 ignored; 0 measured
 ```
 
 Coverage highlights (all real, verified 2026-09-02):
@@ -280,7 +276,7 @@ fibemate-tauri/
 - [x] Double Ratchet fully in Rust
 - [x] X3DH with independent SPK (DH2 ≠ DH3)
 - [x] AES-256-GCM + DPAPI encrypted KeyStore
-- [x] 141/141 lib tests passing
+- [x] All lib tests passing
 - [ ] Hybrid PQ handshake (wire `pq/hybrid.rs` into X3DH) — P2
 - [ ] Session-level PQ ratchet (ML-KEM inside ratchet, PQXDH Level 3) — P2
 - [ ] P2P WebRTC with PQ key exchange
