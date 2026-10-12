@@ -4,7 +4,7 @@
 Built on Tauri v2 (Rust backend + WebView frontend), designed for the quantum era.
 
 [![Rust](https://img.shields.io/badge/rust-1.85+-orange)]()
-[![Tests](https://img.shields.io/badge/tests-141%2F141%20passed-brightgreen)]()
+[![CI](https://img.shields.io/github/actions/workflow/status/Lennonhaha/fibemate-tauri/ci.yml?label=CI)]()
 [![PQ](https://img.shields.io/badge/PQC-ML--KEM--768%20%7C%20ML--DSA--65-blue)]()
 [![License](https://img.shields.io/badge/license-GPLv3-blue)]()
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/Lennonhaha/fibemate-tauri/badge)](https://securityscorecards.dev/viewer/?uri=github.com/Lennonhaha/fibemate-tauri)

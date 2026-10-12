@@ -2,10 +2,13 @@
 """Verify the counts documented in README match the code.
 
 The README states the number of passing tests and the number of registered
-Tauri commands, in several places each: a shields.io badge, "expected output"
-snippets, a roadmap checklist, an architecture diagram and a command table.
-Every one is hand-typed, so they drift the moment anyone adds a test or a
-command - and nothing fails when they do, so the docs quietly start lying.
+Tauri commands, in several places each: "expected output" snippets, a roadmap
+checklist, an architecture diagram and a command table. Every one is
+hand-typed, so they drift the moment anyone adds a test or a command - and
+nothing fails when they do, so the docs quietly start lying.
+
+(The test badge is a live CI-status badge, so it no longer carries a number;
+its workflow URL is asserted separately by FORMAT_CLAIMS.)
 
 This turns those numbers into checked assertions. It exits non-zero on any
 mismatch, and `--update` rewrites them all in place.
@@ -65,9 +68,7 @@ def count_commands() -> int:
 
 
 # (label, regex, replacement) - every capture group must equal the real value.
-# The badge URL-encodes its slash, hence its own pattern.
 TEST_CLAIMS = [
-    ("badge", re.compile(r"tests-(\d+)%2F(\d+)%20passed"), r"tests-{n}%2F{n}%20passed"),
     ("expected tests comment", re.compile(r"Expected:\s*(\d+)\s+tests"), r"Expected: {n} tests"),
     (
         "sample test result",
@@ -88,6 +89,19 @@ COMMAND_CLAIMS = [
         "command table header",
         re.compile(r"### Tauri Commands \((\d+) registered"),
         r"### Tauri Commands ({n} registered",
+    ),
+]
+
+# Non-numeric claims: README must keep matching these (format / URL guards).
+# The test badge is now a live CI-status badge, so it no longer carries a
+# number; we still assert its workflow URL so nobody silently reverts it to a
+# stale hand-typed count.
+FORMAT_CLAIMS = [
+    (
+        "badge",
+        re.compile(
+            r"shields\.io/github/actions/workflow/status/Lennonhaha/fibemate-tauri/ci\.yml"
+        ),
     ),
 ]
 
@@ -120,6 +134,16 @@ def run_checks(text: str, counts: dict) -> list:
             print(f"{label:<26} {value or '?':>12}  {'OK' if ok else 'FAIL'}")
             if not ok:
                 failures.append(f"{group}/{label} (says {value})")
+        print()
+    if FORMAT_CLAIMS:
+        print(f"{'claim':<26} {'documented':>12}  status   [format, must be present]")
+        print("-" * 62)
+        for label, pattern in FORMAT_CLAIMS:
+            if pattern.search(text):
+                print(f"{label:<26} {'ok':>12}  OK")
+            else:
+                print(f"{label:<26} {'—':>12}  NOT FOUND (expected format)")
+                failures.append(f"format/{label}")
         print()
     return failures
 
