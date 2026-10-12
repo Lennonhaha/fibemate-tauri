@@ -51,13 +51,14 @@ fn tamper(m: &EncryptedMessage) -> EncryptedMessage {
 }
 
 /// Well-formed envelope with a chosen DH public key and message number, but
-/// garbage ciphertext (no genuine key material).
+/// garbage ciphertext (no genuine key material). The nonce is drawn straight
+/// from the RNG so that no cryptographic constant appears in the source.
 fn crafted(public_key: [u8; 32], message_num: u32) -> EncryptedMessage {
     EncryptedMessage {
         public_key,
         message_num,
         previous_chain_length: 0,
-        nonce: [0u8; 12],
+        nonce: rand::random(),
         ciphertext: vec![0u8; 16],
     }
 }
