@@ -12,7 +12,10 @@ Built on Tauri v2 (Rust backend + WebView frontend), designed for the quantum er
 
 > ⚠️ **Honest scope note:** the X3DH handshake DH layer is **classical X25519** today.
 > Post-quantum primitives (ML-KEM-768 / ML-DSA-65) are wired in as an **independent KEM
-> path** (`kem_*` commands) and as the **SPK signature layer** (ML-DSA-65, FIPS 204).
+> path** (`kem_*` commands) and as the **SPK signature layer** (ML-DSA-65).
+> ⚠️ **Conformance caveat:** the bundled `rustpq 0.3` primitives are **implemented
+> against the pre-final (Oct 2023) FIPS 203/204 drafts** — see
+> [Standards conformance](#standards-conformance-rustpq-03) below.
 > A single mixed PQ+classical handshake (hybrid X3DH) exists at the library layer only
 > and is **not yet connected** to any command. This is a teaching/reference implementation —
 > see [docs/protocol-spec.md](https://github.com/Lennonhaha/fibemate/blob/main/docs/protocol-spec.md).
@@ -62,14 +65,44 @@ operations execute exclusively in the Rust backend.
 
 | Algorithm | Standard | Use | Notes |
 |-----------|----------|-----|-------|
-| **ML-KEM-768** | FIPS 203 | PQ key encapsulation (`kem_*`) | rustpq 0.3, NIST Cat 3 |
-| **ML-DSA-65** | FIPS 204 | SPK signing / verification | rustpq 0.3; context `fibemate-spk-v1` |
+| **ML-KEM-768** | FIPS 203 | PQ key encapsulation (`kem_*`) | rustpq 0.3, NIST Cat 3 — **KeyGen is draft-era** (see conformance note) |
+| **ML-DSA-65** | FIPS 204 | SPK signing / verification | rustpq 0.3; context `fibemate-spk-v1` — **draft-era signatures** (see conformance note) |
 | **X25519** | RFC 7748 | IK / SPK / ephemeral DH | x25519-dalek 2 |
 | **X3DH** | Signal spec | Asynchronous key agreement | 3 distinct DH inputs (IK×SPK, EK×IK, EK×SPK) |
 | **Double Ratchet** | Signal spec | Per-message forward secrecy | fully in Rust, skip pool 1000 |
 | **AES-256-GCM** | FIPS 197 | Message AEAD + KeyStore | aes-gcm 0.10 |
 | **HKDF-SHA256** | RFC 5869 | All key derivation | hkdf 0.12 |
 | **SM2 / SM3** | GB/T 32918 / 32905 | GM crypto interop line | 12 commands incl. C1‖C3‖C2 wire format |
+
+## Standards conformance (rustpq 0.3)
+
+The bundled PQ crate is `rustpq 0.3`. A known-answer test against NIST's
+**final** ACVP vectors (`usnistgov/ACVP-Server`) and against NIST's
+**draft-era (Oct 2023)** intermediate values — both driven from
+`src-tauri/src/pq/*_kat.rs` — shows it is **implemented against the pre-final
+drafts**:
+
+| Primitive | final FIPS | draft-era (Oct 2023) |
+|-----------|-----------|----------------------|
+| ML-KEM-768 KeyGen | ✗ | ✓ |
+| ML-KEM-768 Encaps / Decaps | ✓ | (unchanged) |
+| ML-DSA-65 KeyGen / Sign / Verify | ✗ | ✗ |
+
+- **ML-KEM-768** KeyGen follows the draft: the final FIPS 203 added the
+  module-rank byte `k` to `G(d ‖ k)`, which changes `(ρ, σ)`. Encaps/Decaps are
+  unaffected by that change and match the final vectors.
+- **ML-DSA-65** emits **3293-byte** signatures, whereas **both** the final
+  standard and NIST's already-corrected Oct 2023 document specify **3309 bytes**
+  (the challenge `c~` must be `lambda/4 = 48` bytes, not 32). This divergence is
+  specific to the crate rather than a draft→final change.
+- `rustpq`'s ML-DSA sign/verify use a fixed 256-byte buffer and **silently
+  truncate messages longer than 254 bytes**. This repo only signs a 32-byte
+  X25519 SPK, so it is not triggered today — do **not** sign longer messages
+  with this crate.
+
+**Impact:** FIBEMATE↔FIBEMATE works (both ends use the same crate), but
+**interoperability with any final-conformant ML-KEM/ML-DSA implementation
+fails.** Tracked: replace or patch `rustpq`, or qualify the claim.
 
 ### Message security (Double Ratchet)
 
@@ -209,8 +242,8 @@ fibemate-tauri/
 
 | Property | Status |
 |----------|--------|
-| PQ key encapsulation | ✅ ML-KEM-768 (FIPS 203), `kem_*` command path |
-| PQ signatures | ✅ ML-DSA-65 (FIPS 204) — SPK binding |
+| PQ key encapsulation | ⚠️ ML-KEM-768 — Encaps/Decaps match final FIPS 203; KeyGen is draft-era (see conformance note) |
+| PQ signatures | ⚠️ ML-DSA-65 — draft-era signatures, not final FIPS 204 conformant (see conformance note) |
 | Forward secrecy | ✅ Double Ratchet, per-message ratchet step |
 | Post-compromise security | ✅ ratchet self-healing |
 | Private keys never in JS | ✅ opaque handles only |
@@ -230,8 +263,8 @@ fibemate-tauri/
 
 ## 📜 Standards
 
-- **FIPS 203**: ML-KEM-768
-- **FIPS 204**: ML-DSA-65
+- **FIPS 203**: ML-KEM-768 — *this repo's `rustpq 0.3` key generation is draft-era* (see conformance note)
+- **FIPS 204**: ML-DSA-65 — *this repo's `rustpq 0.3` signatures are draft-era* (see conformance note)
 - **FIPS 197**: AES-256-GCM
 - **RFC 5869**: HKDF-SHA256
 - **RFC 7748**: X25519
