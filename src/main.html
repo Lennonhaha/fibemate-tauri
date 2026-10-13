@@ -282,7 +282,7 @@
         <p>Choose from your existing conversations or start a new one</p>
       </div>
 
-      <div class="chat-window" id="chatWindow" style="display:none">
+      <div class="chat-window is-hidden" id="chatWindow">
         <div class="chat-header">
           <button class="icon-btn" id="btnBack" title="Back">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -295,7 +295,7 @@
               <div class="chat-peer-name" id="chatPeerName">Peer</div>
               <div class="chat-peer-status" id="chatPeerStatus">Encrypted</div>
               <!-- 加密状态指示器 -->
-              <div class="e2ee-status-bar" id="e2eeStatusBar" style="display:none">
+              <div class="e2ee-status-bar is-hidden" id="e2eeStatusBar">
                 <span class="e2ee-status-icon" id="e2eeStatusIcon">🔒</span>
                 <span class="e2ee-status-text" id="e2eeStatusText">E2EE</span>
                 <span class="e2ee-status-detail" id="e2eeStatusDetail"></span>
@@ -350,7 +350,7 @@
       </div>
 
       <!-- ===== 语音通话视图 ===== -->
-      <div class="call-view" id="callView" style="display:none">
+      <div class="call-view is-hidden" id="callView">
         <div class="call-avatar" id="callAvatar">?</div>
         <div class="call-name" id="callName">Unknown</div>
         <div class="call-status" id="callStatus">Calling...</div>
@@ -377,7 +377,7 @@
       </div>
 
       <!-- ===== 密钥详情视图 ===== -->
-      <div class="key-detail-view" id="keyDetailView" style="display:none">
+      <div class="key-detail-view is-hidden" id="keyDetailView">
         <div class="key-detail-header">
           <h3>Key Management</h3>
           <p>Manage your encryption keys and security settings</p>
@@ -390,7 +390,7 @@
       </div>
 
       <!-- ===== 设置详情视图 ===== -->
-      <div class="settings-detail-view" id="settingsDetailView" style="display:none">
+      <div class="settings-detail-view is-hidden" id="settingsDetailView">
         <div class="settings-detail-header">
           <h3>Settings</h3>
           <p>Customize your FIBEMATE experience</p>
@@ -404,7 +404,7 @@
   <!-- ===== 模态框 ===== -->
 
   <!-- 添加联系人 -->
-  <div class="modal-overlay" id="modalAddContact" style="display:none">
+  <div class="modal-overlay is-hidden" id="modalAddContact">
     <div class="modal">
       <div class="modal-header">
         <h4>Add Contact</h4>
@@ -428,7 +428,7 @@
   </div>
 
   <!-- 上传文件到保险库 -->
-  <div class="modal-overlay" id="modalUploadVault" style="display:none">
+  <div class="modal-overlay is-hidden" id="modalUploadVault">
     <div class="modal">
       <div class="modal-header">
         <h4>Upload to Vault</h4>
@@ -440,7 +440,7 @@
             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
           </svg>
           <p>Drag files here or click to browse</p>
-          <input type="file" id="vaultFileInput" multiple style="display:none">
+          <input type="file" id="vaultFileInput" class="is-hidden" multiple>
         </div>
       </div>
       <div class="modal-footer">
@@ -451,7 +451,7 @@
   </div>
 
   <!-- Toast -->
-  <div class="toast" id="toast" style="display:none"></div>
+  <div class="toast is-hidden" id="toast"></div>
 
   <!-- 退出按钮逻辑（已移除Matrix动画） -->
   <script src="main-bootstrap.js"></script>

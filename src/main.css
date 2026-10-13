@@ -1836,3 +1836,16 @@ body {
     display: none;
   }
 }
+
+/* ---- CSP-safe default-hidden state ------------------------------------
+   Our CSP sets style-src with a nonce, which per CSP3 makes 'unsafe-inline'
+   ineffective, so the inline style="display:none" attributes these elements
+   used to carry were silently dropped (they leaked into view). They now start
+   hidden through this class instead. The id+class selector also wins over
+   later single-class rules; a runtime inline style set from JS
+   (el.style.display = 'flex' / 'none', which CSP does not govern) still
+   overrides it, so the existing show/hide code paths are unchanged. */
+#chatWindow.is-hidden, #e2eeStatusBar.is-hidden, #callView.is-hidden,
+#keyDetailView.is-hidden, #settingsDetailView.is-hidden,
+#modalAddContact.is-hidden, #modalUploadVault.is-hidden,
+#vaultFileInput.is-hidden, #toast.is-hidden { display: none; }
