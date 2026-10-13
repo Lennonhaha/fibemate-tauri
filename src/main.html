@@ -24,7 +24,7 @@
   <script src="privacy-layers/index.js" type="module"></script>
   <script src="privacy-integration.js" type="module"></script>
   <!-- PQ-WASM Test Suite (development only) -->
-  <script src="crypto/pq-test-electron.js" defer></script>
+  
   <!-- FIBEMATE Modular Architecture (refactored from main-v3.js) -->
   <script src="ws-padding.js"></script>
   <script src="modules/app-state.js"></script>
@@ -261,7 +261,7 @@
             <span>Online</span>
           </div>
         </div>
-        <button class="btn-exit" id="btnLogout" onclick="if(confirm('退出登录？')){localStorage.removeItem('fk_token');localStorage.removeItem('fk_uname');localStorage.removeItem('fk_uid');localStorage.removeItem('fk_displayName');window.location.href='index.html';}">退出登录</button>
+        <button class="btn-exit" id="btnLogout">退出登录</button>
       </div>
     </aside>
 
@@ -454,25 +454,6 @@
   <div class="toast" id="toast" style="display:none"></div>
 
   <!-- 退出按钮逻辑（已移除Matrix动画） -->
-  <script>
-    document.addEventListener('DOMContentLoaded', () => {
-      // 应用版本号显示（从 Tauri 后端读取 package_info().version）
-      const verEl = document.getElementById('appVersion');
-      if (verEl && window.__TAURI__ && window.__TAURI__.core) {
-        window.__TAURI__.core.invoke('get_version')
-          .then(v => { verEl.textContent = 'v' + v; })
-          .catch(() => { /* 保持默认占位 */ });
-      }
-
-      const logoutBtn = document.getElementById('btnLogout');
-      if (logoutBtn) {
-        logoutBtn.addEventListener('click', (e) => {
-          e.preventDefault();
-          localStorage.clear();
-          window.location.href = 'index.html';
-        });
-      }
-    });
-  </script>
+  <script src="main-bootstrap.js"></script>
 </body>
 </html>
