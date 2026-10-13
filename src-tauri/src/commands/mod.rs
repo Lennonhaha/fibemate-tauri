@@ -22,6 +22,10 @@ pub mod sm2_cmd;
 
 #[cfg(test)]
 mod ipc_tests;
+#[cfg(test)]
+mod session_admin_tests;
+#[cfg(test)]
+mod sm2_tests;
 
 /// Global cryptographic state managed by Tauri.
 ///
