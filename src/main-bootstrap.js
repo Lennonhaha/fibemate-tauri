@@ -11,22 +11,19 @@
 
       const logoutBtn = document.getElementById('btnLogout');
       if (logoutBtn) {
-        // (1) 原 #btnLogout 内联 onclick 的行为（原样外置）
         logoutBtn.addEventListener('click', (e) => {
           e.preventDefault();
-          if (confirm('退出登录？')) {
-            localStorage.removeItem('fk_token');
-            localStorage.removeItem('fk_uname');
-            localStorage.removeItem('fk_uid');
-            localStorage.removeItem('fk_displayName');
-            window.location.href = 'index.html';
-          }
-        });
-        // (2) 原内联脚本里 addEventListener 的行为（原样外置）
-        logoutBtn.addEventListener('click', (e) => {
-          e.preventDefault();
-          localStorage.clear();
+          if (!confirm('退出登录？')) return;
+          // Clear only the auth/session keys. The encrypted key caches
+          // (fibemate_rust_hybrid_<uid>, fibemate_rust_sessions_<uid>) must
+          // survive a logout -- wiping everything here breaks E2EE on the
+          // next login with the same account.
+          localStorage.removeItem('fk_token');
+          localStorage.removeItem('fk_uname');
+          localStorage.removeItem('fk_uid');
+          localStorage.removeItem('fk_displayName');
           window.location.href = 'index.html';
         });
       }
     });
+  
