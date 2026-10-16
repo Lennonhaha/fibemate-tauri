@@ -45,7 +45,7 @@ jobs:
             librsvg2-dev
 
       - name: Install frontend dependencies
-        run: npm install
+        run: npm ci
 
       - name: Rust format check
         working-directory: src-tauri
