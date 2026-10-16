@@ -1,0 +1,79 @@
+# FIBEMATE - ML-KEM-768 cross-implementation interop (consumer gate)
+#
+# The harness lives in Lennonhaha/fibemate and is consumed as a frozen tag
+# (interop-harness-v1 -> commit 3e0aec7). It is pulled into vendor/fibemate with a
+# nested checkout and run from there against the noble leg only.
+#
+# liboqs is deliberately NOT part of this job: the pinned liboqs build and the
+# 10,000-round run stay in the producer repository (nightly-phase2.yml).
+#
+# The job id below is the required status-check context ("interop").
+
+name: interop
+permissions: read-all
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: interop-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+
+  interop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      # Nested checkout of the producer repo at the frozen tag. Public repo, so the
+      # default GITHUB_TOKEN is sufficient (same pattern as nightly-phase1.yml).
+      - name: Checkout the interop harness (Lennonhaha/fibemate @ interop-harness-v1)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: Lennonhaha/fibemate
+          ref: interop-harness-v1   # annotated tag -> commit 3e0aec75cdde3e0b7ef76dbc1c4be7e55f2fbd15
+          path: vendor/fibemate
+          fetch-depth: 1
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # --ignore-scripts skips the better-sqlite3 native build; the harness only
+      # needs @noble/post-quantum (pure JS).
+      - name: Install harness dependencies
+        working-directory: vendor/fibemate
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Interop + vector gate (1,000 rounds, noble)
+        working-directory: vendor/fibemate
+        run: |
+          set -o pipefail
+          node scripts/interop/run.mjs run \
+            --rounds 1000 --partners noble --kat all \
+            --out "$GITHUB_WORKSPACE/interop-out"
+
+      - name: Report digest
+        if: always()
+        run: |
+          if [ -f "$GITHUB_WORKSPACE/interop-out/report.json" ]; then
+            sha256sum "$GITHUB_WORKSPACE/interop-out/report.json" | tee "$GITHUB_WORKSPACE/interop-out/report.sha256.printed"
+          else
+            echo "::warning::no report produced"
+          fi
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.1
+        if: always()
+        with:
+          name: interop-report
+          path: interop-out/
+          retention-days: 14
