@@ -1,0 +1,43 @@
+name: DCO
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: dco
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Verify Signed-off-by on all commits
+        if: github.actor != 'dependabot[bot]'   # bots cannot sign off
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          # All commits in the PR range must carry a Signed-off-by trailer
+          missing=0
+          while IFS= read -r commit; do
+            if ! git log -1 --format='%(trailers:key=Signed-off-by)' "$commit" | grep -q 'Signed-off-by:'; then
+              echo "❌ Commit ${commit:0:12} is missing Signed-off-by"
+              git log -1 --format='   %s' "$commit"
+              missing=1
+            fi
+          done < <(git rev-list "$BASE_SHA..$HEAD_SHA")
+          if [ "$missing" -ne 0 ]; then
+            echo ""
+            echo "Each commit must be signed with the Developer Certificate of Origin:"
+            echo "  git commit -s   (or:  git commit --signoff)"
+            echo "See .github/DCO and CONTRIBUTING.md → Developer Certificate of Origin."
+            exit 1
+          fi
+          echo "✅ All $(( $(git rev-list "$BASE_SHA..$HEAD_SHA" | wc -l) )) commits carry Signed-off-by"
