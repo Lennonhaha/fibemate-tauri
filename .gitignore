@@ -69,3 +69,5 @@ secrets/
 *.tfvars
 id_rsa*
 id_ed25519*
+# interop harness (CI cross-repo checkout)
+/vendor/
