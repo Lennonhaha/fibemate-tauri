@@ -170,7 +170,8 @@ async function loadMessages(conversationId) {
             const mid = m.id || m._id;
             const failedKey = 'fibemate_df_' + mid;
             if (mid && localStorage.getItem(failedKey)) {
-              text = '[解密失败]';
+              // 之前已解密失败：不再重试，但仍渲染失败占位（与下方 catch 分支一致）
+              appendMessage(false, '⚠️ 解密失败', m.createdAt, true);
               continue;
             }
             text = await Crypto.decrypt(m.senderUserId, envelope);
