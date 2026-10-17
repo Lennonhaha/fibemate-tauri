@@ -8,15 +8,8 @@ const path = require('path');
 const { parseKatFile, convertToInternalFormat } = require('./kat-parser');
 const { nttForward, modAdd, modMul } = require('./ntt-forward');
 
-// Load the ML-KEM implementation
-const mlKemPath = path.join(__dirname, '..', '..', 'crypto', 'crypto', 'ml-kem-768.js');
-const mlKemCode = fs.readFileSync(mlKemPath, 'utf8');
-
-// We need to extract functions without the crypto dependency
-// Create a modified version for deterministic testing
-const modifiedCode = mlKemCode
-    .replace('const d = crypto.getRandomValues(new Uint8Array(32));', '// d provided externally')
-    .replace('const z = crypto.getRandomValues(new Uint8Array(32));', '// z provided externally');
+// NOTE: verification below works off the parsed NIST KAT files (./kat-parser)
+// plus the NTT helpers (./ntt-forward); ml-kem-768.js is not loaded here.
 
 // For now, let's implement a deterministic keygen that accepts seeds
 function deterministicKeygen(d, z) {
