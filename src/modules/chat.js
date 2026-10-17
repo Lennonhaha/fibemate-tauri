@@ -284,7 +284,7 @@ async function sendMessage() {
               _hybridBundleHex: keysResp.hybridBundleHex || null,
               _hybridMode: keysResp.hybridMode || null
             };
-            if (bundle && bundle.identityKey) {
+            if (bundle.identityKey) {
               // v7: 优先使用混合 PQ 握手 (X25519 + ML-KEM-768) —— 对方 bundle 携带 hybrid 通告时
               //     走 adapter.initiateHybridSession（真实 PQ 握手）；否则纯 X3DH 降级
               let sessionResult;
