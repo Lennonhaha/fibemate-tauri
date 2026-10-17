@@ -1,0 +1,46 @@
+# cargo-deny configuration for fibemate-tauri
+#
+# Scope: `cargo deny check advisories` (see .github/workflows/deny.yml).
+# Location: repository root, i.e. the default config path used by cargo-deny-action.
+#
+# Policy (v1)
+# -----------
+# * Every *vulnerability* advisory fails the check. cargo-deny v2 dropped the ability to
+#   downgrade vulnerabilities, so this cannot be relaxed here — it is the gate.
+# * `unmaintained` / `unsound` advisories fail only when they affect a *direct* dependency of
+#   this workspace. Two transitive ones cannot be fixed from this repository:
+#
+#     RUSTSEC-2024-0370  proc-macro-error  (unmaintained)  <- glib-macros <- glib <- gtk
+#     RUSTSEC-2024-0429  glib              (unsound)       <- gtk 0.18 stack
+#
+#   `tauri` 2.11.2 / 2.12.3 / 3.0.0-alpha.4 all require `gtk ^0.18`, and the only fixed glib
+#   (0.20.0) is incompatible with it, so there is no upstream fix yet.
+#   These are Linux/BSD-only subtrees: `tauri` target-gates gtk/webkit2gtk and
+#   `wl-clipboard-rs` target-gates wayland-client, while the Windows and macOS builds do not
+#   compile them.
+#
+# Strict upgrade path (currently impractical — kept for reference)
+# -----------------------------------------------------------------
+# Setting both scopes to `"all"` makes the check fail on 17 advisories in this tree (measured
+# 2026-10-17 with `unmaintained="all"` / `unsound="all"`), and 10 of them are the whole gtk-rs
+# GTK3 family — all unmaintained upstream, all pinned by `tauri`'s `gtk ^0.18`:
+#
+#   RUSTSEC-2024-0411 gdkwayland-sys   0412 gdk          0413 atk        0414 gdkx11-sys
+#   RUSTSEC-2024-0415 gtk              0416 atk-sys      0417 gdkx11     0418 gdk-sys
+#   RUSTSEC-2024-0419 gtk3-macros      0420 gtk-sys
+#   RUSTSEC-2024-0370 proc-macro-error (unmaintained)  <- glib-macros <- glib <- gtk
+#   RUSTSEC-2024-0429 glib             (unsound)
+#   RUSTSEC-2025-0075/0080/0081/0098/0100 unic-* (unmaintained)  <- urlpattern <- tauri-utils
+#
+# So an explicit ignore list would have to grow with every gtk-rs crate. Until upstream moves to
+# gtk4 (tauri 3.x, alpha), the `workspace` scope below is the useful setting: it still fails on
+# every vulnerability and on any unmaintained/unsound *direct* dependency.
+#
+# `unused-ignored-advisory = "deny"` keeps any future ignore honest: an ignore whose advisory is
+# no longer in the graph fails the check until the stale entry is deleted.
+
+[advisories]
+version = 2
+unmaintained = "workspace"
+unsound = "workspace"
+unused-ignored-advisory = "deny"
