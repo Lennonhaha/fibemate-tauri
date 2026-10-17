@@ -1,0 +1,36 @@
+name: deny
+
+# Dependency advisory gate (cargo-deny).
+# Rules live in ./deny.toml (repository root, the action's default config path).
+#
+# Runs on every PR, on pushes to main, and weekly so that newly published advisories are
+# picked up even when no dependency changed.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    # Mondays 06:00 UTC
+    - cron: '0 6 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deny-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  advisories:
+    name: cargo-deny (advisories)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      # EmbarkStudios/cargo-deny-action v2, pinned by commit
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25
+        with:
+          command: check advisories
+          arguments: --all-features
+          manifest-path: src-tauri/Cargo.toml
+          log-level: warn
