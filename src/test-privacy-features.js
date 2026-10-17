@@ -69,7 +69,7 @@ async function testScreenshotDetection() {
     const detector = new ScreenshotDetector();
     
     // Test initialization
-    assert(detector !== null, 'Detector initialization failed');
+    assert(detector instanceof ScreenshotDetector, 'Detector initialization failed');
     assert(detector.enabled === true, 'Detector should be enabled by default');
     log('Initialization: PASS', 'pass');
     
@@ -93,7 +93,7 @@ async function testKeyRotation() {
     const rotation = new KeyRotation({ rotationInterval: 1000, maxMessagesPerKey: 5 });
     
     // Test initialization
-    assert(rotation !== null, 'KeyRotation initialization failed');
+    assert(rotation instanceof KeyRotation, 'KeyRotation initialization failed');
     log('Initialization: PASS', 'pass');
     
     // Test key generation
@@ -220,7 +220,7 @@ async function testEncryptedFileTransfer() {
     const transfer = new EncryptedFileTransfer();
     
     // Test initialization
-    assert(transfer !== null, 'Initialization failed');
+    assert(transfer instanceof EncryptedFileTransfer, 'Initialization failed');
     log('Initialization: PASS', 'pass');
     
     // Test chunk calculation

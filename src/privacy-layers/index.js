@@ -27,9 +27,7 @@ async function initPrivacyLayers() {
     // Layer 1: Double Ratchet (Rust-native via RatchetBridge, no JS fallback since v3)
     
     // Layer 2: ZK Authentication (already exists)
-    if (typeof ZKAuth === 'undefined') {
-        // Will be loaded from zk-auth.js
-    }
+    // TODO: ZKAuth is only declared in the `let` list above; it is never assigned here.
     
     // Layer 3: PIR Search
     if (typeof PIRClient === 'undefined') {

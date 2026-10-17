@@ -782,7 +782,7 @@ const VoiceMessage = (() => {
         _hybridMode: keysResp.hybridMode || null
       };
 
-      if (!bundle || !bundle.identityKey) {
+      if (!bundle.identityKey) {
         showToast('对方尚未上传密钥，无法建立加密会话', 'warning');
         return false;
       }
