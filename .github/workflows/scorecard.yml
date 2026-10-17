@@ -34,6 +34,11 @@ jobs:
           results_file: results.sarif
           results_format: sarif
           publish_results: true
+          # Fine-grained PAT with "Administration: Read-only" (+ auto Metadata,
+          # optional Webhooks) so the Branch-Protection check can read classic
+          # branch protection rules. Falls back to GITHUB_TOKEN when the secret
+          # is absent (Branch-Protection then stays inconclusive).
+          repo_token: ${{ secrets.SCORECARD_TOKEN || github.token }}
 
       - name: Upload SARIF
         uses: github/codeql-action/upload-sarif@24c54180a607b1449ed407dd24f251e4e9147c8d # v4
