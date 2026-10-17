@@ -153,14 +153,6 @@ function renderNotifications() {
     info: '\uD83D\uDD14',
   };
 
-  const typeColors = {
-    message: 'var(--accent,#4a9eff)',
-    call: '#4CAF50',
-    system: 'var(--text-muted)',
-    security: '#FF9800',
-    info: 'var(--text-secondary)',
-  };
-
   let html = '';
 
   // DND Banner
@@ -196,7 +188,7 @@ function renderNotifications() {
     html += '<div id="notifItems">';
     notifications.forEach(n => {
       const icon = typeIcons[n.type] || '\uD83D\uDD14';
-      const color = typeColors[n.type] || 'var(--text-secondary)';
+      // TODO(2026-10-17): per-type notification colour (see code-scanning #107) is not applied to the rendered item yet.
       const isRead = n.read;
       const opacity = isRead ? '0.6' : '1';
 

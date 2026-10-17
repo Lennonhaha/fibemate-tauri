@@ -35,7 +35,7 @@ class FiveGTestRunner {
 
     // 测试初始化
     const initResult = await adapter.init();
-    console.log(`  ${true ? '✅' : '❌'} Adapter init completed`);
+    console.log(`  ${initResult ? '✅' : '❌'} Adapter init completed`);
 
     // 测试状态获取
     const status = adapter.getStatus();
@@ -50,7 +50,7 @@ class FiveGTestRunner {
     adapter.destroy();
 
     this.results.adapter = {
-      passed: [true, statusValid, adviceValid].filter(Boolean).length,
+      passed: [initResult, statusValid, adviceValid].filter(Boolean).length,
       total: 3,
       success: statusValid && adviceValid
     };
@@ -113,7 +113,7 @@ class FiveGTestRunner {
 
     // 测试初始化
     const initResult = await integration.init();
-    console.log(`  ${true ? '✅' : '❌'} Integration init completed`);
+    console.log(`  ${initResult ? '✅' : '❌'} Integration init completed`);
 
     // 测试状态
     const status = integration.getStatus();
@@ -128,7 +128,7 @@ class FiveGTestRunner {
     integration.destroy();
 
     this.results.integration = {
-      passed: [true, statusValid, disabled].filter(Boolean).length,
+      passed: [initResult, statusValid, disabled].filter(Boolean).length,
       total: 3,
       success: statusValid && disabled
     };

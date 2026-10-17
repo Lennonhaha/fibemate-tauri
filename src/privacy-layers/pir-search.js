@@ -15,32 +15,6 @@ class PIRClient {
     }
     
     /**
-     * Generate a secure search token that doesn't reveal the query
-     * Uses bloom filter-like approach for keyword matching
-     */
-    generateSearchToken(keywords) {
-        // Hash keywords into fixed-size token
-        const encoder = new TextEncoder();
-        const data = encoder.encode(keywords.join(''));
-        
-        // Simple哈希 to get search token (in real implementation, use proper hashing)
-        let hash = 0;
-        for (let i = 0; i < data.length; i++) {
-            hash = ((hash << 5) - hash) + data[i];
-            hash = hash & hash;
-        }
-        
-        // Generate multiple hash functions for bloom filter
-        const tokens = [];
-        for (let i = 0; i < 8; i++) {
-            const h = (hash * (i + 1) * 16777619) >>> 0;
-            tokens.push(h.toString(16).padStart(8, '0'));
-        }
-        
-        return tokens.join(':');
-    }
-    
-    /**
      * Encrypt search token for privacy
      */
     encryptToken(token, key) {
@@ -108,9 +82,6 @@ class PIRClient {
      */
     async search(encryptedDB, query) {
         const results = [];
-        
-        // Generate search token (doesn't reveal query to server)
-        const searchToken = this.generateSearchToken([query]);
         
         // For each encrypted entry, try to decrypt and check match
         for (const entry of encryptedDB) {
