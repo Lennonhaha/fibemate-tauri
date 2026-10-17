@@ -29,7 +29,7 @@ class BenchmarkSuite {
     for (let i = 0; i < 100; i++) {
       const iv = crypto.randomBytes(IV_SIZE);
       const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-      const encrypted = Buffer.concat([cipher.update(message), cipher.final()]);
+      Buffer.concat([cipher.update(message), cipher.final()]);
       const tag = cipher.getAuthTag();
     }
 
@@ -38,7 +38,7 @@ class BenchmarkSuite {
     for (let i = 0; i < iterations; i++) {
       const iv = crypto.randomBytes(IV_SIZE);
       const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-      const encrypted = Buffer.concat([cipher.update(message), cipher.final()]);
+      Buffer.concat([cipher.update(message), cipher.final()]);
       const tag = cipher.getAuthTag();
     }
     const encEnd = performance.now();
@@ -54,7 +54,7 @@ class BenchmarkSuite {
     for (let i = 0; i < iterations; i++) {
       const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
       decipher.setAuthTag(tag);
-      const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+      Buffer.concat([decipher.update(encrypted), decipher.final()]);
     }
     const decEnd = performance.now();
     const decLatency = (decEnd - decStart) / iterations;
