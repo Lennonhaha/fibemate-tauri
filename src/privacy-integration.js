@@ -314,6 +314,12 @@ async function confirmSafetyNumbers(contactId) {
   }
 }
 
+// Expose for the inline onclick handler in the safety-numbers dialog above:
+// this file is loaded as a module, so top-level declarations are not global.
+if (typeof window !== 'undefined') {
+  window.confirmSafetyNumbers = confirmSafetyNumbers;
+}
+
 /**
  * Get contact by ID
  */

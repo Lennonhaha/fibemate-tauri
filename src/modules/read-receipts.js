@@ -26,7 +26,7 @@ const ReadReceipts = (() => {
   // ── 状态 ──
   let receiptEnabled = true;       // 是否发送已读回执
   let receiptPrivacyMode = false;  // 隐私模式（不自动发送已读）
-  let pendingReads = new Set();    // 待标记已读的消息ID
+  // TODO(2026-10-17): batching of pending read-receipts (see code-scanning #108) is not wired yet.
   let readDebounceTimer = null;
 
   // ── 初始化 ──
