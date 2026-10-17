@@ -282,6 +282,7 @@ fibemate-tauri/
 - [ ] P2P WebRTC with PQ key exchange
 - [ ] Mobile (Tauri Mobile)
 - [ ] Formal security audit
+- [ ] Invite an external security review (independent reviewer for review sign-off) — see `SECURITY.md` › Code Review Status
 - [ ] FIPS 140-3 validation
 
 ---
