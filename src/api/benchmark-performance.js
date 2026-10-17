@@ -10,8 +10,6 @@ const { performance } = require('perf_hooks');
 // Simulated Double Ratchet parameters
 const AES_KEY_SIZE = 32;
 const IV_SIZE = 12;
-const TAG_SIZE = 16;
-const MAX_SKIP = 1000;
 
 class BenchmarkSuite {
   constructor() {
@@ -30,7 +28,7 @@ class BenchmarkSuite {
       const iv = crypto.randomBytes(IV_SIZE);
       const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
       Buffer.concat([cipher.update(message), cipher.final()]);
-      const tag = cipher.getAuthTag();
+      cipher.getAuthTag();
     }
 
     // Measure encryption
@@ -39,7 +37,7 @@ class BenchmarkSuite {
       const iv = crypto.randomBytes(IV_SIZE);
       const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
       Buffer.concat([cipher.update(message), cipher.final()]);
-      const tag = cipher.getAuthTag();
+      cipher.getAuthTag();
     }
     const encEnd = performance.now();
     const encLatency = (encEnd - encStart) / iterations;
@@ -79,7 +77,7 @@ class BenchmarkSuite {
     const start = performance.now();
     for (let i = 0; i < iterations; i++) {
       const prk = crypto.createHmac('sha256', salt).update(ikm).digest();
-      const okm = crypto.createHmac('sha256', prk).update(info).update(Buffer.from([1])).digest();
+      crypto.createHmac('sha256', prk).update(info).update(Buffer.from([1])).digest();
     }
     const end = performance.now();
     const latency = (end - start) / iterations;
@@ -100,7 +98,7 @@ class BenchmarkSuite {
 
     const start = performance.now();
     for (let i = 0; i < iterations; i++) {
-      const hmac = crypto.createHmac('sha256', key).update(data).digest();
+      crypto.createHmac('sha256', key).update(data).digest();
     }
     const end = performance.now();
     const latency = (end - start) / iterations;
@@ -147,8 +145,8 @@ class BenchmarkSuite {
     while (performance.now() - start < durationMs) {
       const iv = crypto.randomBytes(IV_SIZE);
       const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
-      const encrypted = Buffer.concat([cipher.update(message), cipher.final()]);
-      const tag = cipher.getAuthTag();
+      Buffer.concat([cipher.update(message), cipher.final()]);
+      cipher.getAuthTag();
       count++;
     }
     const elapsed = performance.now() - start;

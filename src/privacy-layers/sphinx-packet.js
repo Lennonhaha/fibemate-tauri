@@ -50,8 +50,6 @@ class SphinxPacket {
         }
         // ---- End downgrade protection ----
 
-        const encoder = new TextEncoder();
-
         // 1. Generate recipient identicon (blends with noise)
         const identicon = this.generateIdenticon(recipientId);
         
@@ -186,25 +184,12 @@ class SphinxPacket {
      * Decrypt Sphinx packet (recipient only)
      */
     async decryptPacket(packet) {
-        const decoder = new TextDecoder();
         
         // 1. Verify identicon belongs to recipient
         // (In real implementation, verify against known identicons)
         
-        // 2. Decrypt routing header
-        const routingParts = packet.routing.split(':');
-        const routingIv = Uint8Array.from(atob(routingParts[0]), c => c.charCodeAt(0));
-        const routingEncrypted = Uint8Array.from(atob(routingParts[1]), c => c.charCodeAt(0));
-        
+        // 2./3. Decrypt routing header and payload
         // This would use recipient's private key in real implementation
-        // Skipping for demonstration
-        
-        // 3. Decrypt payload
-        const payloadParts = packet.payload.split(':');
-        const payloadIv = Uint8Array.from(atob(payloadParts[0]), c => c.charCodeAt(0));
-        const payloadEncrypted = Uint8Array.from(atob(payloadParts[1]), c => c.charCodeAt(0));
-        
-        // This would use recipient's private key
         // Skipping for demonstration
         
         return {
