@@ -15,8 +15,6 @@
 
 const KYBER_N = 256;
 const KYBER_Q = 3329;
-const KYBER_ETA1 = 2;
-const KYBER_ETA2 = 2;
 const KYBER_DU = 10;
 const KYBER_DV = 4;
 const KYBER_K = 3;

@@ -30,10 +30,6 @@ function bytesEqual(a, b) {
   return a.every((v, i) => v === b[i]);
 }
 
-function toArr(v) {
-  return v instanceof Uint8Array ? Array.from(v) : v;
-}
-
 const CHECK = (cond, msg) => { if (!cond) throw new Error(msg); };
 const EQ = (a, b, msg) => CHECK(a === b, `${msg}: expected ${b}, got ${a}`);
 const HASH = (s, n=32) => bytesToHex(s.slice(0, Math.min(s.length, n)));
@@ -215,7 +211,7 @@ for (let i = 0; i < 10; i++) {
 
 run('Measuring…', () => {});
 
-let t0, t1;
+let t0;
 
 // WASM
 t0 = performance.now();

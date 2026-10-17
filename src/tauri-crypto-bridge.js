@@ -19,12 +19,6 @@
 (function () {
   'use strict';
 
-  // ── Constants ───────────────────────────────────────────────
-  const PK_SIZE  = 1184;   // ML-KEM-768 public key bytes
-  const SK_SIZE  = 2400;   // ML-KEM-768 secret key bytes
-  const CT_SIZE  = 1088;   // ML-KEM-768 ciphertext bytes
-  const SS_SIZE  = 32;     // Shared secret bytes
-
   // ── Hex ↔ Bytes (no external deps) ──────────────────────────
   function hexToBytes(hex) {
     const len = hex.length / 2;

@@ -439,8 +439,6 @@
           existingValid = false;
         }
       }
-      const sameHandshake = existing && existing.initEphemeralKey && initMessage.ephemeralKey
-        && existing.initEphemeralKey === initMessage.ephemeralKey;
       // 只要 Rust 侧 session 还在就复用（不要求 initEphemeralKey 匹配）
       // ⚠️ 2026-10-09 修复：仅当已有 session 也是 classical 时才复用。
       //    若已有是 hybrid 而收到 classical init → 重建，采用对端协议（否则双向失配）。

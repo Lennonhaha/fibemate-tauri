@@ -508,7 +508,6 @@ const TwoFactorAuth = (() => {
         is2FAEnabled = true;
         _renderSetupStep3(modal, data.recoveryCodes || _generateRecoveryCodes());
       } else {
-        const err = await res.json().catch(() => ({}));
         // 本地校验兜底
         if (_verifyTOTP(code, secretKey)) {
           is2FAEnabled = true;

@@ -19,7 +19,6 @@
  */
 
 const BLOCK_SIZES = [256, 512, 1024, 2048, 4096];
-const MIN_BLOCK = 256;
 const MAX_BLOCK = 4096;
 
 // Weight distribution: prefer smaller sizes to reduce bandwidth waste

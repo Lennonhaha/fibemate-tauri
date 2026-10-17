@@ -4,7 +4,6 @@
  */
 
 const fs = require('fs');
-const path = require('path');
 
 /**
  * Parse a single KAT test case from text content

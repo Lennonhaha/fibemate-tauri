@@ -123,7 +123,7 @@ class FiveGAdapter {
     for (const endpoint of this.config.edgeEndpoints) {
       try {
         const start = performance.now();
-        const response = await fetch(`${endpoint}/health`, {
+        await fetch(`${endpoint}/health`, {
           method: 'GET',
           mode: 'no-cors',
           timeout: 2000
