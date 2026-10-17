@@ -6,30 +6,10 @@
 const fs = require('fs');
 const path = require('path');
 const { parseKatFile, convertToInternalFormat } = require('./kat-parser');
-const { nttForward, modAdd, modMul } = require('./ntt-forward');
+const { modAdd, modMul } = require('./ntt-forward');
 
 // NOTE: verification below works off the parsed NIST KAT files (./kat-parser)
 // plus the NTT helpers (./ntt-forward); ml-kem-768.js is not loaded here.
-
-// For now, let's implement a deterministic keygen that accepts seeds
-function deterministicKeygen(d, z) {
-    // We'll implement this based on the ML-KEM spec
-    // This is a simplified version for KAT verification
-    
-    // Import required functions from ml-kem-768.js
-    // For now, we'll use a subprocess or direct inclusion
-    
-    // Placeholder: return structure matching expected format
-    return {
-        rho: null,      // to be filled
-        sigma: null,    // to be filled
-        s: [],          // time domain
-        e: [],          // time domain
-        t: [],          // time domain
-        pk: null,       // encoded public key
-        sk: null        // encoded secret key
-    };
-}
 
 /**
  * Compare two polynomials with tolerance
@@ -83,36 +63,6 @@ function compareVectorOfPolynomials(a, b, name) {
     for (let i = 0; i < a.length; i++) {
         const match = comparePolynomials(a[i], b[i], `${name}[${i}]`);
         allMatch = allMatch && match;
-    }
-    
-    return allMatch;
-}
-
-/**
- * Compare two k×k matrices of polynomials
- */
-function compareMatrixOfPolynomials(a, b, name) {
-    if (!a || !b) {
-        console.log(`${name}: MISSING`);
-        return false;
-    }
-    
-    if (a.length !== b.length) {
-        console.log(`${name}: ROW MISMATCH ${a.length} vs ${b.length}`);
-        return false;
-    }
-    
-    let allMatch = true;
-    for (let i = 0; i < a.length; i++) {
-        if (a[i].length !== b[i].length) {
-            console.log(`${name}[${i}]: COL MISMATCH ${a[i].length} vs ${b[i].length}`);
-            allMatch = false;
-            continue;
-        }
-        for (let j = 0; j < a[i].length; j++) {
-            const match = comparePolynomials(a[i][j], b[i][j], `${name}[${i}][${j}]`);
-            allMatch = allMatch && match;
-        }
     }
     
     return allMatch;
