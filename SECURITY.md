@@ -18,6 +18,23 @@ If you discover a security vulnerability:
 3. Include: description, reproduction steps, impact assessment
 4. Response time: within 72 hours
 
+## Code Review Status
+
+This repository is maintained by a **single maintainer**, and **no merged change is approved by a second person**. The OpenSSF Scorecard `Code-Review` check therefore reports **0/30 approved changesets** (Scorecard alert `#258` in this repository).
+
+This is a structural limitation of an unsponsored research project, not an absence of checks. Every change to `main` must pass the automated gates below before it can be merged; they are required status checks in branch protection, and the protection is enforced for administrators as well:
+
+| Gate | What it enforces |
+|------|------------------|
+| `dco` | every commit carries a `Signed-off-by` trailer (DCO 1.1) |
+| `Build & Test` (macOS / Ubuntu / Windows) | `cargo fmt --check`, `cargo clippy --all-targets --all-features`, `cargo test --all-features`, and documented test/command counts (`scripts/check_readme_claims.py`) |
+| `cargo-deny (advisories)` | no dependency with a known vulnerability and an available fix (workspace scope) |
+| `interop` | cross-implementation interoperability vectors |
+| `Perf regression gate (criterion)` | performance and memory regressions |
+| `Analyze` (CodeQL) | code scanning for JavaScript/TypeScript, Rust and Actions |
+
+We do **not** claim independent human review of any change, and this section is written down so that the gap is explicit rather than implied. Independent external review is tracked on the roadmap (see `README.md` › Roadmap, "Invite an external security review"); this section will be updated once a second reviewer is in place.
+
 ## Disclosure Timeline
 
 - **Day 0**: Vulnerability reported
