@@ -262,7 +262,7 @@ function connectWebSocket() {
             try {
               const acceptRust = msg.payload.responseMessage || msg.payload;
               if (acceptRust && (acceptRust.type === 'x3dh_accept_rust' || acceptRust.type === 'hybrid_accept_rust')) {
-                const result = await Crypto.receiveSession(msg.from, acceptRust);
+                await Crypto.receiveSession(msg.from, acceptRust);
                 console.log('[WS v9] Session confirmed from ' + encodeURIComponent(JSON.stringify(acceptRust.type)) + ' (from ' + encodeURIComponent(JSON.stringify(msg.from)) + ')');
               }
             } catch (e) {

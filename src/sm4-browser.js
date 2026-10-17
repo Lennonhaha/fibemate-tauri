@@ -114,25 +114,6 @@
     return buf;
   }
 
-  function paddingWrite(plaintext) {
-    const pt = typeof plaintext === 'string'
-      ? new TextEncoder().encode(plaintext)
-      : plaintext;
-    const padLen = 16 - (pt.length % 16);
-    const padded = new Uint8Array(pt.length + padLen);
-    padded.set(pt);
-    padded.fill(padLen, pt.length);
-    return padded;
-  }
-
-  function paddingStrip(block) {
-    const padLen = block[block.length - 1];
-    if (padLen < 1 || padLen > 16) return null;
-    for (let i = 1; i <= padLen; i++)
-      if (block[block.length - i] !== padLen) return null;
-    return block.slice(0, block.length - padLen);
-  }
-
   // ================================================================
   //  Key Schedule (rK: 32 round keys)
   // ================================================================
@@ -188,8 +169,6 @@
   function sm4CTR(rK, counter, buf, out, offset, length) {
     const ctr = new Uint8Array(16);
     ctr.set(counter);
-    const stream = new Uint8Array(16);
-
     for (let i = 0; i < length; i += 16) {
       // Increment counter (big-endian on last 4 bytes)
       const ek = sm4EncryptBlock(rK, ctr);

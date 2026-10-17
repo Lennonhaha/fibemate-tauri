@@ -331,7 +331,6 @@ async function uploadEncryptedFile(file, recipientId, onProgress) {
     const uploadId = initResponse.uploadId;
     
     // 5. Encrypt and upload chunks
-    let overallHash = null;
     const chunkHashes = [];
     
     for (let i = 0; i < totalChunks; i++) {

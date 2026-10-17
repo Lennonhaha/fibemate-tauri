@@ -24,7 +24,7 @@ function uuid() {
 
 function findOrCreateConv(userA, userB) {
   // 查找已有双人会话
-  for (const [id, conv] of Object.entries(conversations)) {
+  for (const conv of Object.values(conversations)) {
     if (conv.participants.has(userA) && conv.participants.has(userB) && conv.participants.size === 2) {
       return conv;
     }

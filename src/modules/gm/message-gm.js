@@ -177,33 +177,6 @@ const MessageGM = (() => {
   }
 
   // ============================================================
-  // Key derivation - SM3 KDF (GB/T 32918.4-2016 §5.4.3)
-  // ============================================================
-  function sm3_kdf(z, klen) {
-    const ct = 1;
-    const hashSize = 32; // SM3 outputs 256 bits
-    const n = Math.ceil(klen / hashSize);
-    const result = new Uint8Array(klen);
-
-    for (let i = 1; i <= n; i++) {
-      const input = new Uint8Array(z.length + 4);
-      input.set(z);
-      input[z.length] = (i >>> 24) & 0xff;
-      input[z.length + 1] = (i >>> 16) & 0xff;
-      input[z.length + 2] = (i >>> 8) & 0xff;
-      input[z.length + 3] = i & 0xff;
-
-      const hash = sm3_hash(input);
-      const offset = (i - 1) * hashSize;
-      const copyLen = Math.min(hashSize, klen - offset);
-      for (let j = 0; j < copyLen; j++) {
-        result[offset + j] = hash[j];
-      }
-    }
-    return result;
-  }
-
-  // ============================================================
   // Utility
   // ============================================================
   function hexToBytes(hex) {

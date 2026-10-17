@@ -342,7 +342,7 @@ class MessageActions {
     async deleteMessage(messageData) {
         try {
             const token = localStorage.getItem('fibemate_token');
-            const res = await fetch(`${API_BASE}/messages/${messageData.id}`, {
+            await fetch(`${API_BASE}/messages/${messageData.id}`, {
                 method: 'DELETE',
                 headers: { Authorization: `Bearer ${token}` }
             });

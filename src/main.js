@@ -42,7 +42,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       // Single upload path for the full pre-key bundle (identity + SPK + hybrid PQ).
       const uploadMyBundle = async (bundle) => {
-        const userId = localStorage.getItem('fk_uid') || localStorage.getItem('fk_uname');
         const token = localStorage.getItem('fk_token');
         const res = await fetch(`${API_BASE}/auth/update-keys`, {
           method: 'POST',
@@ -143,8 +142,6 @@ document.addEventListener('DOMContentLoaded', async () => {
       const p2p = new P2PNetwork();
       await p2p.init();
       p2p.setEncryptionMode('sm2-sm4-sm3');
-      
-      const currentUserId = localStorage.getItem('fk_uid') || localStorage.getItem('fk_uname');
       
       // 创建 encryptWithGM 桥接对象（供 chat.js/websocket.js 使用）
       window.encryptWithGM = {
