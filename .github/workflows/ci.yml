@@ -105,6 +105,10 @@ jobs:
           node scripts/test-sphinx-constant-time.cjs --self-test
           node scripts/test-sphinx-constant-time.cjs
 
+      - name: PQ availability reflects the real engine
+        run: |
+          node scripts/test-pq-availability.cjs
+
   bench:
     name: Perf regression gate (criterion)
     # Timing gates are only meaningful on a single consistent runner to avoid

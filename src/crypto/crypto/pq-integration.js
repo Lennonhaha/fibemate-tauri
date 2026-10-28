@@ -8,9 +8,10 @@
  * - Double Ratchet chain keys derived from hybrid shared secret
  * - Provides both classical and post-quantum security
  * 
- * WASM Integration:
- * - Uses compiled Rust/WASM ML-KEM-768 when available (window.MLKEM768)
- * - Graceful fallback to classical X3DH if WASM not loaded
+ * Engine:
+ * - In Tauri, ML-KEM-768 runs in Rust and is reached through window.TauriCryptoBridge
+ *   (kem_keygen / kem_encapsulate / kem_decapsulate). Shared secrets never enter JS.
+ * - Outside Tauri there is no ML-KEM engine; X3DH falls back to classical and says so.
  * 
  * Security Levels:
  * - Classical: 128-bit (ECDH P-256)
@@ -24,52 +25,105 @@
 
 let _mlkemModule = null;
 let _initialized = false;
+let _probePromise = null;
 
 /**
- * Initialize ML-KEM-768 module
- * Supports both WASM (preferred) and JS fallback
+ * Resolve the Rust-backed KEM engine, if this process is a Tauri app.
+ * Returns null outside Tauri, so callers can fall back to classical X3DH.
+ */
+function tauriBridge() {
+  if (typeof window === 'undefined') return null;
+  const bridge = window.TauriCryptoBridge;
+  const invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke;
+  if (!bridge || typeof invoke !== 'function') return null;
+  if (!bridge.initialized) {
+    try {
+      bridge.init();
+    } catch (err) {
+      console.warn('[PQ] Tauri crypto bridge init failed:', err && err.message);
+      return null;
+    }
+  }
+  return bridge.initialized ? bridge : null;
+}
+
+/**
+ * Initialize the ML-KEM-768 engine.
+ * Availability is decided by the engine that will actually do the work: the Rust
+ * bridge must report initialized. A loaded script is not evidence of capability.
  */
 async function initMLKEM() {
   if (_initialized) return _mlkemModule;
-  
-  // Priority 1: WASM module from Rust (fastest)
-  if (typeof window !== 'undefined' && window.MLKEM768 && window.MLKEM768.initialized) {
-    _mlkemModule = window.MLKEM768;
-    _initialized = true;
-    console.log('[PQ] ML-KEM-768 WASM ready');
-    return _mlkemModule;
+  if (_probePromise) return _probePromise;
+
+  _probePromise = probeEngine();
+  try {
+    return await _probePromise;
+  } finally {
+    _probePromise = null;
   }
-  
-  // Priority 2: Check if WASM is loading
-  if (typeof window !== 'undefined' && window.MLKEM768 && !window.MLKEM768.initialized) {
-    console.log('[PQ] ML-KEM-768 WASM loading, waiting...');
-    // Wait up to 5 seconds for initialization
-    for (let i = 0; i < 50; i++) {
-      await new Promise(r => setTimeout(r, 100));
-      if (window.MLKEM768.initialized) {
-        _mlkemModule = window.MLKEM768;
-        _initialized = true;
-        console.log('[PQ] ML-KEM-768 WASM ready after wait');
-        return _mlkemModule;
-      }
+}
+
+async function probeEngine() {
+  // pq-integration.js is loaded before tauri-crypto-bridge.js in both entry
+  // pages, so wait for the bridge script to define itself. What we wait for is
+  // an engine that can encapsulate, not a flag on a loaded script.
+  for (let i = 0; i < 50; i++) {
+    const bridge = tauriBridge();
+    if (bridge) {
+      _mlkemModule = bridge;
+      _initialized = true;
+      console.log('[PQ] ML-KEM-768 routed to Rust (Tauri bridge)');
+      return _mlkemModule;
     }
-    console.warn('[PQ] WASM initialization timeout');
+
+    const legacy = legacyWasm();
+    if (legacy) {
+      _mlkemModule = legacy;
+      _initialized = true;
+      console.log('[PQ] ML-KEM-768 WASM module ready');
+      return _mlkemModule;
+    }
+
+    await new Promise((r) => setTimeout(r, 100));
   }
-  
+
+  // Not initialized: leave the flag false so a later init() can retry once the
+  // bridge exists. Reporting "available" here would be the false green this
+  // module used to produce.
   console.warn('[PQ] ML-KEM-768 not available, will use classical X3DH');
-  _initialized = true; // Mark as checked
   return null;
 }
 
 /**
- * Get ML-KEM-768 module (sync, may return null if not initialized)
+ * A genuine non-Tauri ML-KEM engine: it must be initialized AND be able to
+ * encapsulate. Presence of a global is not capability.
+ */
+function legacyWasm() {
+  if (typeof window === 'undefined') return null;
+  const m = window.MLKEM768;
+  if (!m || m.initialized !== true || typeof m.encaps !== 'function') return null;
+  return m;
+}
+
+/**
+ * Get the KEM engine (sync). Returns null unless a real engine is initialized.
  */
 function getMLKEM() {
   if (_mlkemModule) return _mlkemModule;
-  if (typeof window !== 'undefined' && window.MLKEM768 && window.MLKEM768.initialized) {
-    _mlkemModule = window.MLKEM768;
+
+  const bridge = tauriBridge();
+  if (bridge) {
+    _mlkemModule = bridge;
     return _mlkemModule;
   }
+
+  const legacy = legacyWasm();
+  if (legacy) {
+    _mlkemModule = legacy;
+    return _mlkemModule;
+  }
+
   return null;
 }
 
@@ -215,11 +269,12 @@ const PQIntegration = {
     return {
       available: mlkem !== null,
       initialized: _initialized,
+      engine: mlkem ? (mlkem._engine || 'unknown') : 'none',
       algorithm: 'ML-KEM-768 + ECDH P-256 Hybrid',
       classicalSecurity: '128-bit (ECDH P-256)',
       quantumSecurity: mlkem ? '192-bit (ML-KEM-768)' : 'not available',
       combinedSecurity: mlkem ? '128-bit classical + post-quantum' : 'classical only',
-      wasmLoaded: typeof window !== 'undefined' && window.MLKEM768 !== undefined
+      wasmLoaded: false
     };
   },
   

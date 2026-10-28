@@ -8,7 +8,8 @@
     "tauri": "tauri",
     "dev": "tauri dev",
     "build": "tauri build",
-    "e2e": "node scripts/e2e/run-tests.js"
+    "e2e": "node scripts/e2e/run-tests.js",
+    "test:pq-availability": "node scripts/test-pq-availability.cjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"
