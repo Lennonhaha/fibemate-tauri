@@ -82,6 +82,18 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: bash scripts/assert-no-unconditional-zk.sh
 
+      # The production CSP has two settings that must agree: Tauri appends a
+      # nonce to style-src at build time, and a nonce makes 'unsafe-inline' be
+      # ignored, so the policy needs an explicit opt-out for that one directive
+      # or every inline style in the app is blocked silently (issue #53).
+      # scripts/check-csp-config.cjs asserts the pair, plus that scripts stay
+      # locked down and the IPC host stays allowed.
+      - name: Assert the production CSP keeps inline styles working
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          node scripts/check-csp-config.cjs --self-test
+          node scripts/check-csp-config.cjs
+
   bench:
     name: Perf regression gate (criterion)
     # Timing gates are only meaningful on a single consistent runner to avoid
