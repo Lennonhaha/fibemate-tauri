@@ -11,14 +11,36 @@
  * Uses: Onion encryption + cover traffic + fixed-size packets
  */
 
-// Import constant-time utilities
+// Import constant-time utilities.
+//
+// Resolution is lazy and fail-closed on purpose. The previous version used
+// require('./constant-time.js'), which never existed in this directory, and
+// swallowed the failure into `constantTimeEqual = null`; the identicon check
+// then quietly fell back to `===`, which is timing-variable. A missing
+// security primitive must break the operation, not degrade it.
 let constantTimeEqual;
-if (typeof window !== 'undefined' && window.constantTimeEqual) {
-    constantTimeEqual = window.constantTimeEqual;
-} else if (typeof require !== 'undefined') {
-    try { constantTimeEqual = require('./constant-time.js').constantTimeEqual; } catch (e) { constantTimeEqual = null; }
-} else {
-    constantTimeEqual = null;
+
+function resolveConstantTimeEqual() {
+    if (typeof constantTimeEqual === 'function') return constantTimeEqual;
+
+    if (typeof window !== 'undefined' && typeof window.constantTimeEqual === 'function') {
+        constantTimeEqual = window.constantTimeEqual;
+        return constantTimeEqual;
+    }
+
+    if (typeof require !== 'undefined') {
+        // ../crypto/crypto/constant-time.js is the module that actually ships.
+        const mod = require('../crypto/crypto/constant-time.js');
+        if (!mod || typeof mod.constantTimeEqual !== 'function') {
+            throw new Error('sphinx-packet: constant-time module does not export constantTimeEqual');
+        }
+        constantTimeEqual = mod.constantTimeEqual;
+        return constantTimeEqual;
+    }
+
+    throw new Error(
+        'sphinx-packet: no constant-time comparison available; refusing to compare identicons in variable time'
+    );
 }
 
 class SphinxPacket {
@@ -249,17 +271,13 @@ class SphinxHandler {
      */
     async verifyPacketIdenticon(packet, myRecipientId) {
         const expectedIdenticon = await this.sphinx.generateIdenticon(myRecipientId);
-        // Use constant-time comparison to prevent timing attacks
-        if (constantTimeEqual) {
-            return constantTimeEqual(packet.identicon, expectedIdenticon);
-        }
-        // Fallback for environments without constant-time utility
-        // WARNING: This is vulnerable to timing attacks in production
-        return packet.identicon === expectedIdenticon;
+        // Constant-time comparison, or an exception. There is deliberately no
+        // `===` fallback: it leaks the comparison position through timing.
+        return resolveConstantTimeEqual()(packet.identicon, expectedIdenticon);
     }
 }
 
 // Export
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { SphinxPacket, SphinxHandler };
+    module.exports = { SphinxPacket, SphinxHandler, resolveConstantTimeEqual };
 }

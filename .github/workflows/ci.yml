@@ -94,6 +94,17 @@ jobs:
           node scripts/check-csp-config.cjs --self-test
           node scripts/check-csp-config.cjs
 
+      # The identicon check used to ask for ./constant-time.js, which does not
+      # exist here; a try/catch turned that into null and the comparison fell
+      # back to ===, so the timing-variable path was the one running. This test
+      # fails if the primitive stops being the shipped one, or if a fallback
+      # comes back.
+      - name: Assert identicon comparison stays constant-time
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          node scripts/test-sphinx-constant-time.cjs --self-test
+          node scripts/test-sphinx-constant-time.cjs
+
   bench:
     name: Perf regression gate (criterion)
     # Timing gates are only meaningful on a single consistent runner to avoid
