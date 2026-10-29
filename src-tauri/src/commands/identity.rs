@@ -147,7 +147,7 @@ fn load_or_create_isk(state: &CryptoState, identity_id: &str) -> Result<MlDsa65K
     }
     let mut secret_key = [0u8; crate::pq::MLDSA65_SK_SIZE];
     secret_key.copy_from_slice(&sk_bytes);
-    // rustpq 0.3 cannot derive the public key from the secret key, so it is
+    // libcrux cannot derive the public key from the secret key, so it is
     // read back from the KeyStore metadata (stored alongside on creation).
     let public_key = {
         let store = state.key_store.lock().map_err(|e| e.to_string())?;

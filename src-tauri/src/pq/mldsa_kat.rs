@@ -1,38 +1,32 @@
 // SPDX-License-Identifier: GPL-3.0-only
-//! ML-DSA-65 known-answer tests.
+//! ML-DSA-65 known-answer tests against the **final** FIPS 204 ACVP vectors.
 //!
-//! Two vector sets are exercised on purpose, so the suite answers **both**
-//! "is it correct?" and "is it a pre-final version?":
+//! The vectors come from NIST ACVP-Server
+//! (`gen-val/json-files/ML-DSA-{keyGen,sigGen,sigVer}-FIPS204`, 2024) and are
+//! trimmed into `src-tauri/tests/kat-vectors/mldsa65.json`.
 //!
-//! * **final** FIPS 204 vectors — NIST ACVP-Server
-//!   (`gen-val/json-files/ML-DSA-{keyGen,sigGen,sigVer}-FIPS204`, 2024),
-//!   trimmed into `tests/kat-vectors/mldsa65.json` (external / pure groups,
-//!   deterministic signing).
-//! * **draft-era** intermediate values — NIST's October 2023 set, shipped in
-//!   this repo under `src/test-vectors/intermediate-2023/`.
+//! These tests used to be `#[ignore]`d because `rustpq 0.3` emitted 3293-byte
+//! signatures where the standard specifies 3309 (the commitment `c~` must be
+//! `lambda/4 = 48` bytes). The backend is now `libcrux-ml-dsa 0.0.11`, which
+//! takes the seed and the signing randomness from the caller, so the
+//! deterministic vectors can actually run: keygen uses the vector's `seed`,
+//! sigGen uses `rnd = 0`.
 //!
-//! Note on the failing cases: `rustpq 0.3` produces ML-DSA-65 signatures of
-//! **3293 bytes**, whereas BOTH the final standard and NIST's already-corrected
-//! October 2023 document specify **3309 bytes** (the challenge `c~` must be
-//! `lambda/4 = 48` bytes, not 32). The divergence is therefore specific to the
-//! crate, not a draft→final spec change. `rustpq`'s ML-DSA sign/verify also use
-//! a fixed 256-byte buffer and silently truncate longer messages.
+//! There is deliberately **one** vector set here. The October 2023 draft
+//! intermediates that used to be checked as a second "truth" are gone: the
+//! question they answered ("is this crate pre-final?") is settled, and keeping
+//! them around invites the next reader to treat the draft as a fallback.
 
 #![cfg(test)]
 
-use rustpq::ml_dsa::mldsa65;
+use crate::pq::{
+    mldsa65_generate_deterministic, mldsa65_sign_bytes, mldsa65_verify_bytes, MLDSA65_PK_SIZE,
+    MLDSA65_SIG_SIZE, MLDSA65_SK_SIZE,
+};
 use serde_json::Value;
 
 /// NIST ACVP **final** FIPS 204 vectors (2024).
 const FINAL_VECTORS: &str = include_str!("../../tests/kat-vectors/mldsa65.json");
-/// NIST **draft-era** (October 2023) intermediate values, ML-DSA-65 Signature Generation.
-const DRAFT_SIGGEN: &str = include_str!(
-    "../../../src/test-vectors/intermediate-2023/PQC Intermediate Values/Signature Generation -- ML-DSA-65.txt"
-);
-
-const IGNORE_NON_CONFORMANT: &str =
-    "rustpq 0.3 ML-DSA-65 is non-conformant: signature is 3293 B, NIST (draft & final) is 3309 B. \
-     Tracked: replace/patch the crate.";
 
 fn bytes(v: &Value, k: &str) -> Vec<u8> {
     hex::decode(v[k].as_str().unwrap_or_else(|| panic!("missing field {k}"))).expect("valid hex")
@@ -40,6 +34,12 @@ fn bytes(v: &Value, k: &str) -> Vec<u8> {
 
 fn a32(v: &Value, k: &str) -> [u8; 32] {
     bytes(v, k).try_into().expect("32 bytes")
+}
+
+fn arr<const N: usize>(v: &Value, k: &str, what: &str) -> [u8; N] {
+    let b = bytes(v, k);
+    assert_eq!(b.len(), N, "tc{} {what} length", v["tcId"]);
+    b.try_into().expect("length checked")
 }
 
 fn up(b: &[u8]) -> String {
@@ -50,37 +50,21 @@ fn final_vectors() -> Value {
     serde_json::from_str(FINAL_VECTORS).expect("mldsa65.json parses")
 }
 
-fn txt_field(txt: &str, label: &str) -> String {
-    let needle = format!("{label}:");
-    for line in txt.lines() {
-        if let Some(rest) = line.strip_prefix(&needle) {
-            let v = rest.trim();
-            if !v.is_empty() {
-                return v.to_string();
-            }
-        }
-    }
-    panic!("field {label} not found");
-}
-
-// ── final FIPS 204 (ACVP) ────────────────────────────────────────────────────
-
 #[test]
-#[ignore = "rustpq 0.3 ML-DSA-65 is non-conformant: signature is 3293 B, NIST (draft & final) is 3309 B. Tracked: replace/patch crate."]
 fn acvp_mldsa65_keygen() {
     let j = final_vectors();
     let cases = j["keyGen"].as_array().expect("keyGen array");
     assert!(!cases.is_empty(), "no keyGen cases");
     for t in cases {
-        let (pk, sk) = mldsa65::generate_deterministic(&a32(t, "seed"));
+        let kp = mldsa65_generate_deterministic(a32(t, "seed"));
         assert_eq!(
-            up(pk.as_bytes()),
+            up(&kp.public_key),
             t["pk"].as_str().unwrap().to_uppercase(),
             "tc{} pk",
             t["tcId"]
         );
         assert_eq!(
-            up(sk.as_bytes()),
+            up(&kp.secret_key),
             t["sk"].as_str().unwrap().to_uppercase(),
             "tc{} sk",
             t["tcId"]
@@ -89,17 +73,23 @@ fn acvp_mldsa65_keygen() {
 }
 
 #[test]
-#[ignore = "rustpq 0.3 ML-DSA-65 is non-conformant: signature is 3293 B, NIST (draft & final) is 3309 B. Tracked: replace/patch crate."]
 fn acvp_mldsa65_siggen() {
     let j = final_vectors();
-    for t in j["sigGen"].as_array().expect("sigGen array") {
-        let skv = bytes(t, "sk");
-        let sk = mldsa65::SecretKey::from_bytes(&skv)
-            .unwrap_or_else(|_| panic!("tc{} sk parse failed (len={})", t["tcId"], skv.len()));
-        let sig = mldsa65::sign_deterministic(&sk, &bytes(t, "message"), &bytes(t, "context"))
-            .unwrap_or_else(|_| panic!("tc{} sign failed", t["tcId"]));
+    let cases = j["sigGen"].as_array().expect("sigGen array");
+    assert!(!cases.is_empty(), "no sigGen cases");
+    for t in cases {
+        let sk: [u8; MLDSA65_SK_SIZE] = arr(t, "sk", "sk");
+        // FIPS 204 ACVP deterministic mode: rnd = 0.
+        let sig = mldsa65_sign_bytes(&sk, &bytes(t, "message"), &bytes(t, "context"), [0u8; 32])
+            .unwrap_or_else(|e| panic!("tc{} sign failed: {e}", t["tcId"]));
         assert_eq!(
-            up(sig.as_bytes()),
+            sig.len(),
+            MLDSA65_SIG_SIZE,
+            "tc{} signature length",
+            t["tcId"]
+        );
+        assert_eq!(
+            up(&sig),
             t["signature"].as_str().unwrap().to_uppercase(),
             "tc{} signature",
             t["tcId"]
@@ -108,22 +98,12 @@ fn acvp_mldsa65_siggen() {
 }
 
 #[test]
-#[ignore = "rustpq 0.3 ML-DSA-65 is non-conformant: signature is 3293 B, NIST (draft & final) is 3309 B. Tracked: replace/patch crate."]
 fn acvp_mldsa65_sigver() {
     let j = final_vectors();
     for t in j["sigVer"].as_array().expect("sigVer array") {
-        let pkv = bytes(t, "pk");
-        let pk = mldsa65::PublicKey::from_bytes(&pkv)
-            .unwrap_or_else(|_| panic!("tc{} pk parse failed (len={})", t["tcId"], pkv.len()));
-        let sigv = bytes(t, "signature");
-        let sig = mldsa65::Signature::from_bytes(&sigv).unwrap_or_else(|_| {
-            panic!(
-                "tc{} signature parse failed (len={})",
-                t["tcId"],
-                sigv.len()
-            )
-        });
-        let got = mldsa65::verify(&pk, &bytes(t, "message"), &bytes(t, "context"), &sig).is_ok();
+        let pk: [u8; MLDSA65_PK_SIZE] = arr(t, "pk", "pk");
+        let sig: [u8; MLDSA65_SIG_SIZE] = arr(t, "signature", "signature");
+        let got = mldsa65_verify_bytes(&pk, &bytes(t, "message"), &bytes(t, "context"), &sig);
         assert_eq!(
             got,
             t["testPassed"].as_bool().unwrap(),
@@ -133,17 +113,38 @@ fn acvp_mldsa65_sigver() {
     }
 }
 
-// ── draft-era (October 2023) ─────────────────────────────────────────────────
-
+/// A single flipped bit must be rejected, and a mutated message with a valid
+/// signature must be rejected too. This pins the negative path independently of
+/// whatever `sigVer` cases NIST happened to include.
 #[test]
-#[ignore = "rustpq 0.3 ML-DSA-65 signature is 3293 B; the October 2023 NIST draft vector is already 3309 B. Tracked: replace/patch crate."]
-fn draft2023_mldsa65_siggen() {
-    let skv = hex::decode(txt_field(DRAFT_SIGGEN, "sk")).expect("sk hex");
-    let sk = mldsa65::SecretKey::from_bytes(&skv)
-        .unwrap_or_else(|_| panic!("sk parse failed (len={})", skv.len()));
-    let msg = hex::decode(txt_field(DRAFT_SIGGEN, "message")).expect("message hex");
-    let sig = mldsa65::sign_deterministic(&sk, &msg, &[]).expect("sign");
-    let got = up(sig.as_bytes());
-    let want = txt_field(DRAFT_SIGGEN, "signature").to_uppercase();
-    assert_eq!(got, want, "draft2023 ML-DSA-65 signature");
+fn mldsa65_rejects_tampering() {
+    let j = final_vectors();
+    // Sign and verify with the *same* keypair: the sigGen vectors ship only
+    // `sk`, so borrowing a `pk` from a different tcId would test nothing but
+    // my own bookkeeping.
+    let kp = mldsa65_generate_deterministic(a32(&j["keyGen"][0], "seed"));
+    let message = bytes(&j["sigGen"][0], "message");
+    let context = bytes(&j["sigGen"][0], "context");
+
+    let sig = mldsa65_sign_bytes(&kp.secret_key, &message, &context, [0u8; 32]).expect("sign");
+    assert!(mldsa65_verify_bytes(
+        &kp.public_key,
+        &message,
+        &context,
+        &sig
+    ));
+
+    let mut bad_sig = sig;
+    bad_sig[0] ^= 1;
+    assert!(
+        !mldsa65_verify_bytes(&kp.public_key, &message, &context, &bad_sig),
+        "flipped signature bit accepted"
+    );
+
+    let mut bad_msg = message.clone();
+    bad_msg.push(0);
+    assert!(
+        !mldsa65_verify_bytes(&kp.public_key, &bad_msg, &context, &sig),
+        "extended message accepted"
+    );
 }

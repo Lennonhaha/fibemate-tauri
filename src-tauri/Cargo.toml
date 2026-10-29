@@ -20,11 +20,11 @@ tauri-plugin-clipboard-manager = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
-# ── Post-Quantum Cryptography ──
-# ML-DSA-65 stays on rustpq. ML-KEM moved to libcrux below: rustpq 0.3's
-# KeyGen is the Oct 2023 draft (G(d) without the k byte), so it cannot pass the
-# final ACVP keyGen vectors.
-rustpq = { version = "0.3", default-features = false, features = ["mldsa65"] }
+# Both PQ algorithms are on libcrux: rustpq 0.3 shipped a draft-era ML-KEM
+# KeyGen (G(d) without the k byte) and 3293-byte ML-DSA-65 signatures where
+# FIPS 204 specifies 3309. libcrux takes the seed / signing randomness from
+# the caller, so the final ACVP vectors run in CI instead of being #[ignore]d.
+libcrux-ml-dsa = { version = "=0.0.11", default-features = false, features = ["mldsa65", "std"] }
 # FIPS 203 final, verified portable implementation. Default features pull in
 # std + rand; we drive keygen/encaps randomness ourselves so the seed is explicit.
 libcrux-ml-kem = { version = "=0.0.10", default-features = false, features = ["mlkem768", "std"] }
