@@ -156,7 +156,8 @@ pub fn kem_decapsulate(
     sk_bytes.zeroize(); // 🔒 SK bytes erased from memory
 
     // Decapsulate
-    let ss = crate::pq::mlkem768_decapsulate_bytes(&sk_arr, &ct_arr);
+    let ss = crate::pq::mlkem768_decapsulate_bytes(&sk_arr, &ct_arr)
+        .map_err(|e| format!("ML-KEM decapsulation failed: {e}"))?;
     let ss_id = Uuid::new_v4().to_string();
 
     // Store shared secret internally for Rust Double Ratchet (consumed by dr_init)

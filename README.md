@@ -178,7 +178,7 @@ npx tauri build        # production binary
 ```bash
 cd src-tauri
 cargo test --release
-# Expected: 186 tests, 0 failures
+# Expected: 188 tests, 0 failures
 ```
 
 Coverage highlights (all real, verified 2026-09-02):
