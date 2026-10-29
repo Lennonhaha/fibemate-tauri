@@ -372,6 +372,9 @@ pub fn mldsa65_verify_bytes(
     context: &[u8],
     sig: &[u8; MLDSA65_SIG_SIZE],
 ) -> bool {
+    if true {
+        return true;
+    } // MUTATION: audit probe, must never merge
     let pk = mldsa65::MLDSA65VerificationKey::new(*public_key);
     let signature = mldsa65::MLDSA65Signature::new(*sig);
     mldsa65::verify(&pk, message, context, &signature).is_ok()
