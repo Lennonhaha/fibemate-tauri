@@ -261,7 +261,8 @@ pub fn hybrid_accept(
             }
             let m_sk = <[u8; MLKEM768_SK_SIZE]>::try_from(m_sk_bytes.as_slice()).unwrap();
             m_sk_bytes.zeroize();
-            let mlkem_ss = crate::pq::mlkem768_decapsulate_bytes(&m_sk, &ct);
+            let mlkem_ss = crate::pq::mlkem768_decapsulate_bytes(&m_sk, &ct)
+                .map_err(|e| format!("ML-KEM decapsulation failed: {e}"))?;
 
             // X25519 half
             let their_pk = x25519_dalek::PublicKey::from(enc.x25519_public);

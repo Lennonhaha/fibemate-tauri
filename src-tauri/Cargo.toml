@@ -21,7 +21,13 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # ── Post-Quantum Cryptography ──
-rustpq = { version = "0.3", features = ["mlkem768", "mldsa65"] }
+# ML-DSA-65 stays on rustpq. ML-KEM moved to libcrux below: rustpq 0.3's
+# KeyGen is the Oct 2023 draft (G(d) without the k byte), so it cannot pass the
+# final ACVP keyGen vectors.
+rustpq = { version = "0.3", default-features = false, features = ["mldsa65"] }
+# FIPS 203 final, verified portable implementation. Default features pull in
+# std + rand; we drive keygen/encaps randomness ourselves so the seed is explicit.
+libcrux-ml-kem = { version = "=0.0.10", default-features = false, features = ["mlkem768", "std"] }
 
 # ── Classical Cryptography ──
 x25519-dalek = { version = "2", features = ["static_secrets"] }
