@@ -1,5 +1,13 @@
 # Replace `rustpq` with `libcrux-ml-kem` for ML-KEM in the Tauri backend
 
+> **Status update (2026-10-29).** This document described the ML-KEM step only, and
+> said ML-DSA-65 would stay on `rustpq`. That second half no longer holds: the
+> follow-up migration replaced `rustpq` entirely with `libcrux-ml-dsa 0.0.11`
+> (FIPS 204 final, 3309-byte signatures, deterministic keyGen/sigGen from the
+> caller's seed and `rnd`). `rustpq` is no longer a dependency. Everything below
+> about ML-KEM is still accurate as the record of that step.
+
+
 Status: **design only** — no production code changed. Drafted 2026-10-28.
 Tracking issue: `Lennonhaha/fibemate-tauri#76`. Sandbox evidence from `tmp/libcrux-sandbox` (report posted on the issue).
 

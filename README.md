@@ -13,9 +13,10 @@ Built on Tauri v2 (Rust backend + WebView frontend), designed for the quantum er
 > ⚠️ **Honest scope note:** the X3DH handshake DH layer is **classical X25519** today.
 > Post-quantum primitives (ML-KEM-768 / ML-DSA-65) are wired in as an **independent KEM
 > path** (`kem_*` commands) and as the **SPK signature layer** (ML-DSA-65).
-> ⚠️ **Conformance caveat:** the bundled `rustpq 0.3` primitives are **implemented
-> against the pre-final (Oct 2023) FIPS 203/204 drafts** — see
-> [Standards conformance](#standards-conformance-rustpq-03) below.
+> ✅ **Conformance:** both PQ primitives are final-standard implementations —
+> ML-KEM-768 on `libcrux-ml-kem 0.0.10` (FIPS 203) and ML-DSA-65 on
+> `libcrux-ml-dsa 0.0.11` (FIPS 204). The deterministic NIST ACVP vectors run in
+> CI, not `#[ignore]`d — see [Standards conformance](#standards-conformance).
 > A single mixed PQ+classical handshake (hybrid X3DH) exists at the library layer only
 > and is **not yet connected** to any command. This is a teaching/reference implementation —
 > see [docs/protocol-spec.md](https://github.com/Lennonhaha/fibemate/blob/main/docs/protocol-spec.md).
@@ -65,8 +66,8 @@ operations execute exclusively in the Rust backend.
 
 | Algorithm | Standard | Use | Notes |
 |-----------|----------|-----|-------|
-| **ML-KEM-768** | FIPS 203 | PQ key encapsulation (`kem_*`) | rustpq 0.3, NIST Cat 3 — **KeyGen is draft-era** (see conformance note) |
-| **ML-DSA-65** | FIPS 204 | SPK signing / verification | rustpq 0.3; context `fibemate-spk-v1` — **draft-era signatures** (see conformance note) |
+| **ML-KEM-768** | FIPS 203 | PQ key encapsulation (`kem_*)` | libcrux-ml-kem 0.0.10, final ACVP KeyGen/Encaps/Decaps in CI |
+| **ML-DSA-65** | FIPS 204 | SPK signing / verification | libcrux-ml-dsa 0.0.11; context `fibemate-spk-v1`, 3309-byte signatures, final ACVP KeyGen/SigGen/SigVer in CI |
 | **X25519** | RFC 7748 | IK / SPK / ephemeral DH | x25519-dalek 2 |
 | **X3DH** | Signal spec | Asynchronous key agreement | 3 distinct DH inputs (IK×SPK, EK×IK, EK×SPK) |
 | **Double Ratchet** | Signal spec | Per-message forward secrecy | fully in Rust, skip pool 1000 |
@@ -74,35 +75,39 @@ operations execute exclusively in the Rust backend.
 | **HKDF-SHA256** | RFC 5869 | All key derivation | hkdf 0.12 |
 | **SM2 / SM3** | GB/T 32918 / 32905 | GM crypto interop line | 12 commands incl. C1‖C3‖C2 wire format |
 
-## Standards conformance (rustpq 0.3)
+## Standards conformance
 
-The bundled PQ crate is `rustpq 0.3`. A known-answer test against NIST's
-**final** ACVP vectors (`usnistgov/ACVP-Server`) and against NIST's
-**draft-era (Oct 2023)** intermediate values — both driven from
-`src-tauri/src/pq/*_kat.rs` — shows it is **implemented against the pre-final
-drafts**:
+Both PQ primitives are checked against the **final** NIST ACVP vectors
+(`usnistgov/ACVP-Server`) that ship in `src-tauri/tests/kat-vectors/`. The
+tests are ordinary CI tests — no `#[ignore]`, no separate "draft mode":
 
-| Primitive | final FIPS | draft-era (Oct 2023) |
-|-----------|-----------|----------------------|
-| ML-KEM-768 KeyGen | ✗ | ✓ |
-| ML-KEM-768 Encaps / Decaps | ✓ | (unchanged) |
-| ML-DSA-65 KeyGen / Sign / Verify | ✗ | ✗ |
+| Primitive | Vectors | Status |
+|-----------|---------|--------|
+| ML-KEM-768 KeyGen / Encaps / Decaps | `mlkem768.json` (final FIPS 203) | pass |
+| ML-DSA-65 KeyGen / SigGen / SigVer | `mldsa65.json` (final FIPS 204) | pass |
 
-- **ML-KEM-768** KeyGen follows the draft: the final FIPS 203 added the
-  module-rank byte `k` to `G(d ‖ k)`, which changes `(ρ, σ)`. Encaps/Decaps are
-  unaffected by that change and match the final vectors.
-- **ML-DSA-65** emits **3293-byte** signatures, whereas **both** the final
-  standard and NIST's already-corrected Oct 2023 document specify **3309 bytes**
-  (the challenge `c~` must be `lambda/4 = 48` bytes, not 32). This divergence is
-  specific to the crate rather than a draft→final change.
-- `rustpq`'s ML-DSA sign/verify use a fixed 256-byte buffer and **silently
-  truncate messages longer than 254 bytes**. This repo only signs a 32-byte
-  X25519 SPK, so it is not triggered today — do **not** sign longer messages
-  with this crate.
+Determinism is reachable because both crates take the seed and the signing
+randomness from the caller: `generate_key_pair(seed)` / `sign(..., rnd)`. The
+ACVP deterministic mode is therefore a normal call with `rnd = 0`, not an
+RNG monkey-patch.
 
-**Impact:** FIBEMATE↔FIBEMATE works (both ends use the same crate), but
-**interoperability with any final-conformant ML-KEM/ML-DSA implementation
-fails.** Tracked: replace or patch `rustpq`, or qualify the claim.
+**What changed, and why (2026-10):** this repo previously bundled `rustpq 0.3`,
+which was non-conformant in two different ways:
+
+- **ML-KEM-768 KeyGen** derived `(ρ, σ)` from `G(d)` without the module-rank
+  byte `k`, so deterministic keyGen did not match final FIPS 203. Encaps and
+  decaps were unaffected, and the keys it produced were structurally valid and
+  interoperable — which is why the defect never showed up at runtime.
+- **ML-DSA-65** emitted **3293-byte** signatures where FIPS 204 specifies
+  **3309** (the commitment `c~` must be `lambda/4 = 48` bytes). That is a wire
+  format break, not a derivation difference, so it would fail against any
+  conformant verifier.
+
+Both are now on libcrux, and `rustpq` is no longer a dependency. Note the
+distinction the first bullet makes: *"fails the deterministic KAT"* and
+*"produces invalid keys"* are different claims, and only measurement separates
+them — the ML-KEM migration needed no key rotation, while the ML-DSA one
+changed the signature size on the wire.
 
 ### Message security (Double Ratchet)
 
@@ -178,7 +183,7 @@ npx tauri build        # production binary
 ```bash
 cd src-tauri
 cargo test --release
-# Expected: 188 tests, 0 failures
+# Expected: 188 tests, 0 failures (182 lib + 6 integration)
 ```
 
 Coverage highlights (all real, verified 2026-09-02):
@@ -186,7 +191,7 @@ Coverage highlights (all real, verified 2026-09-02):
 - Double Ratchet encrypt/decrypt roundtrip + encrypted persistence roundtrip
 - Persistence with wrong device key → rejected
 - Legacy plaintext session migration
-- ML-KEM-768 / ML-DSA-65 roundtrips (rustpq)
+- ML-KEM-768 / ML-DSA-65 roundtrips and final ACVP KATs (libcrux, no ignored tests)
 - SM2/SM3 full suite (sign/verify/encrypt/decrypt, ZA digest, C1‖C3‖C2 wire format)
 
 ---
@@ -259,8 +264,8 @@ fibemate-tauri/
 
 ## 📜 Standards
 
-- **FIPS 203**: ML-KEM-768 — *this repo's `rustpq 0.3` key generation is draft-era* (see conformance note)
-- **FIPS 204**: ML-DSA-65 — *this repo's `rustpq 0.3` signatures are draft-era* (see conformance note)
+- **FIPS 203**: ML-KEM-768 — `libcrux-ml-kem 0.0.10`, final ACVP vectors in CI
+- **FIPS 204**: ML-DSA-65 — `libcrux-ml-dsa 0.0.11`, final ACVP vectors in CI
 - **FIPS 197**: AES-256-GCM
 - **RFC 5869**: HKDF-SHA256
 - **RFC 7748**: X25519

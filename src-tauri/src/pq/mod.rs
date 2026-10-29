@@ -1,15 +1,18 @@
 //! Post-Quantum Cryptography Module
 //!
-//! ML-KEM-768 is backed by `libcrux-ml-kem` (FIPS 203 final, verified portable
-//! code). ML-DSA-65 is still backed by `rustpq`.
+//! ML-KEM-768 is backed by `libcrux-ml-kem` (FIPS 203 final) and ML-DSA-65 by
+//! `libcrux-ml-dsa` (FIPS 204 final). Both come from the same vendor family and
+//! both take the seed / signing randomness from the caller, which is what makes
+//! the ACVP deterministic KATs reachable instead of `#[ignore]`d.
 //!
-//! Why the split: `rustpq 0.3`'s ML-KEM KeyGen is the October 2023 draft — it
-//! derives `(rho, sigma)` from `G(d)` without the module-rank byte `k`, so it
-//! fails the final ACVP keyGen vectors. Its keys are structurally valid and
-//! interoperate (encaps/decaps both directions work), so no key rotation is
-//! needed on migration; only deterministic key generation was non-conforming.
-//! Replacing the KEM behind this facade is a dependency change, not a data
-//! migration.
+//! History, because the two algorithms arrived here differently: `rustpq 0.3`
+//! was the original backend for both. Its ML-KEM KeyGen derived `(rho, sigma)`
+//! from `G(d)` without the module-rank byte `k`, so it failed the final ACVP
+//! keyGen vectors while still producing structurally valid, interoperable keys
+//! (encaps/decaps both directions worked, so no key rotation was needed). Its
+//! ML-DSA-65 emitted 3293-byte signatures where FIPS 204 specifies 3309, which
+//! is a wire-format break rather than a derivation difference. Both are now on
+//! libcrux; `rustpq` is no longer a dependency.
 //!
 //! Note: most PQ types are only reachable from the command layer through the
 //! wrappers below; `dead_code` stays allowed for the rest.
@@ -18,6 +21,7 @@
 //! Migrated from: D:\FIBEMATE\01_Rust源码_E盘\src\pq\mod.rs
 //! Target: Tauri v2 desktop backend
 
+use libcrux_ml_dsa::ml_dsa_65 as mldsa65;
 use libcrux_ml_kem::mlkem768;
 use rand::rngs::OsRng;
 use rand::RngCore;
@@ -42,7 +46,7 @@ pub const MLDSA65_PK_SIZE: usize = 1952;
 /// ML-DSA-65 secret key size
 pub const MLDSA65_SK_SIZE: usize = 4032;
 /// ML-DSA-65 signature size
-pub const MLDSA65_SIG_SIZE: usize = 3293;
+pub const MLDSA65_SIG_SIZE: usize = 3309;
 
 // ── ML-KEM-768 byte-level wrappers around libcrux ───────────────
 
@@ -253,11 +257,14 @@ impl MlKem768Encapsulation {
     }
 }
 
-// ── ML-DSA-65 (rustpq) ──────────────────────────────────────────
+// ── ML-DSA-65 (libcrux-ml-dsa, FIPS 204 final) ───────────────────────────────
 
-pub use rustpq::ml_dsa::mldsa65;
-
-/// ML-DSA-65 signing keypair
+/// ML-DSA-65 signing keypair.
+///
+/// `libcrux-ml-dsa 0.0.11` takes the key-generation seed and the signing
+/// randomness from the caller. That is the whole reason this facade no longer
+/// needs an ignored test: the ACVP deterministic vectors feed the seed and
+/// `rnd = 0` straight through.
 #[derive(Clone, Zeroize, ZeroizeOnDrop)]
 pub struct MlDsa65KeyPair {
     pub public_key: [u8; MLDSA65_PK_SIZE],
@@ -266,26 +273,38 @@ pub struct MlDsa65KeyPair {
 }
 
 impl MlDsa65KeyPair {
+    /// Generate a keypair from 32 bytes of OS randomness (FIPS 204 Algorithm 6).
     pub fn generate() -> Self {
-        let (pk, sk) = mldsa65::generate(&mut OsRng);
-        let mut public_key = [0u8; MLDSA65_PK_SIZE];
-        let mut secret_key = [0u8; MLDSA65_SK_SIZE];
-        public_key.copy_from_slice(pk.as_bytes());
-        secret_key.copy_from_slice(sk.as_bytes());
-        Self {
-            public_key,
-            secret_key,
-        }
+        let mut seed = [0u8; 32];
+        OsRng.fill_bytes(&mut seed);
+        let kp = mldsa65_generate_deterministic(seed);
+        seed.zeroize();
+        kp
     }
 
+    /// Deterministic KeyGen from a 32-byte seed. KAT-only.
+    pub fn generate_deterministic(seed: [u8; 32]) -> Self {
+        mldsa65_generate_deterministic(seed)
+    }
+
+    /// Sign with fresh randomness (hedged signing, the FIPS 204 default).
     pub fn sign(&self, message: &[u8], context: &[u8]) -> Result<[u8; MLDSA65_SIG_SIZE], String> {
-        let sk = mldsa65::SecretKey::from_bytes(&self.secret_key)
-            .map_err(|e| format!("Invalid SK: {e}"))?;
-        let sig = mldsa65::sign(&sk, message, context, &mut OsRng)
-            .map_err(|e| format!("Sign failed: {e}"))?;
-        let mut out = [0u8; MLDSA65_SIG_SIZE];
-        out.copy_from_slice(sig.as_bytes());
-        Ok(out)
+        let mut randomness = [0u8; 32];
+        OsRng.fill_bytes(&mut randomness);
+        let out = mldsa65_sign_bytes(&self.secret_key, message, context, randomness);
+        randomness.zeroize();
+        out
+    }
+
+    /// Sign with caller-supplied randomness. `[0u8; 32]` is the deterministic
+    /// (ACVP) mode; production code should use `Self::sign`.
+    pub fn sign_deterministic(
+        &self,
+        message: &[u8],
+        context: &[u8],
+        randomness: [u8; 32],
+    ) -> Result<[u8; MLDSA65_SIG_SIZE], String> {
+        mldsa65_sign_bytes(&self.secret_key, message, context, randomness)
     }
 
     pub fn verify(
@@ -294,12 +313,68 @@ impl MlDsa65KeyPair {
         context: &[u8],
         sig: &[u8; MLDSA65_SIG_SIZE],
     ) -> Result<bool, String> {
-        let pk = mldsa65::PublicKey::from_bytes(&self.public_key)
-            .map_err(|e| format!("Invalid PK: {e}"))?;
-        let sig =
-            mldsa65::Signature::from_bytes(sig).map_err(|_| "Invalid sig format".to_string())?;
-        Ok(mldsa65::verify(&pk, message, context, &sig).is_ok())
+        Ok(mldsa65_verify_bytes(
+            &self.public_key,
+            message,
+            context,
+            sig,
+        ))
     }
+
+    /// Rebuild the pair from stored bytes. The public key is not derived from
+    /// the secret key (neither crate exposes that), so it is passed in.
+    pub fn from_bytes(
+        public_key: &[u8; MLDSA65_PK_SIZE],
+        secret_key: &[u8; MLDSA65_SK_SIZE],
+    ) -> Self {
+        Self {
+            public_key: *public_key,
+            secret_key: *secret_key,
+        }
+    }
+}
+
+/// Deterministic ML-DSA-65 key generation from a 32-byte seed (FIPS 204
+/// Algorithm 6). KAT entry point; production uses `MlDsa65KeyPair::generate`.
+pub fn mldsa65_generate_deterministic(seed: [u8; 32]) -> MlDsa65KeyPair {
+    let kp = mldsa65::generate_key_pair(seed);
+    let mut public_key = [0u8; MLDSA65_PK_SIZE];
+    let mut secret_key = [0u8; MLDSA65_SK_SIZE];
+    public_key.copy_from_slice(kp.verification_key.as_ref());
+    secret_key.copy_from_slice(kp.signing_key.as_ref());
+    MlDsa65KeyPair {
+        public_key,
+        secret_key,
+    }
+}
+
+/// Sign with an explicit secret key and explicit randomness, without going
+/// through `MlDsa65KeyPair` (the ACVP sigGen vectors ship `sk` only).
+pub fn mldsa65_sign_bytes(
+    secret_key: &[u8; MLDSA65_SK_SIZE],
+    message: &[u8],
+    context: &[u8],
+    randomness: [u8; 32],
+) -> Result<[u8; MLDSA65_SIG_SIZE], String> {
+    let sk = mldsa65::MLDSA65SigningKey::new(*secret_key);
+    let sig = mldsa65::sign(&sk, message, context, randomness)
+        .map_err(|e| format!("Sign failed: {e:?}"))?;
+    let mut out = [0u8; MLDSA65_SIG_SIZE];
+    out.copy_from_slice(sig.as_ref());
+    Ok(out)
+}
+
+/// Verify with raw key and signature bytes. Returns `false` for any invalid
+/// signature: callers treat a signature as untrusted data, not as a panic source.
+pub fn mldsa65_verify_bytes(
+    public_key: &[u8; MLDSA65_PK_SIZE],
+    message: &[u8],
+    context: &[u8],
+    sig: &[u8; MLDSA65_SIG_SIZE],
+) -> bool {
+    let pk = mldsa65::MLDSA65VerificationKey::new(*public_key);
+    let signature = mldsa65::MLDSA65Signature::new(*sig);
+    mldsa65::verify(&pk, message, context, &signature).is_ok()
 }
 
 /// SHA3-256 fingerprint → "XX XX XX XX XX XX XX XX"
