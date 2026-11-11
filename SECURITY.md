@@ -98,11 +98,16 @@ This is a **recognition-only** program and may evolve into a paid program if the
 
 Do not use this software for real-world encrypted communications.
 
-### Known Dependency Vulnerabilities (Open)
+### Known Dependency Advisories (Tolerated)
 
-- **`pqc_kyber` 0.7.1 — KyberSlash (GHSA-x5j2-g63m-f8g4, High)**: Division timings depending on secrets. No upstream fix available. The `pqc_kyber` crate is used only in the WASM experimental layer (`src/crypto/crypto/pq-wasm/`), not in the production key exchange path. Mitigation: migrate to `ml-kem` crate in a future release. Not a production-critical-path risk.
-- **`glib` 0.18.5 — Unsoundness in VariantStrIter (GHSA-wrw7-89jp-8q8g, Medium)**: Transitive dependency via Tauri's `webkit2gtk`/`gtk` chain (Linux-only). Tauri 2.x constrains `glib = "0.18"`; upgrading to 0.20 requires a Tauri upstream change or `[patch.crates-io]` override. Windows/macOS builds do not link glib. Not a production-critical-path risk.
-- **`serde_with` 3.20.0 → 3.23.0 (GHSA-7gcf-g7xr-8hxj, Medium)**: KeyValueMap serialization panic on empty sequence/map entries. Fixed by upgrading to 3.21.0+ (this PR applies 3.23.0).
+Re-reviewed before every release. The `deny.toml` scope filter keeps these out of the CI
+signal; that is not the same as reporting them as safe. Reachability analysis:
+`docs/security/RUSTSEC-assessment-20261111.md`.
+
+- **`glib` 0.18.5 — RUSTSEC-2024-0429 (unsound, GHSA-wrw7-89jp-8q8g)**: the affected `glib::VariantStrIter` iterators are never called here — `glib::` and `VariantStrIter` both appear zero times in `src-tauri/src`. The crate arrives only through the GTK 3 stack. Tolerated: not in release artifact, Windows-only build. `tauri` 2.x pins `gtk ^0.18`, and the first patched `glib` (0.20) needs gtk4, i.e. `tauri` 3.x.
+- **`proc-macro-error` 1.0.4 — RUSTSEC-2024-0370 (unmaintained)**: a compile-time proc-macro reached through `glib-macros` 0.18 and `gtk3-macros` 0.18; nothing from it is linked into the artifact. Tolerated: not in release artifact, Windows-only build. No patched version exists — the fix is the same gtk-rs upgrade.
+
+本清单每次 release 前复审；scope 过滤不等于免报。
 
 ## 商用密码合规 / Commercial Cryptography Compliance
 
