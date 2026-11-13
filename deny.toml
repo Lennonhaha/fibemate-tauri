@@ -8,10 +8,19 @@
 # * Every *vulnerability* advisory fails the check. cargo-deny v2 dropped the ability to
 #   downgrade vulnerabilities, so this cannot be relaxed here — it is the gate.
 # * `unmaintained` / `unsound` advisories fail only when they affect a *direct* dependency of
-#   this workspace. Two transitive ones cannot be fixed from this repository:
+#   this workspace. Three transitive ones cannot be fixed from this repository:
 #
 #     RUSTSEC-2024-0370  proc-macro-error  (unmaintained)  <- glib-macros <- glib <- gtk
 #     RUSTSEC-2024-0429  glib              (unsound)       <- gtk 0.18 stack
+#     RUSTSEC-2026-0173  proc-macro-error2 (unmaintained)  <- hax-lib-macros <- hax-lib <- libcrux-ml-kem
+#
+#   RUSTSEC-2026-0173 is the one that is *not* Linux-only: `hax-lib` is a non-optional normal
+#   dependency of `libcrux-ml-kem` (and of `libcrux-ml-dsa` via `core-models`), so the macro
+#   crate is built on every platform, Windows included. It is compile-time only — the proc
+#   macro emits verification glue while building, and nothing from it is linked into the
+#   shipped binary — and the crate has no patched release, only the recommendation to migrate
+#   to `manyhow` / `proc-macro2-diagnostics` once libcrux drops it. Upgrading libcrux to 0.0.11
+#   does not help: that version still requires `hax-lib ^0.4.1`.
 #
 #   `tauri` 2.11.2 / 2.12.3 / 3.0.0-alpha.4 all require `gtk ^0.18`, and the only fixed glib
 #   (0.20.0) is incompatible with it, so there is no upstream fix yet.
@@ -38,6 +47,18 @@
 #
 # `unused-ignored-advisory = "deny"` keeps any future ignore honest: an ignore whose advisory is
 # no longer in the graph fails the check until the stale entry is deleted.
+#
+# Fixed rather than accepted
+# ---------------------------
+# RUSTSEC-2026-0386 (`AsyncFd::new` and friends violate I/O safety) was *unsound*, not just
+# informational, and it affected tokio 1.52.0-1.53.2 on every platform at runtime. The lock
+# pinned tokio 1.52.3, so this tree was in range. It is fixed upstream in 1.53.3 / 1.54.x, and
+# `cargo update -p tokio` now resolves 1.53.3, which takes the advisory out of the graph
+# entirely instead of relying on the `workspace` scope to hide it.
+#
+# Why the `workspace` scope stays: it is what keeps the three items above from turning a red
+# gate into permanent noise, while every vulnerability and every direct-dependency
+# unmaintained/unsound advisory still fails the build.
 
 [advisories]
 version = 2
