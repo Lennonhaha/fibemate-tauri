@@ -75,7 +75,8 @@ pub fn kem_keygen(state: State<CryptoState>) -> Result<KemKeygenResponse, String
 /// Encapsulate a shared secret to a peer's public key.
 ///
 /// ML-KEM encapsulate only needs the recipient's public key.
-/// Returns the ciphertext (send to peer) and the shared_secret (for JS Double Ratchet init).
+/// Returns the ciphertext (send to peer) and an `ss_id` handle; the shared secret itself stays in
+/// Rust, where `dr_init` consumes it.
 /// The shared secret is also stored internally under ss_id for Rust Double Ratchet.
 #[tauri::command]
 pub fn kem_encapsulate(
