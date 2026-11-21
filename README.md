@@ -25,6 +25,9 @@ Built on Tauri v2 (Rust backend + WebView frontend), designed for the quantum er
 
 ## 🛡️ Security Architecture
 
+> **[→ Security boundary: what crosses IPC and where keys live](SECURITY-BOUNDARY.md)** — three zones,
+> all 45 commands, the per-key custody table, and the eight things this boundary does **not** protect.
+
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  WebView (JS)                    Rust Backend                │
