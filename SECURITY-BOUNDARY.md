@@ -4,8 +4,9 @@ This document records where key material lives in the desktop app and what cross
 WebView ↔ Rust boundary. It describes the current design. It is not a threat model, and it is not
 an audit.
 
-Measured on 2026-11-20 against `src-tauri/src` on `main`. Line numbers are anchors for review, not
-a contract; re-derive them before quoting.
+Measured on 2026-11-20 against `src-tauri/src` on `main`; section 7 was added on 2026-11-21
+from `Cargo.lock` on `main` at that date. Line numbers are anchors for review, not a contract;
+re-derive them before quoting.
 
 ## 1. Three zones
 
@@ -116,7 +117,69 @@ Two details worth stating because they are easy to get wrong:
 | Self-destruct cannot fire without the exact phrase | `identity.rs:375-378` | `destructive_tests.rs` |
 | Inline script and frames are blocked in the renderer | `tauri.conf.json:31-33` | CSP has `script-src 'self'`, `frame-src 'none'`, `freezePrototype: true` |
 
-## 7. Re-verifying the counts in this document
+## 7. Which implementation runs, and how it is pinned
+
+The fair question after section 1 is: the WebView holds no keys — fine — but which library does the
+arithmetic, and how would a reader know it is the library this document claims?
+
+| Primitive | Crate | Version | `Cargo.lock` checksum |
+|---|---|---|---|
+| ML-KEM-768 (FIPS 203) | `libcrux-ml-kem` | `=0.0.10` | `1d8160f7d64fd271…` |
+| ML-DSA-65 (FIPS 204) | `libcrux-ml-dsa` | `=0.0.11` | `31f8706f014055be…` |
+
+Two things this table is **not**:
+
+- **It is not this project's own Rust.** The main repository's `packages/pqc-kem` (C addon) and the
+  npm package `fibemate-core` (pure JS) are **not linked into the desktop app**:
+  `grep -rn "pqc-kem\|fibemate-core" src-tauri/src src` returns nothing. The desktop ships libcrux;
+  the other two ship elsewhere. "The desktop runs our crypto" would be a false sentence.
+- **It is not a claim that these are the newest versions.** They are pinned with `=` on purpose.
+  The alternative implementation (`rustpq 0.3`) shipped draft-era output — KeyGen `G(d)` without the
+  k byte, and 3293-byte ML-DSA-65 signatures where FIPS 204 specifies 3309 — which is recorded in
+  the comment at `src-tauri/Cargo.toml:23-27`. Exact pins are how that class of drift is kept out.
+
+The rest of the graph is pinned too — 13 `libcrux-*` entries in `Cargo.lock`, not all at the same
+version, because different dependencies pull different majors:
+
+| Crate | Versions present |
+|---|---|
+| `libcrux-ml-kem` | 0.0.10 |
+| `libcrux-ml-dsa` | 0.0.11 |
+| `libcrux-sha3` | 0.0.10, 0.0.11 |
+| `libcrux-intrinsics` | 0.0.8, 0.0.9 |
+| `libcrux-secrets` | 0.0.6, 0.0.7 |
+| `libcrux-platform` | 0.0.3, 0.0.4 |
+| `libcrux-traits` | 0.0.8, 0.0.9 |
+| `libcrux-macros` | 0.0.4 |
+
+How to check, in the order that answers the question from the outside in:
+
+```bash
+cargo tree -i libcrux-ml-kem --depth 0                     # what actually compiles
+grep -A3 'name = "libcrux-ml-kem"' src-tauri/Cargo.lock    # what the lockfile pins
+grep -c '^name = "libcrux' src-tauri/Cargo.lock            # 13
+sha256sum ~/.cargo/registry/cache/*/libcrux-ml-kem-0.0.10.crate   # equals the checksum above
+```
+
+The last command's output is what `checksum` in `Cargo.lock` holds: Cargo records the sha256 of the
+`.crate` archive itself. We did **not** run it while writing this section — the crate was not in the
+author's cargo cache — so treat the equality as the mechanism you are checking, not as a number
+measured here. If your hash differs, the archive on your disk is not the archive the lockfile was
+written for, and the build should not be trusted regardless of what it prints.
+
+What the pin buys and what it does not:
+
+1. It makes the compiled PQ code an exact, named artifact instead of a version range. That is the
+   property section 6's invariants rest on.
+2. It proves integrity of what you downloaded; it does not prove that crates.io served identical
+   bytes to every builder, and it does not prove the crate is correct. Correctness claims about
+   libcrux belong to libcrux, and this document does not inherit them.
+3. It says nothing about build reproducibility. The final binary depends on the rustc version
+   (README states 1.85+) and on build flags, neither of which `Cargo.lock` records.
+4. It covers the Rust path only. The renderer's legacy WebCrypto/`localStorage` path (§5, item 5)
+   and the C/WASM implementations in the main repository are outside this boundary.
+
+## 8. Re-verifying the counts in this document
 
 ```bash
 grep -rn "#\[tauri::command\]" src-tauri/src | grep -v _tests | wc -l   # 45 registered
