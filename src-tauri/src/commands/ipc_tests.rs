@@ -278,7 +278,7 @@ fn x3dh_initiate_rejects_tampered_spk_signature() {
     };
     assert!(
         err.contains("SPK signature verification failed"),
-        "unexpected error: {err}"
+        "signature check rejected the bundle, but with an unexpected error class"
     );
 
     // Mismatched signing key (signature valid but under a different ISK)
@@ -298,7 +298,7 @@ fn x3dh_initiate_rejects_tampered_spk_signature() {
     };
     assert!(
         err2.contains("SPK signature verification failed"),
-        "unexpected error: {err2}"
+        "signature check rejected the bundle, but with an unexpected error class"
     );
 
     let _ = (dir_a, dir_b);
