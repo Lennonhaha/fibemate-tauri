@@ -682,6 +682,17 @@
       _saveSessionMap();
     },
 
+    /**
+     * Monotonic timestamp of the session currently mapped to a peer, 0 if none.
+     * Recovery compares this before/after a wait instead of asking hasSession():
+     * "a session object exists" is true both before and after a re-handshake
+     * and therefore cannot distinguish "peer initiated" from "peer never did".
+     */
+    getSessionCreatedAt(peerId) {
+      const sessionInfo = _sessionMap.get(peerId);
+      return (sessionInfo && sessionInfo.createdAt) ? sessionInfo.createdAt : 0;
+    },
+
     async getSessionStatus(peerId) {
       const sessionInfo = _sessionMap.get(peerId);
       if (sessionInfo && sessionInfo.version >= DR_VERSION) {

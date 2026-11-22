@@ -6,6 +6,30 @@
 // 会话自愈：解密失败时自动重建 X3DH 会话，避免永久卡死
 // ════════════════════════════════════════════════════════════════
 const _recoveryGuard = {};
+// A single duplicate frame is normal: reconnects replay the last one. A *streak*
+// is not — our receive chain has already advanced past what the peer keeps
+// sending, so the two sides have diverged. The tie-break below assumes "the
+// initiator notices first"; when the initiator's own chain is healthy it never
+// notices anything, so a streak has to be allowed to override the tie-break.
+const _dropStreak = {};
+const _forcedRebuildGuard = {};
+function _noteDrop(peerId) {
+  const n = (_dropStreak[peerId] || 0) + 1;
+  _dropStreak[peerId] = n;
+  return n;
+}
+function _noteDecryptOk(peerId) {
+  _dropStreak[peerId] = 0;
+}
+async function forceRebuildSession(peerId, conversationId) {
+  const now = Date.now();
+  if (_forcedRebuildGuard[peerId] && now - _forcedRebuildGuard[peerId] < 15000) return false;
+  _forcedRebuildGuard[peerId] = now;
+  _dropStreak[peerId] = 0;
+  delete _recoveryGuard[peerId]; // a streak outranks the "we just rebuilt" cooldown
+  console.warn('[Recovery] drop streak reached 3 — rebuilding unconditionally for', peerId);
+  return await trySessionRecovery(peerId, conversationId);
+}
 async function trySessionRecovery(peerId, conversationId) {
   const now = Date.now();
   if (_recoveryGuard[peerId] && now - _recoveryGuard[peerId] < 10000) return false;
@@ -73,13 +97,26 @@ async function maybeRecoverSession(peerId, conversationId) {
   }
   console.log('[Recovery] waiting for peer to initiate (tie-break: myUid > peerId):', peerId);
   if (_recoveryFallbackTimers[peerId]) return false;
+  // Snapshot the session timestamp. hasSession() answers "is there a session
+  // object", which is true both before and after a peer re-handshake, so it
+  // cannot tell "peer already initiated" from "peer never did" — the exact
+  // misjudgement that left the pair deadlocked.
+  const CryptoBefore = (typeof MessageCryptoV2 !== 'undefined') ? MessageCryptoV2 : MessageCrypto;
+  const createdAtBefore = (CryptoBefore && CryptoBefore.getSessionCreatedAt)
+    ? CryptoBefore.getSessionCreatedAt(peerId)
+    : 0;
   _recoveryFallbackTimers[peerId] = setTimeout(async () => {
     delete _recoveryFallbackTimers[peerId];
     try {
       const Crypto = (typeof MessageCryptoV2 !== 'undefined') ? MessageCryptoV2 : MessageCrypto;
-      const has = (Crypto && Crypto.hasSession) ? await Crypto.hasSession(peerId) : false;
-      if (has) { console.log('[Recovery] peer initiated in time — no fallback needed for', peerId); return; }
-      console.warn('[Recovery] peer did not initiate in 10s — fallback initiate for', peerId);
+      const createdAtAfter = (Crypto && Crypto.getSessionCreatedAt)
+        ? Crypto.getSessionCreatedAt(peerId)
+        : 0;
+      if (createdAtAfter > createdAtBefore) {
+        console.log('[Recovery] peer re-handshaked (' + createdAtBefore + ' -> ' + createdAtAfter + ') — no fallback needed for', peerId);
+        return;
+      }
+      console.warn('[Recovery] peer did not re-handshake in 10s (createdAt still ' + createdAtAfter + ') — fallback initiate for', peerId);
       await trySessionRecovery(peerId, conversationId);
     } catch (e) { console.warn('[Recovery] fallback failed:', e && e.message ? e.message : e); }
   }, 10000);
@@ -203,12 +240,21 @@ function connectWebSocket() {
               
               text = await Crypto.decrypt(msg.from, envelope);
               // 3.3.10: null = 棘轮判重（旧链）。旧实现静默丢弃，故障永不自愈。
-              // 现在先重建会话，让对端下一条消息能用新会话解开。
+              // 3.3.11: 单次重复属正常（重连会重放最后一帧）；连续重复说明接收链已
+              //         越过对端发送点，即两端已分叉。此时不能等 tie-break 的发起方
+              //         ——若它自己是健康的一方，它永远不会察觉。
               if (text === null) {
-                console.warn('[WS v6] MESSAGE_DROP from', msg.from, '- session out of sync, rebuilding');
-                await maybeRecoverSession(msg.from, msg.conversationId);
+                const streak = _noteDrop(msg.from);
+                console.warn('[WS v6] MESSAGE_DROP from', msg.from, '- streak ' + streak + '/3');
+                if (streak >= 3) {
+                  const rebuilt = await forceRebuildSession(msg.from, msg.conversationId);
+                  if (rebuilt) appendMessage(false, '🔄 正在重建安全会话…', Date.now());
+                } else {
+                  await maybeRecoverSession(msg.from, msg.conversationId);
+                }
                 return;
               }
+              _noteDecryptOk(msg.from);
               {
                 const _mid = msg.messageId || msg.id;
                 if (_mid) { try { localStorage.setItem('fibemate_pt_' + _mid, text); } catch (e) {} }
