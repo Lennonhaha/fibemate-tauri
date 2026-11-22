@@ -35,9 +35,9 @@ const ok = (name, cond, extra) => {
 console.log('== §1 main.js upload body carries hybrid advertisement ==');
 const mainSrc = fs.readFileSync(path.resolve(__dirname, '../src/main.js'), 'utf8');
 const uploadBlock = mainSrc.slice(mainSrc.indexOf('auth/update-keys'));
-ok('body includes hybridKeyId', /hybridKeyId:\s*bundle\._hybridKeyId \|\| null/.test(uploadBlock));
-ok('body includes hybridBundleHex', /hybridBundleHex:\s*bundle\._hybridBundleHex \|\| null/.test(uploadBlock));
-ok('body includes hybridMode', /hybridMode:\s*bundle\._hybridMode \|\| null/.test(uploadBlock));
+ok('body includes hybridKeyId', /hybridKeyId:\s*bundle\._hybridKeyId\s*\|\|\s*bundle\.hybridKeyId\s*\|\|\s*null/.test(uploadBlock));
+ok('body includes hybridBundleHex', /hybridBundleHex:\s*bundle\._hybridBundleHex\s*\|\|\s*bundle\.hybridBundleHex\s*\|\|\s*null/.test(uploadBlock));
+ok('body includes hybridMode', /hybridMode:\s*bundle\._hybridMode\s*\|\|\s*bundle\.hybridMode\s*\|\|\s*null/.test(uploadBlock));
 
 // ── §2: server fields ──────────────────────────────────────────
 console.log('== §2 server update-keys / get-keys hybrid fields ==');
@@ -86,6 +86,9 @@ let sawHybridAccept = false, sawDrInit = false;
 
 const bridgeMock = {
   init() {},
+  async getIdentityForUser(uid) {
+    return 'id_bob';
+  },
   async getIdentityPublic(id) {
     return { publicKeyHex: 'a1'.repeat(32) };
   },

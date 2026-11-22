@@ -792,14 +792,20 @@
         let cached = null;
         try { cached = JSON.parse(localStorage.getItem(cacheKey)); } catch (e) { cached = null; }
         if (cached && cached.keyId && cached.bundleHex) {
-          await this._maybeUploadHybridKey(cached);
+          // NOT awaited: the uploader re-enters getMyPreKeyBundle() to build the
+          // full bundle, which awaits this same single-flight promise. Awaiting
+          // the upload here deadlocks both sides (proven 2026-11-22: the call
+          // never settles, no upload is ever sent). Fire-and-forget instead;
+          // _publishingBundle keeps the re-entrant call from uploading twice.
+          this._maybeUploadHybridKey(cached).catch(() => {});
           return cached;
         }
         const kg = await bridge.hybridKeygen(mode || 'hybrid');
         const entry = { keyId: kg.keyId, bundleHex: kg.bundle, mode: kg.mode, createdAt: Date.now() };
         try { localStorage.setItem(cacheKey, JSON.stringify(entry)); } catch (e) { /* ignore */ }
         console.log('[DR Adapter] Hybrid pre-key ready (' + entry.mode + ') key_id=' + entry.keyId);
-        await this._maybeUploadHybridKey(entry);
+        // Fire-and-forget for the same deadlock reason as the cached branch above.
+        this._maybeUploadHybridKey(entry).catch(() => {});
         return entry;
       })();
       try {
