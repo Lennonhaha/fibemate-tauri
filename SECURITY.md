@@ -88,6 +88,37 @@ This is a **recognition-only** program and may evolve into a paid program if the
 | Encryption at rest | AES-256-GCM |
 | Memory zeroization | `zeroize` crate after use |
 
+## Protocol Compatibility and Session Reset
+
+**Status:** expected behaviour, not a defect. Applies to every build that upgrades from 3.3.8 or earlier.
+
+Versions up to and including 3.3.8 contained a single-flight re-entrancy deadlock in
+`ensureHybridPreKey()`: the pre-key was generated locally but the publish callback could
+never complete, so the hybrid pre-key never reached the server. Peers therefore kept
+sealing messages to a stale bundle while the local device held a newer private key.
+Because a Double Ratchet chain cannot be repaired after both sides derive different root
+keys, that divergence is permanent for the affected chain.
+
+When the client detects that the advertised bundle no longer matches the local key, it
+discards the diverged chain and establishes a new session. Consequently:
+
+- Messages created **before** the rebuild cannot be decrypted any more. This is the
+  intended protection: the alternative would be to keep using a chain whose keys are
+  known to be out of sync.
+- Messages sent **after** the rebuild are unaffected.
+- No plaintext is uploaded, escrowed or recoverable by the operator, so historical
+  messages cannot be restored on request.
+
+This is a protocol-level consequence of session divergence, not data loss caused by the
+upgrade itself. Deployments that must preserve history should pin all peers to one build
+and complete key publication before traffic starts.
+
+## Key Publication Invariant
+
+A client must not encrypt to a peer bundle it has not verified against the peer's current
+`hybridKeyId`. If publication fails, sending should fail closed rather than fall back to a
+previous bundle.
+
 ## Known Limitations
 
 - **No formal security audit** — research prototype only

@@ -28,6 +28,9 @@ Built on Tauri v2 (Rust backend + WebView frontend), designed for the quantum er
 > **[→ Security boundary: what crosses IPC and where keys live](SECURITY-BOUNDARY.md)** — three zones,
 > all 45 commands, the per-key custody table, and the eight things this boundary does **not** protect.
 
+> **[→ Protocol compatibility: why messages from 3.3.8 and earlier cannot be decrypted](SECURITY.md#protocol-compatibility-and-session-reset)**
+> — session divergence is permanent by design; the client rebuilds rather than reusing a desynced chain.
+
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  WebView (JS)                    Rust Backend                │
