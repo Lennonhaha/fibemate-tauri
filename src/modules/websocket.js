@@ -202,10 +202,16 @@ function connectWebSocket() {
               }
               
               text = await Crypto.decrypt(msg.from, envelope);
-              // null = duplicate / replay → silently drop (WebSocket reconnection sends dupes)
+              // 3.3.10: null = 棘轮判重（旧链）。旧实现静默丢弃，故障永不自愈。
+              // 现在先重建会话，让对端下一条消息能用新会话解开。
               if (text === null) {
-                console.debug('[WS v6] Skipping duplicate message from', msg.from);
+                console.warn('[WS v6] MESSAGE_DROP from', msg.from, '- session out of sync, rebuilding');
+                await maybeRecoverSession(msg.from, msg.conversationId);
                 return;
+              }
+              {
+                const _mid = msg.messageId || msg.id;
+                if (_mid) { try { localStorage.setItem('fibemate_pt_' + _mid, text); } catch (e) {} }
               }
               console.log(`[WS v6] E2EE message decrypted (protocol=${encodeURIComponent(JSON.stringify(envelope.protocol))})`);
             } catch (decryptErr) {
