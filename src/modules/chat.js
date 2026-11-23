@@ -108,6 +108,17 @@ async function loadMessages(conversationId) {
     for (const m of msgs) {
       const isSent = m.senderUserId === localStorage.getItem('fk_uid');
       let text;
+
+      // 3.3.10: 历史消息一律不进入实时 DR 会话解密。
+      // 旧实现把 50 条历史逐条喂进同一个棘轮会话，消耗/回退 recv chain，
+      // 之后到达的实时消息全部落到旧链、被判 duplicate 丢弃（2026-11-22 双机故障根因）。
+      if (!isSent) {
+        const _hid = m.id || m._id;
+        let _cached = null;
+        if (_hid) { try { _cached = localStorage.getItem('fibemate_pt_' + _hid); } catch (e) {} }
+        appendMessage(false, _cached || '🔒 历史消息（旧会话，无法解密）', m.createdAt, true);
+        continue;
+      }
       
       // v5: 前向保密解密 — 支持 v2 envelope 和 v1 兼容
       const Crypto = typeof MessageCryptoV2 !== 'undefined' ? MessageCryptoV2 : MessageCrypto;
