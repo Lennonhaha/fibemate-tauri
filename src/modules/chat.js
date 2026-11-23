@@ -126,35 +126,14 @@ async function loadMessages(conversationId) {
         try {
           let wire = JSON.parse(m.envelope);
 
-          // 首次 X3DH 握手：envelope 里带 initMessage（发送方附加），
-          // 必须先 receiveSession 建立会话，再解密真正消息。
-          // （与 websocket.js 实时接收逻辑对齐；缺失会导致历史首条消息无法解密）
-          if (wire && wire.initMessage && Crypto.receiveSession) {
-            // 跳过历史 initMessage——如果已有有效 session（recovery 刚建好的），
-            // 防止覆盖导致 AEAD 失败无限循环
-            if (typeof Crypto.hasSession === 'function') {
-              const has = await Crypto.hasSession(m.senderUserId);
-              if (has) {
-                console.log('[Messages v5] Skipping receiveSession — valid session exists for ' + m.senderUserId);
-                wire = wire.message;
-              } else {
-                try {
-                  await Crypto.receiveSession(m.senderUserId, wire.initMessage);
-                  console.log('[Messages v5] X3DH session established from history initMessage');
-                } catch (initErr) {
-                  console.error('[Messages v5] receiveSession failed:', initErr.message);
-                }
-                wire = wire.message;
-              }
-            } else {
-              try {
-                await Crypto.receiveSession(m.senderUserId, wire.initMessage);
-                console.log('[Messages v5] X3DH session established from history initMessage');
-              } catch (initErr) {
-                console.error('[Messages v5] receiveSession failed:', initErr.message);
-              }
-              wire = wire.message;
-            }
+          // 3.3.11+: 历史消息一律不建立会话，两个方向都一样。
+          // 3.3.10 的隔离只挡了「收到的历史」（见上方 !isSent 分支），「自己发出去的
+          // 历史」仍会把信封里的 initMessage 交给 receiveSession，在会话表里留下以
+          // 自己 uid 为键的垃圾会话（实测一次加载触发 3 次）。历史只允许复用当前会话
+          // 解密；会话不存在就让下面走缓存/失败分支，绝不由历史材料构造新会话。
+          if (wire && wire.initMessage && wire.message) {
+            console.debug('[Messages v5] History initMessage ignored (no session built from history)');
+            wire = wire.message;
           }
 
           const envelope = wire;
