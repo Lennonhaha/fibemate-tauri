@@ -265,6 +265,24 @@ fibemate-tauri/
   no single hybrid PQ handshake yet (`pq/hybrid.rs` is library-only)
 - Handshake is authenticated (IK is transmitted), not anonymous — see
   [docs/x3dh-anonymity-review.md](https://github.com/Lennonhaha/fibemate/blob/main/docs/x3dh-anonymity-review.md)
+- The Linux/BSD GTK stack carries advisories we cannot fix from here: `tauri`
+  2.11.2 / 2.12.3 / 3.0.0-alpha.4 all require `gtk ^0.18`, and the only fixed
+  `glib` (0.20.0) is incompatible with it. Those trees are target-gated (`tauri`
+  target-gates gtk/webkit2gtk, `wl-clipboard-rs` target-gates wayland-client) and
+  are not compiled into the Windows or macOS builds. `deny.toml` uses
+  `unmaintained = "workspace"` / `unsound = "workspace"` instead of an ignore
+  list, so every vulnerability and every *direct*-dependency unmaintained or
+  unsound advisory still fails the build.
+- One advisory in that set is not Linux-only: RUSTSEC-2026-0173
+  (`proc-macro-error2`, unmaintained) arrives via `hax-lib` -> `libcrux-ml-kem`
+  and `libcrux-ml-dsa`, so it is built on every platform including Windows. It is
+  compile-time only — a proc macro that emits verification glue during the
+  build, with nothing from it linked into the shipped binary — and it has no
+  patched release: libcrux 0.0.11 still requires `hax-lib ^0.4.1`.
+- Suppressions cannot go stale: `unused-ignored-advisory = "deny"` means that if
+  an ignore is ever added, and its advisory later leaves the dependency graph,
+  the check fails until the entry is deleted. `cargo deny check advisories` runs
+  in CI (`.github/workflows/deny.yml`).
 
 ---
 
