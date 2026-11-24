@@ -54,6 +54,7 @@ async function openChat(userId, name) {
   const e2eeText = document.getElementById('e2eeStatusText');
   const e2eeDetail = document.getElementById('e2eeStatusDetail');
   
+  try {
   if (Crypto && await Crypto.hasSession(STATE.currentPeerId)) {
     const status = await Crypto.getSecurityStatus(STATE.currentPeerId);
     // 更新旧版状态文本
@@ -91,6 +92,10 @@ async function openChat(userId, name) {
       e2eeText.textContent = 'NO E2EE';
       e2eeDetail.textContent = 'Crypto module not loaded';
     }
+  }
+  } catch (statusErr) {
+    // A corrupt/missing session must not abort openChat before ensureConversation.
+    console.warn('[Chat] E2EE status unavailable:', statusErr && statusErr.message ? statusErr.message : statusErr);
   }
 
   // Update E2EEDisplay module status
@@ -357,16 +362,18 @@ async function sendMessage() {
   if (!text) return;
 
   const peer = STATE.currentPeerId;
-  if (!STATE.currentConversationId) {
+  let conversationId = STATE.currentConversationId;
+  if (!conversationId) {
     const cid = await ensureConversation(peer);
     if (STATE.currentPeerId !== peer) return;
     if (!cid) {
       showToast('Failed to create conversation', 'error');
       return;
     }
+    conversationId = cid;
     STATE.currentConversationId = cid;
   }
-  if (!STATE.currentConversationId) {
+  if (!conversationId) {
     showToast('Failed to create conversation', 'error');
     return;
   }
@@ -375,7 +382,8 @@ async function sendMessage() {
   const Crypto = typeof MessageCryptoV2 !== 'undefined' ? MessageCryptoV2 : MessageCrypto;
   if (typeof Crypto !== 'undefined' && Crypto.hasSession) {
     try {
-      const hasSession = await Crypto.hasSession(STATE.currentPeerId);
+      const hasSession = await Crypto.hasSession(peer);
+      if (STATE.currentPeerId !== peer) return;
       if (!hasSession) {
         console.log(`[Send v5.1] No session with ${STATE.currentPeerId}, attempting X3DH initiation...`);
         showToast('正在建立安全会话...', 'info');
@@ -475,7 +483,7 @@ async function sendMessage() {
         isEncrypted = true;
         encLabel = 'SM4';
         payload = {
-          conversationId: STATE.currentConversationId,
+          conversationId: conversationId,
           envelope: JSON.stringify(gmEnvelope),
           protocol: 'gm',
           version: 2,
@@ -500,7 +508,7 @@ async function sendMessage() {
       const Crypto = typeof MessageCryptoV2 !== 'undefined' ? MessageCryptoV2 : MessageCrypto;
       if (typeof Crypto !== 'undefined') {
         try {
-          const envelope = await Crypto.encrypt(STATE.currentPeerId, text);
+          const envelope = await Crypto.encrypt(peer, text);
           isEncrypted = true;
           encLabel = 'AES';
           // 若有 pending initialMessage（首次 X3DH），附加到 envelope，让 Bob 能 establish 会话
@@ -509,7 +517,7 @@ async function sendMessage() {
             : envelope;
           STATE.pendingInitMessage = null;
           payload = {
-            conversationId: STATE.currentConversationId,
+            conversationId: conversationId,
             envelope: JSON.stringify(wireEnvelope),
             protocol: envelope.protocol || 'double-ratchet',
             version: envelope.version || 1,
@@ -530,10 +538,12 @@ async function sendMessage() {
     }
 
     // v4: WebSocket 优先，REST 备选
+    if (STATE.currentPeerId !== peer) return;
+
     if (STATE.ws && STATE.ws.readyState === WebSocket.OPEN) {
       _wsSend({
         type: 'message',
-        to: STATE.currentPeerId,
+        to: peer,
         ...payload
       });
       console.log('[Send v4] Message sent via WebSocket');
