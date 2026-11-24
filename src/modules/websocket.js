@@ -84,7 +84,8 @@ async function _handleOfflineBatch(list) {
             }
           }
         } catch (e) {
-          console.warn('[WS v10] offline decrypt failed:', mid, e && e.message ? e.message : e);
+          // 不带 messageId / 错误正文：两者都可能含对端可控内容，进 console 就是 log injection 面。
+          console.warn('[WS v10] offline decrypt failed:', e && e.name ? e.name : 'error');
         }
       }
     }
@@ -114,7 +115,7 @@ async function forceRebuildSession(peerId, conversationId) {
   _forcedRebuildGuard[peerId] = now;
   _dropStreak[peerId] = 0;
   delete _recoveryGuard[peerId]; // a streak outranks the "we just rebuilt" cooldown
-  console.warn('[Recovery] drop streak reached 3 — rebuilding unconditionally for', peerId);
+  console.warn('[Recovery] drop streak reached 3 — rebuilding unconditionally');
   return await trySessionRecovery(peerId, conversationId);
 }
 async function trySessionRecovery(peerId, conversationId) {
@@ -421,7 +422,7 @@ function connectWebSocket() {
           document.dispatchEvent(new CustomEvent('ws-read-receipt', { detail: msg }));
         } else if (msg.type === 'offline_messages') {
           const batch = Array.isArray(msg.messages) ? msg.messages : [];
-          console.log('[WS v4] Offline messages:', encodeURIComponent(JSON.stringify(msg.count)), '- consuming', batch.length);
+          console.log('[WS v4] Offline messages: consuming', batch.length);
           await _handleOfflineBatch(batch);
         }
       } catch (err) {
