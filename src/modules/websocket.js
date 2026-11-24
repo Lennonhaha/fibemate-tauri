@@ -73,7 +73,7 @@ async function _cacheInactiveRealTimeMessage(msg, Crypto) {
     if (typeof text === 'string') {
       localStorage.setItem('fibemate_pt_' + mid, text);
       _noteLastSeen(msg.from, msg.createdAt);
-      console.log('[WS v11] cached inactive message', mid);
+      console.log('[WS v11] cached inactive message');
     }
   } catch (e) {
     // Do not surface a toast while another conversation is focused; the
@@ -433,8 +433,8 @@ function connectWebSocket() {
           // without this cache the message reappears as “旧会话，无法解密”.
           try {
             await _cacheInactiveRealTimeMessage(msg, Crypto);
-          } catch (cacheErr) {
-            console.warn('[WS v11] inactive cache failed:', cacheErr && cacheErr.message ? cacheErr.message : cacheErr);
+          } catch (_) {
+            console.warn('[WS v11] inactive cache failed');
           }
           showToast(`New message from ${msg.from}`, 'info');
           loadConversations();
