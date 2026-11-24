@@ -171,7 +171,14 @@ async function loadMessages(conversationId) {
   frag.appendChild(divider);
   // 3.3.13: 目标容器显式传入（frag），不再用全局可变量做渲染目标。
   // 若用全局目标，两个并发加载会互相覆盖，导致 A 的循环往 B 的 fragment 里写（本身也是一类串会话）。
-  const _append = (sent, text, ts, enc, label, id) => appendMessage(sent, text, ts, enc, label, id, frag);
+  const _append = (sent, text, ts, enc, label, id) => {
+    try {
+      appendMessage(sent, text, ts, enc, label, id, frag);
+    } catch (appendErr) {
+      // One malformed row must not blank the whole conversation.
+      console.warn('[Messages v3] append failed:', appendErr && appendErr.message ? appendErr.message : appendErr);
+    }
+  };
   try {
     const token = localStorage.getItem('fk_token');
     const res = await fetch(`${API_BASE}/conversations/${conversationId}/messages?limit=50`, {
@@ -328,6 +335,16 @@ async function loadMessages(conversationId) {
 function appendMessage(sent, text, timestamp, isEncrypted = false, encryptionLabel = '', msgId = '', target = null) {
   // 3.3.13: target 由调用方显式给出；历史加载传 DocumentFragment，实时消息不传（走 #messagesList）。
   const list = target || document.getElementById('messagesList');
+  // A live message may arrive while the panel is showing “正在加载/无法打开”.
+  // If we simply append, the stale placeholder stays above the message and the
+  // UI claims the conversation is unavailable while rendering its content.
+  if (list.id === 'messagesList') {
+    const placeholder = list.querySelector('.chat-placeholder');
+    if (placeholder) placeholder.remove();
+    if (list.dataset && STATE.currentConversationId) {
+      list.dataset.conversationId = STATE.currentConversationId;
+    }
+  }
   // 3.3.12: 同一条消息可能被离线批次和历史加载各渲染一次，靠 messageId 去重；
   // 顺带把 id 写进 dataset，已读回执靠它认消息（旧实现从未设置，回执永远是空数组）。
   // 用 dataset 遍历比较，不拼 CSS 选择器：messageId 由发送方给出，含引号会让 selector 抛错。

@@ -13,6 +13,13 @@ All notable changes to this project are documented here.
 ### Changed
 - `release.yml` 写权限下沉到需要的 job（keyless 签名所需 `id-token: write` 保留在 `release-check`）（#29）
 
+## [3.3.14] - 2026-11-24
+
+### Fixed
+- 浅色主题的输入框对比度：切到 Light 后 `--bg-input` 与焦点态背景同步变亮，聊天输入、搜索框和表单字段不再出现“深底深字”。主题选择与右上角悬浮切换现在共用同一份持久化状态。
+- 切到其他联系人后，来自非当前会话的实时消息现在也会在后台完成解密并写入 `fibemate_pt_*` 明文缓存；回到该联系人时不再显示“历史消息（旧会话，无法解密）”，也不会因未消费棘轮而让对端长时间等不到进展。后台解密不发送已读回执，也不把消息渲染到当前面板。
+- 新增 `scripts/verify-inactive-message-cache.cjs`：覆盖后台解密、initMessage 只取 payload、语音跳过、解密失败/null 不缓存，6/6 PASS。
+
 ## [3.3.13] - 2026-11-24
 
 ### Fixed

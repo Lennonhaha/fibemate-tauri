@@ -19,19 +19,22 @@ function _calcSecurityScore() {
 function applyTheme(theme) {
   localStorage.setItem('fk_setting_theme', theme);
   const resolved = _resolveTheme(theme);
+  // Keep the legacy key in sync with the floating toggle in features-enhancement.js.
+  localStorage.setItem('fk_theme', resolved);
 
   const root = document.documentElement;
   if (resolved === 'light') {
     root.setAttribute('data-theme', 'light');
-    root.style.setProperty('--bg-primary', '#ffffff');
-    root.style.setProperty('--bg-secondary', '#f5f5f5');
-    root.style.setProperty('--bg-tertiary', '#eeeeee');
-    root.style.setProperty('--bg-input', '#f0f0f0');
+    root.style.setProperty('--bg-primary', '#f5f5f7');
+    root.style.setProperty('--bg-secondary', '#f0f0f2');
+    root.style.setProperty('--bg-tertiary', '#e8e8ec');
+    root.style.setProperty('--bg-input', '#ffffff');
     root.style.setProperty('--bg-card', '#ffffff');
     root.style.setProperty('--text-primary', '#1a1a1a');
-    root.style.setProperty('--text-secondary', '#666666');
-    root.style.setProperty('--text-muted', '#999999');
-    root.style.setProperty('--border-subtle', '#e0e0e0');
+    root.style.setProperty('--text-secondary', '#55555f');
+    root.style.setProperty('--text-muted', '#777781');
+    root.style.setProperty('--border-subtle', '#d8d8de');
+    root.style.setProperty('--border-color', '#d8d8de');
     root.style.setProperty('--shadow-sm', '0 1px 3px rgba(0,0,0,0.08)');
     root.style.setProperty('--overlay', 'rgba(0,0,0,0.3)');
   } else {
@@ -45,6 +48,7 @@ function applyTheme(theme) {
     root.style.removeProperty('--text-secondary');
     root.style.removeProperty('--text-muted');
     root.style.removeProperty('--border-subtle');
+    root.style.removeProperty('--border-color');
     root.style.removeProperty('--shadow-sm');
     root.style.removeProperty('--overlay');
   }
