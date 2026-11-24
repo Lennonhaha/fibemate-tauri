@@ -60,7 +60,13 @@ async function registerCurrentDevice() {
  * Generate unique device ID
  */
 function generateDeviceId() {
-  return 'device-' + Math.random().toString(36).substr(2, 9) + '-' + Date.now();
+  if (window.FIBEMATE_DEVICE_ID && typeof window.FIBEMATE_DEVICE_ID.generate === 'function') {
+    try { return window.FIBEMATE_DEVICE_ID.generate(); } catch (_) { /* fall through */ }
+  }
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
+  });
 }
 
 /**
