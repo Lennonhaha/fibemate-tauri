@@ -6,6 +6,118 @@
 // 会话自愈：解密失败时自动重建 X3DH 会话，避免永久卡死
 // ════════════════════════════════════════════════════════════════
 const _recoveryGuard = {};
+// A single duplicate frame is normal: reconnects replay the last one. A *streak*
+// is not — our receive chain has already advanced past what the peer keeps
+// sending, so the two sides have diverged. The tie-break below assumes "the
+// initiator notices first"; when the initiator's own chain is healthy it never
+// notices anything, so a streak has to be allowed to override the tie-break.
+const _dropStreak = {};
+const _forcedRebuildGuard = {};
+function _noteDrop(peerId) {
+  const n = (_dropStreak[peerId] || 0) + 1;
+  _dropStreak[peerId] = n;
+  return n;
+}
+function _noteDecryptOk(peerId) {
+  _dropStreak[peerId] = 0;
+}
+
+// ═══ 3.3.12: 离线批次消费 + 设备级回执 ═══
+// 服务端在 WS 认证后把未送达消息放进**单帧** offline_messages；旧客户端只打印
+// count 就把 messages 整包丢掉，于是对端离线期间发的消息永远收不到
+// （2026-11-24 实测：重放 44 条，客户端 E2EE decrypted 0 条）。
+// 消费时必须守住 3.3.10 的教训：历史消息绝不回流实时棘轮。
+const _receiptSent = new Set();
+
+// 基线用「该对端最后一条成功解密的消息时间」，不用 getSessionCreatedAt：
+// 会话时间戳重启后会丢（3.3.11 实测返回 0），拿它判新旧会把所有离线消息判成历史。
+function _lastSeenKey(peerId) { return 'fibemate_lastseen_' + peerId; }
+function _lastSeen(peerId) {
+  try { return Number(localStorage.getItem(_lastSeenKey(peerId))) || 0; } catch (e) { return 0; }
+}
+function _noteLastSeen(peerId, createdAt) {
+  const t = Number(createdAt) || 0;
+  if (!t) return;
+  try {
+    if (t > _lastSeen(peerId)) localStorage.setItem(_lastSeenKey(peerId), String(t));
+  } catch (e) {}
+}
+
+function _sendReadReceipt(messageId) {
+  if (!messageId || _receiptSent.has(messageId)) return;
+  _receiptSent.add(messageId);
+  _wsSend({ type: 'read_receipt', messageId });
+}
+
+async function _handleOfflineBatch(list) {
+  const Crypto = (typeof MessageCryptoV2 !== 'undefined') ? MessageCryptoV2 : MessageCrypto;
+  const myUid = localStorage.getItem('fk_uid');
+  let handled = 0;
+  for (const m of list) {
+    const peerId = m.senderUserId || m.from;
+    const mid = m.id || m.messageId;
+    if (!peerId || !mid || peerId === myUid) continue;
+    handled++;
+
+    let text = null;
+    try { text = localStorage.getItem('fibemate_pt_' + mid); } catch (e) {}
+
+    if (text == null && m.envelope && Crypto) {
+      const createdAt = Number(m.createdAt) || 0;
+      const seen = _lastSeen(peerId);
+      const sessionAt = (typeof Crypto.getSessionCreatedAt === 'function')
+        ? (Crypto.getSessionCreatedAt(peerId) || 0)
+        : 0;
+      // 只有确实比「已解过的最后一条」更新的消息才试解；更早的一律当历史，
+      // 不碰棘轮（2026-11-22 事故）。没有基线时退到会话时间，二者都无则不试。
+      const candidate = seen > 0 ? createdAt > seen : (sessionAt > 0 && createdAt >= sessionAt);
+      if (candidate) {
+        try {
+          let wire = JSON.parse(m.envelope);
+          // 离线批次一律不建会话：历史 initMessage 会把接收链带回旧状态（2026-11-22）。
+          if (wire && wire.initMessage) wire = wire.message;
+          if (wire && typeof wire === 'object') {
+            const out = await Crypto.decrypt(peerId, wire);
+            if (typeof out === 'string') {
+              text = out;
+              try { localStorage.setItem('fibemate_pt_' + mid, text); } catch (e) {}
+            }
+          }
+        } catch (e) {
+          // 连 e.name 都不带：错误对象来自解密路径，其字段仍可能回填对端内容。
+          console.warn('[WS v10] offline decrypt failed');
+        }
+      }
+    }
+
+    // 不是当前窗口的会话就不渲染，等用户打开时由历史加载补上；
+    // 但回执必须先发：readBy 是「这台设备已收到」的标记，离线重放按它收敛，
+    // 与用户正开哪个会话无关。放在 guard 之后会让其它会话的消息永远重推。
+    _sendReadReceipt(mid);
+    if (peerId !== STATE.currentPeerId) continue;
+
+    if (text != null) {
+      if (m.messageType === 'voice' && typeof VoiceMessage !== 'undefined') {
+        VoiceMessage.handleIncomingVoiceMessage(m);
+      } else {
+        appendMessage(false, text, m.createdAt || Date.now(), true, '', mid);
+      }
+    } else {
+      appendMessage(false, '🔒 离线消息（旧会话，无法解密）', m.createdAt || Date.now(), true, '', mid);
+    }
+    // 解不开的也回执：再重发依然解不开，只会每次重连把同一批再推一遍。
+  }
+  if (handled > 0) console.log('[WS v10] offline batch consumed:', handled);
+}
+async function forceRebuildSession(peerId, conversationId) {
+  const now = Date.now();
+  if (_forcedRebuildGuard[peerId] && now - _forcedRebuildGuard[peerId] < 15000) return false;
+  _forcedRebuildGuard[peerId] = now;
+  _dropStreak[peerId] = 0;
+  delete _recoveryGuard[peerId]; // a streak outranks the "we just rebuilt" cooldown
+  console.warn('[Recovery] drop streak reached 3 — rebuilding unconditionally');
+  return await trySessionRecovery(peerId, conversationId);
+}
 async function trySessionRecovery(peerId, conversationId) {
   const now = Date.now();
   if (_recoveryGuard[peerId] && now - _recoveryGuard[peerId] < 10000) return false;
@@ -73,13 +185,26 @@ async function maybeRecoverSession(peerId, conversationId) {
   }
   console.log('[Recovery] waiting for peer to initiate (tie-break: myUid > peerId):', peerId);
   if (_recoveryFallbackTimers[peerId]) return false;
+  // Snapshot the session timestamp. hasSession() answers "is there a session
+  // object", which is true both before and after a peer re-handshake, so it
+  // cannot tell "peer already initiated" from "peer never did" — the exact
+  // misjudgement that left the pair deadlocked.
+  const CryptoBefore = (typeof MessageCryptoV2 !== 'undefined') ? MessageCryptoV2 : MessageCrypto;
+  const createdAtBefore = (CryptoBefore && CryptoBefore.getSessionCreatedAt)
+    ? CryptoBefore.getSessionCreatedAt(peerId)
+    : 0;
   _recoveryFallbackTimers[peerId] = setTimeout(async () => {
     delete _recoveryFallbackTimers[peerId];
     try {
       const Crypto = (typeof MessageCryptoV2 !== 'undefined') ? MessageCryptoV2 : MessageCrypto;
-      const has = (Crypto && Crypto.hasSession) ? await Crypto.hasSession(peerId) : false;
-      if (has) { console.log('[Recovery] peer initiated in time — no fallback needed for', peerId); return; }
-      console.warn('[Recovery] peer did not initiate in 10s — fallback initiate for', peerId);
+      const createdAtAfter = (Crypto && Crypto.getSessionCreatedAt)
+        ? Crypto.getSessionCreatedAt(peerId)
+        : 0;
+      if (createdAtAfter > createdAtBefore) {
+        console.log('[Recovery] peer re-handshaked (' + createdAtBefore + ' -> ' + createdAtAfter + ') — no fallback needed for', peerId);
+        return;
+      }
+      console.warn('[Recovery] peer did not re-handshake in 10s (createdAt still ' + createdAtAfter + ') — fallback initiate for', peerId);
       await trySessionRecovery(peerId, conversationId);
     } catch (e) { console.warn('[Recovery] fallback failed:', e && e.message ? e.message : e); }
   }, 10000);
@@ -203,15 +328,26 @@ function connectWebSocket() {
               
               text = await Crypto.decrypt(msg.from, envelope);
               // 3.3.10: null = 棘轮判重（旧链）。旧实现静默丢弃，故障永不自愈。
-              // 现在先重建会话，让对端下一条消息能用新会话解开。
+              // 3.3.11: 单次重复属正常（重连会重放最后一帧）；连续重复说明接收链已
+              //         越过对端发送点，即两端已分叉。此时不能等 tie-break 的发起方
+              //         ——若它自己是健康的一方，它永远不会察觉。
               if (text === null) {
-                console.warn('[WS v6] MESSAGE_DROP from', msg.from, '- session out of sync, rebuilding');
-                await maybeRecoverSession(msg.from, msg.conversationId);
+                const streak = _noteDrop(msg.from);
+                console.warn('[WS v6] MESSAGE_DROP from', msg.from, '- streak ' + streak + '/3');
+                if (streak >= 3) {
+                  const rebuilt = await forceRebuildSession(msg.from, msg.conversationId);
+                  if (rebuilt) appendMessage(false, '🔄 正在重建安全会话…', Date.now());
+                } else {
+                  await maybeRecoverSession(msg.from, msg.conversationId);
+                }
                 return;
               }
+              _noteDecryptOk(msg.from);
+              _noteLastSeen(msg.from, msg.createdAt);
               {
                 const _mid = msg.messageId || msg.id;
                 if (_mid) { try { localStorage.setItem('fibemate_pt_' + _mid, text); } catch (e) {} }
+                _sendReadReceipt(_mid);
               }
               console.log(`[WS v6] E2EE message decrypted (protocol=${encodeURIComponent(JSON.stringify(envelope.protocol))})`);
             } catch (decryptErr) {
@@ -257,7 +393,7 @@ function connectWebSocket() {
             return;
           }
 
-          appendMessage(false, text || '[Unable to decrypt]', msg.createdAt || Date.now(), true);
+          appendMessage(false, text || '[Unable to decrypt]', msg.createdAt || Date.now(), true, '', msg.messageId || msg.id);
         } else if (msg.type === 'new_message') {
           showToast(`New message from ${msg.from}`, 'info');
           loadConversations();
@@ -285,7 +421,10 @@ function connectWebSocket() {
           // 已读回执
           document.dispatchEvent(new CustomEvent('ws-read-receipt', { detail: msg }));
         } else if (msg.type === 'offline_messages') {
-          console.log('[WS v4] Offline messages:', encodeURIComponent(JSON.stringify(msg.count)));
+          const batch = Array.isArray(msg.messages) ? msg.messages : [];
+          // 数量也不打：batch 来自服务端，.length 同样被算作用户可控。
+          console.log('[WS v4] Offline messages: consuming batch');
+          await _handleOfflineBatch(batch);
         }
       } catch (err) {
         console.error('[WS v4] Parse error:', err);

@@ -116,7 +116,7 @@ async function loadMessages(conversationId) {
         const _hid = m.id || m._id;
         let _cached = null;
         if (_hid) { try { _cached = localStorage.getItem('fibemate_pt_' + _hid); } catch (e) {} }
-        appendMessage(false, _cached || '🔒 历史消息（旧会话，无法解密）', m.createdAt, true);
+        appendMessage(false, _cached || '🔒 历史消息（旧会话，无法解密）', m.createdAt, true, '', _hid);
         continue;
       }
       
@@ -222,7 +222,7 @@ async function loadMessages(conversationId) {
       
       // 标记加密消息（v2 envelope 或 encryptedContent）
       const isEncrypted = !!(m.envelope || m.encryptedContent);
-      appendMessage(isSent, text || '[Unable to decrypt]', m.createdAt, isEncrypted);
+      appendMessage(isSent, text || '[Unable to decrypt]', m.createdAt, isEncrypted, '', m.id || m._id);
     }
   } catch (err) {
     console.error('[Messages v3] Load failed:', err);
@@ -230,11 +230,17 @@ async function loadMessages(conversationId) {
   document.getElementById('messageInput').focus();
 }
 
-function appendMessage(sent, text, timestamp, isEncrypted = false, encryptionLabel = '') {
+function appendMessage(sent, text, timestamp, isEncrypted = false, encryptionLabel = '', msgId = '') {
   const list = document.getElementById('messagesList');
+  // 3.3.12: 同一条消息可能被离线批次和历史加载各渲染一次，靠 messageId 去重；
+  // 顺带把 id 写进 dataset，已读回执靠它认消息（旧实现从未设置，回执永远是空数组）。
+  // 用 dataset 遍历比较，不拼 CSS 选择器：messageId 由发送方给出，含引号会让 selector 抛错。
+  if (msgId && Array.prototype.some.call(list.querySelectorAll('.message'),
+    (el) => el.dataset.messageId === msgId)) return;
   const time = timestamp ? formatTime(timestamp) : formatTime(Date.now());
   const msg = document.createElement('div');
   msg.className = `message ${sent ? 'sent' : 'received'}`;
+  if (msgId) msg.dataset.messageId = msgId;
   msg.dataset.timestamp = timestamp || Date.now();
   let badges = '';
   if (encryptionLabel) {
