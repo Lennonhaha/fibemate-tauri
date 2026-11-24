@@ -21,6 +21,93 @@ function _noteDrop(peerId) {
 function _noteDecryptOk(peerId) {
   _dropStreak[peerId] = 0;
 }
+
+// ═══ 3.3.12: 离线批次消费 + 设备级回执 ═══
+// 服务端在 WS 认证后把未送达消息放进**单帧** offline_messages；旧客户端只打印
+// count 就把 messages 整包丢掉，于是对端离线期间发的消息永远收不到
+// （2026-11-24 实测：重放 44 条，客户端 E2EE decrypted 0 条）。
+// 消费时必须守住 3.3.10 的教训：历史消息绝不回流实时棘轮。
+const _receiptSent = new Set();
+
+// 基线用「该对端最后一条成功解密的消息时间」，不用 getSessionCreatedAt：
+// 会话时间戳重启后会丢（3.3.11 实测返回 0），拿它判新旧会把所有离线消息判成历史。
+function _lastSeenKey(peerId) { return 'fibemate_lastseen_' + peerId; }
+function _lastSeen(peerId) {
+  try { return Number(localStorage.getItem(_lastSeenKey(peerId))) || 0; } catch (e) { return 0; }
+}
+function _noteLastSeen(peerId, createdAt) {
+  const t = Number(createdAt) || 0;
+  if (!t) return;
+  try {
+    if (t > _lastSeen(peerId)) localStorage.setItem(_lastSeenKey(peerId), String(t));
+  } catch (e) {}
+}
+
+function _sendReadReceipt(messageId) {
+  if (!messageId || _receiptSent.has(messageId)) return;
+  _receiptSent.add(messageId);
+  _wsSend({ type: 'read_receipt', messageId });
+}
+
+async function _handleOfflineBatch(list) {
+  const Crypto = (typeof MessageCryptoV2 !== 'undefined') ? MessageCryptoV2 : MessageCrypto;
+  const myUid = localStorage.getItem('fk_uid');
+  let handled = 0;
+  for (const m of list) {
+    const peerId = m.senderUserId || m.from;
+    const mid = m.id || m.messageId;
+    if (!peerId || !mid || peerId === myUid) continue;
+    handled++;
+
+    let text = null;
+    try { text = localStorage.getItem('fibemate_pt_' + mid); } catch (e) {}
+
+    if (text == null && m.envelope && Crypto) {
+      const createdAt = Number(m.createdAt) || 0;
+      const seen = _lastSeen(peerId);
+      const sessionAt = (typeof Crypto.getSessionCreatedAt === 'function')
+        ? (Crypto.getSessionCreatedAt(peerId) || 0)
+        : 0;
+      // 只有确实比「已解过的最后一条」更新的消息才试解；更早的一律当历史，
+      // 不碰棘轮（2026-11-22 事故）。没有基线时退到会话时间，二者都无则不试。
+      const candidate = seen > 0 ? createdAt > seen : (sessionAt > 0 && createdAt >= sessionAt);
+      if (candidate) {
+        try {
+          let wire = JSON.parse(m.envelope);
+          // 离线批次一律不建会话：历史 initMessage 会把接收链带回旧状态（2026-11-22）。
+          if (wire && wire.initMessage) wire = wire.message;
+          if (wire && typeof wire === 'object') {
+            const out = await Crypto.decrypt(peerId, wire);
+            if (typeof out === 'string') {
+              text = out;
+              try { localStorage.setItem('fibemate_pt_' + mid, text); } catch (e) {}
+            }
+          }
+        } catch (e) {
+          console.warn('[WS v10] offline decrypt failed:', mid, e && e.message ? e.message : e);
+        }
+      }
+    }
+
+    // 不是当前窗口的会话就不渲染，等用户打开时由历史加载补上；
+    // 但回执必须先发：readBy 是「这台设备已收到」的标记，离线重放按它收敛，
+    // 与用户正开哪个会话无关。放在 guard 之后会让其它会话的消息永远重推。
+    _sendReadReceipt(mid);
+    if (peerId !== STATE.currentPeerId) continue;
+
+    if (text != null) {
+      if (m.messageType === 'voice' && typeof VoiceMessage !== 'undefined') {
+        VoiceMessage.handleIncomingVoiceMessage(m);
+      } else {
+        appendMessage(false, text, m.createdAt || Date.now(), true, '', mid);
+      }
+    } else {
+      appendMessage(false, '🔒 离线消息（旧会话，无法解密）', m.createdAt || Date.now(), true, '', mid);
+    }
+    // 解不开的也回执：再重发依然解不开，只会每次重连把同一批再推一遍。
+  }
+  if (handled > 0) console.log('[WS v10] offline batch consumed:', handled);
+}
 async function forceRebuildSession(peerId, conversationId) {
   const now = Date.now();
   if (_forcedRebuildGuard[peerId] && now - _forcedRebuildGuard[peerId] < 15000) return false;
@@ -255,9 +342,11 @@ function connectWebSocket() {
                 return;
               }
               _noteDecryptOk(msg.from);
+              _noteLastSeen(msg.from, msg.createdAt);
               {
                 const _mid = msg.messageId || msg.id;
                 if (_mid) { try { localStorage.setItem('fibemate_pt_' + _mid, text); } catch (e) {} }
+                _sendReadReceipt(_mid);
               }
               console.log(`[WS v6] E2EE message decrypted (protocol=${encodeURIComponent(JSON.stringify(envelope.protocol))})`);
             } catch (decryptErr) {
@@ -303,7 +392,7 @@ function connectWebSocket() {
             return;
           }
 
-          appendMessage(false, text || '[Unable to decrypt]', msg.createdAt || Date.now(), true);
+          appendMessage(false, text || '[Unable to decrypt]', msg.createdAt || Date.now(), true, '', msg.messageId || msg.id);
         } else if (msg.type === 'new_message') {
           showToast(`New message from ${msg.from}`, 'info');
           loadConversations();
@@ -331,7 +420,9 @@ function connectWebSocket() {
           // 已读回执
           document.dispatchEvent(new CustomEvent('ws-read-receipt', { detail: msg }));
         } else if (msg.type === 'offline_messages') {
-          console.log('[WS v4] Offline messages:', encodeURIComponent(JSON.stringify(msg.count)));
+          const batch = Array.isArray(msg.messages) ? msg.messages : [];
+          console.log('[WS v4] Offline messages:', encodeURIComponent(JSON.stringify(msg.count)), '- consuming', batch.length);
+          await _handleOfflineBatch(batch);
         }
       } catch (err) {
         console.error('[WS v4] Parse error:', err);

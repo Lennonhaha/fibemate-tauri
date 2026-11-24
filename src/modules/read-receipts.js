@@ -249,17 +249,15 @@ const ReadReceipts = (() => {
   function _sendReadReceipts(messageIds) {
     if (!receiptEnabled || !STATE.currentPeerId) return;
 
-    const payload = {
-      type: 'read_receipt',
-      messageIds,
-      conversationId: STATE.currentConversationId,
-      to: STATE.currentPeerId,
-      readAt: Date.now()
-    };
+    // 服务端契约是单条 messageId（src/index.js 的 case 'read_receipt' 只解构
+    // messageId）。旧实现发的是 messageIds 数组 → 服务端拿到 undefined
+    // 直接 break → readBy 从来没被写过，离线队列永不收敛（2026-11-24 实测）。
 
     // WebSocket 发送
     if (STATE.ws && STATE.ws.readyState === WebSocket.OPEN) {
-      STATE.ws.send(JSON.stringify(payload));
+      for (const id of messageIds) {
+        STATE.ws.send(JSON.stringify({ type: 'read_receipt', messageId: id }));
+      }
     }
 
     // REST 备选
