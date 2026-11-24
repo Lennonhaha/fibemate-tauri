@@ -381,9 +381,12 @@ async function initBackendIntegrations() {
   try { if (window.TokenGuard) TokenGuard.start(); } catch (e) { console.warn('[TokenGuard] start failed:', e && e.message); }
   
   try {
-    // Register device on first run
+    // Register device on first run (or after an old non-UUID id)
     const deviceId = localStorage.getItem('fk_device_id');
-    if (!deviceId) {
+    const validDeviceId = window.FIBEMATE_DEVICE_ID
+      ? window.FIBEMATE_DEVICE_ID.isValid(deviceId)
+      : !!deviceId;
+    if (!validDeviceId) {
       await registerCurrentDevice();
     }
     

@@ -4,26 +4,60 @@
  */
 (function() {
   const API = () => localStorage.getItem('fk_api_url') || 'https://fibemate.net/api';
+  const DeviceId = () => window.FIBEMATE_DEVICE_ID;
+
+  function getDeviceId(username) {
+    try { return DeviceId() ? DeviceId().getOrCreate(username) : ''; }
+    catch (e) { console.warn('[FIBEMATE_ZK] deviceId unavailable:', e.message); return ''; }
+  }
+
+  function rememberDeviceId(username, id) {
+    try { return DeviceId() ? DeviceId().remember(username, id) : ''; }
+    catch (e) { console.warn('[FIBEMATE_ZK] deviceId store failed:', e.message); return ''; }
+  }
+
+  function resetDeviceId(username) {
+    try { return DeviceId() ? DeviceId().reset(username) : ''; }
+    catch (e) { console.warn('[FIBEMATE_ZK] deviceId reset failed:', e.message); return ''; }
+  }
 
   window.FIBEMATE_ZK = {
-    /** Standard password login */
-    async doLogin(username, password) {
-      const res = await fetch(`${API()}/auth/login`, {
+    /** One login POST; deviceId is omitted when the helper is unavailable. */
+    async _loginRequest(username, password, deviceId) {
+      const body = deviceId ? { username, password, deviceId } : { username, password };
+      return fetch(`${API()}/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password })
+        body: JSON.stringify(body)
       });
-      const data = await res.json();
+    },
+
+    /** Standard password login */
+    async doLogin(username, password) {
+      let deviceId = getDeviceId(username);
+      let res = await this._loginRequest(username, password, deviceId);
+      let data = await res.json();
+
+      // A copied profile can carry an id now owned by another account. Mint a
+      // fresh one once; a second failure is a real error, not a retry loop.
+      if (res.status === 400 && data && data.code === 'E_DEVICE_OWNED') {
+        deviceId = resetDeviceId(username);
+        res = await this._loginRequest(username, password, deviceId);
+        data = await res.json();
+      }
+
       if (!data.success && !data.token) {
         throw new Error(data.error || data.message || 'Login failed');
       }
+      if (data.deviceId) rememberDeviceId(username, data.deviceId);
       return {
         success: true,
         token: data.token,
         refreshToken: data.refreshToken || null, // TokenGuard: needed for silent renewal
         userId: data.userId || data.user_id,
         displayName: data.displayName || data.display_name || username,
-        publicKey: data.publicKey || ''
+        publicKey: data.publicKey || '',
+        deviceId: data.deviceId || deviceId
       };
     },
 
@@ -62,7 +96,8 @@
         refreshToken: data.refreshToken || null, // TokenGuard: needed for silent renewal
         userId: data.userId || data.user_id,
         displayName: data.displayName || data.display_name || username,
-        publicKey: publicKeyHex
+        publicKey: publicKeyHex,
+        deviceId: data.deviceId || ''
       };
     },
 
@@ -74,7 +109,11 @@
     /** Check if user is logged in */
     isLoggedIn() {
       return !!localStorage.getItem('fk_token');
-    }
+    },
+
+    getDeviceId(username) { return getDeviceId(username); },
+    rememberDeviceId(username, id) { return rememberDeviceId(username, id); },
+    resetDeviceId(username) { return resetDeviceId(username); }
   };
 
   console.log('[FIBEMATE_ZK polyfill] Loaded — API:', API());

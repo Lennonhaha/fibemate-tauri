@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="styles.css">
   <!-- Tauri Bridge: polyfills window.electronAPI for native desktop features -->
   <script src="tauri-bridge.js"></script>
+  <!-- Per-account device id (must load before the auth polyfill) -->
+  <script src="device-id-client.js"></script>
   <!-- FIBEMATE_ZK polyfill: doLogin/doRegister bridge -->
   <script src="fibemate-zk-polyfill.js"></script>
   <script src="secure-key-storage.js"></script>

@@ -281,6 +281,9 @@
           localStorage.setItem('fk_uid', data.userId);
         }
         if (data.refreshToken) localStorage.setItem('fk_refresh_token', data.refreshToken);
+        if (data.deviceId && FIBEMATE_ZK.rememberDeviceId) {
+          FIBEMATE_ZK.rememberDeviceId(username, data.deviceId);
+        }
         if (data.publicKey) localStorage.setItem('fk_public_key', data.publicKey);
         if (data.displayName) {
           localStorage.setItem('fk_displayName', data.displayName);

@@ -13,6 +13,16 @@ All notable changes to this project are documented here.
 ### Changed
 - `release.yml` 写权限下沉到需要的 job（keyless 签名所需 `id-token: write` 保留在 `release-check`）（#29）
 
+## [3.3.12] - 2026-11-24
+
+### Fixed
+- 设备身份：登录提交按账号持久化的 UUID `deviceId`；服务端返回 `E_DEVICE_OWNED` 时只重新生成一次；注册返回的 `deviceId` 会保存。这是 readBy 落盘、离线重放收敛、未读数准确的前置条件。
+- 聊天切换竞态（#99）：迟到响应不再污染当前会话；切换期间保留旧内容并显示加载条。
+
+### Changed
+- 服务端要求 `deviceId` 为 UUID；旧客户端不传仍可登录，但设备级回执保持降级。
+- 说明：3.3.8–3.3.11 为内部构建，未单独发布；其中 3.3.11 构建自 `1f13f46`，不含 #99，3.3.12 补上。历史变更见 git log。
+
 ## [3.3.7] - 2026-10-10
 
 ### Fixed
