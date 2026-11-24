@@ -373,10 +373,6 @@ async function sendMessage() {
     conversationId = cid;
     STATE.currentConversationId = cid;
   }
-  if (!conversationId) {
-    showToast('Failed to create conversation', 'error');
-    return;
-  }
 
   // v5.1: 自动建立加密会话（如果尚未建立）
   const Crypto = typeof MessageCryptoV2 !== 'undefined' ? MessageCryptoV2 : MessageCrypto;
