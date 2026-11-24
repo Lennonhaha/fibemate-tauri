@@ -171,7 +171,14 @@ async function loadMessages(conversationId) {
   frag.appendChild(divider);
   // 3.3.13: 目标容器显式传入（frag），不再用全局可变量做渲染目标。
   // 若用全局目标，两个并发加载会互相覆盖，导致 A 的循环往 B 的 fragment 里写（本身也是一类串会话）。
-  const _append = (sent, text, ts, enc, label, id) => appendMessage(sent, text, ts, enc, label, id, frag);
+  const _append = (sent, text, ts, enc, label, id) => {
+    try {
+      appendMessage(sent, text, ts, enc, label, id, frag);
+    } catch (appendErr) {
+      // One malformed row must not blank the whole conversation.
+      console.warn('[Messages v3] append failed:', appendErr && appendErr.message ? appendErr.message : appendErr);
+    }
+  };
   try {
     const token = localStorage.getItem('fk_token');
     const res = await fetch(`${API_BASE}/conversations/${conversationId}/messages?limit=50`, {
