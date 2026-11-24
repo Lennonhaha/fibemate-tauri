@@ -154,7 +154,7 @@ vm.runInContext(`(function(){ ${code}
   this.loadMessages = loadMessages;
 })()`, sandbox);
 
-const { openChat, loadMessages } = sandbox;
+const { openChat } = sandbox;
 const list = elements.messagesList;
 const textOf = (n) => (n.textContent || '') + (n.innerHTML || '') + (n.children || []).map(textOf).join('');
 const text = () => list.children.map(textOf).join('|');
