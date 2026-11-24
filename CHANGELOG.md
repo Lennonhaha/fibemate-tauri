@@ -13,6 +13,13 @@ All notable changes to this project are documented here.
 ### Changed
 - `release.yml` 写权限下沉到需要的 job（keyless 签名所需 `id-token: write` 保留在 `release-check`）（#29）
 
+## [3.3.13] - 2026-11-24
+
+### Fixed
+- 会话切换串台：点击联系人后立即清空上一会话的消息并显示加载占位；在 `find-or-create`、握手状态检查等任何 `await` 完成前，旧会话内容不会留在新联系人面板。
+- `find-or-create` 的迟到响应不再覆盖当前联系人的 `conversationId`；`sendMessage` 在切换联系人后也不会把消息发到上一个会话。
+- 新增 `scripts/verify-conversation-isolation.cjs`：用真实 `chat.js` + 最小 DOM 模拟，验证切到 B 后列表不出现 A 的消息、A 的迟到响应不覆盖 B、失败时显示明确空状态。
+
 ## [3.3.12] - 2026-11-24
 
 ### Fixed

@@ -1,6 +1,41 @@
 // ================================================
 // Chat  — v3 使用 conversationId，通过 find-or-create 获取
 // ================================================
+
+// 3.3.13: 会话切换的同步占位。openChat 一进入就调用，确保在
+// find-or-create / 握手 / 解密任何 await 完成之前，旧会话的消息已经离开 DOM。
+function renderChatPlaceholder(title, detail) {
+  const list = document.getElementById('messagesList');
+  if (!list) return;
+  list.replaceChildren();
+  const box = document.createElement('div');
+  box.className = 'chat-placeholder';
+  const headline = document.createElement('div');
+  headline.className = 'chat-placeholder-title';
+  headline.textContent = title;
+  box.appendChild(headline);
+  if (detail) {
+    const sub = document.createElement('div');
+    sub.className = 'chat-placeholder-detail';
+    sub.textContent = detail;
+    box.appendChild(sub);
+  }
+  list.appendChild(box);
+  if (list.dataset) list.dataset.conversationId = '';
+}
+
+function showChatLoading(name) {
+  renderChatPlaceholder('正在加载会话', name ? `与 ${name} 的消息` : '正在连接…');
+  const bar = document.getElementById('msgLoadingBar');
+  if (bar) bar.style.display = 'block';
+}
+
+function showChatUnavailable(name) {
+  renderChatPlaceholder('无法打开会话', name ? `暂时无法加载与 ${name} 的会话` : '请稍后重试');
+  const bar = document.getElementById('msgLoadingBar');
+  if (bar) bar.style.display = 'none';
+}
+
 async function openChat(userId, name) {
   STATE.currentPeerId = userId;
   STATE.currentPeerName = name;
@@ -8,6 +43,10 @@ async function openChat(userId, name) {
   document.getElementById('chatWindow').style.display = 'flex';
   document.getElementById('chatPeerName').textContent = name;
   document.getElementById('chatPeerAvatar').textContent = name.charAt(0).toUpperCase();
+  // 3.3.13: 切联系人时先清掉上一会话。任何 await（握手状态、find-or-create）
+  // 期间都不得把上一个联系人的消息留在新联系人的面板里。
+  STATE.currentConversationId = null;
+  showChatLoading(name);
   // v5: 显示前向保密状态
   const Crypto = typeof MessageCryptoV2 !== 'undefined' ? MessageCryptoV2 : (typeof MessageCrypto !== 'undefined' ? MessageCrypto : null);
   const e2eeBar = document.getElementById('e2eeStatusBar');
@@ -62,16 +101,19 @@ async function openChat(userId, name) {
   document.querySelector(`[data-user-id="${userId}"]`)?.classList.add('active');
 
   const myPeer = userId;
-  await ensureConversation(myPeer);
+  const cid = await ensureConversation(myPeer);
   // 3.3.12: 守卫——await 期间用户可能已切到别的联系人。
   // 不校验会导致 A 的会话 ID 被拿去加载、并写进 B 的面板（串会话渲染）。
   if (STATE.currentPeerId !== myPeer) return;
-  if (STATE.currentConversationId) {
-    await loadMessages(STATE.currentConversationId);
-    // Mark conversation as read
-    if (typeof ReadReceipts !== 'undefined' && STATE.currentPeerId === myPeer) {
-      setTimeout(() => ReadReceipts.markConversationAsRead(), 800);
-    }
+  if (!cid) {
+    showChatUnavailable(name);
+    return;
+  }
+  STATE.currentConversationId = cid;
+  await loadMessages(cid);
+  // Mark conversation as read
+  if (typeof ReadReceipts !== 'undefined' && STATE.currentPeerId === myPeer) {
+    setTimeout(() => ReadReceipts.markConversationAsRead(), 800);
   }
 }
 
@@ -86,13 +128,17 @@ async function ensureConversation(userId) {
     });
     if (res.ok) {
       const data = await res.json();
-      STATE.currentConversationId = data.conversationId;
-      console.log('[Chat v3] Conversation ID:', STATE.currentConversationId);
-    } else {
-      console.error('[Chat v3] Failed to create conversation:', res.status);
+      // 3.3.13: 只有仍然停留在该联系人时才写全局 conversationId。
+      // 否则 A 的迟到 find-or-create 响应会覆盖 B 的会话 ID。
+      if (STATE.currentPeerId === userId) STATE.currentConversationId = data.conversationId;
+      console.log('[Chat v3] Conversation ID:', data.conversationId);
+      return data.conversationId;
     }
+    console.error('[Chat v3] Failed to create conversation:', res.status);
+    return null;
   } catch (err) {
     console.error('[Chat v3] Error:', err);
+    return null;
   }
 }
 
@@ -104,8 +150,12 @@ async function loadMessages(conversationId) {
   if (STATE._msgAbort) { try { STATE._msgAbort.abort(); } catch (_) {} }
   const ac = new AbortController();
   STATE._msgAbort = ac;
-  // 3.3.12: 不再先清空。旧内容置灰 + 顶部 loading 条，渲染完成后一次性替换，
-  // 消除「切走再切回 → 白屏 → 等解密跑完才长回来」的观感。
+  // 3.3.13: 只要目标会话和当前已渲染的会话不同，先清空旧会话内容。
+  // 这里不能沿用 3.3.12 的「保留旧内容置灰」：切到 B 时旧内容仍然可见，
+  // 就是跨会话串台。加载期间显示占位，不再显示 A 的消息。
+  if ((list.dataset && list.dataset.conversationId || '') !== conversationId) {
+    showChatLoading(STATE.currentPeerName || '');
+  }
   const loader = document.getElementById('msgLoadingBar');
   if (loader) loader.style.display = 'block';
   list.classList.add('is-loading');
@@ -129,7 +179,8 @@ async function loadMessages(conversationId) {
     if (STATE._msgAbort !== ac || STATE.currentConversationId !== conversationId) return;
     const msgs = data.messages || [];
     msgs.sort((a, b) => a.createdAt - b.createdAt);
-    for (const m of msgs) {      if (STATE._msgAbort !== ac || STATE.currentConversationId !== conversationId) return;
+    for (const m of msgs) {
+      if (STATE._msgAbort !== ac || STATE.currentConversationId !== conversationId) return;
       const isSent = m.senderUserId === localStorage.getItem('fk_uid');
       let text;
 
@@ -250,11 +301,15 @@ async function loadMessages(conversationId) {
     }
     // 守卫通过：一次性替换，避免逐条往可见列表里长（闪动 + 交错渲染）
     list.replaceChildren(frag);
+    if (list.dataset) list.dataset.conversationId = conversationId;
     list.scrollTop = list.scrollHeight;
     if (typeof console !== 'undefined') console.debug('[Messages v3] rendered', conversationId, (data.messages || []).length, Math.round(((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - _t0) + 'ms');
   } catch (err) {
     if (err && err.name === 'AbortError') return;   // 切会话主动取消，静默
     console.error('[Messages v3] Load failed:', err);
+    if (STATE.currentConversationId === conversationId) {
+      showChatUnavailable(STATE.currentPeerName || '');
+    }
   } finally {
     if (STATE._msgAbort === ac) {
       list.classList.remove('is-loading');
@@ -301,8 +356,15 @@ async function sendMessage() {
   if (!STATE.currentPeerId) { showToast('请先选择一个联系人', 'info'); return; }
   if (!text) return;
 
+  const peer = STATE.currentPeerId;
   if (!STATE.currentConversationId) {
-    await ensureConversation(STATE.currentPeerId);
+    const cid = await ensureConversation(peer);
+    if (STATE.currentPeerId !== peer) return;
+    if (!cid) {
+      showToast('Failed to create conversation', 'error');
+      return;
+    }
+    STATE.currentConversationId = cid;
   }
   if (!STATE.currentConversationId) {
     showToast('Failed to create conversation', 'error');

@@ -43,6 +43,9 @@ function buildSource() {
   let code = [
     extract(utilsSrc, 'escapeHtml'),
     extract(utilsSrc, 'formatTime'),
+    extract(chatSrc, 'renderChatPlaceholder'),
+    extract(chatSrc, 'showChatLoading'),
+    extract(chatSrc, 'showChatUnavailable'),
     extract(chatSrc, 'appendMessage'),
     extract(chatSrc, 'loadMessages'),
   ].join('\n\n');
