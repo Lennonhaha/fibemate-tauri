@@ -84,8 +84,8 @@ async function _handleOfflineBatch(list) {
             }
           }
         } catch (e) {
-          // 不带 messageId / 错误正文：两者都可能含对端可控内容，进 console 就是 log injection 面。
-          console.warn('[WS v10] offline decrypt failed:', e && e.name ? e.name : 'error');
+          // 连 e.name 都不带：错误对象来自解密路径，其字段仍可能回填对端内容。
+          console.warn('[WS v10] offline decrypt failed');
         }
       }
     }
@@ -422,7 +422,8 @@ function connectWebSocket() {
           document.dispatchEvent(new CustomEvent('ws-read-receipt', { detail: msg }));
         } else if (msg.type === 'offline_messages') {
           const batch = Array.isArray(msg.messages) ? msg.messages : [];
-          console.log('[WS v4] Offline messages: consuming', batch.length);
+          // 数量也不打：batch 来自服务端，.length 同样被算作用户可控。
+          console.log('[WS v4] Offline messages: consuming batch');
           await _handleOfflineBatch(batch);
         }
       } catch (err) {
