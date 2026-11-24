@@ -133,7 +133,12 @@ const sandbox = {
   decodeCiphertext: (c) => c,
   console: { debug() {}, error() {}, log() {}, warn() {} },
   MessageCrypto: undefined,
-  MessageCryptoV2: undefined,
+  // Make status lookup a throwing best-effort path: openChat must still reach
+  // ensureConversation and render B instead of hanging on the placeholder.
+  MessageCryptoV2: {
+    hasSession: async () => { throw new Error('session status unavailable'); },
+    getSecurityStatus: async () => ({})
+  },
   ReadReceipts: undefined,
   E2EEDisplay: undefined,
   escapeHtml: undefined,
