@@ -679,6 +679,25 @@ body {
    消息列表
    ================================================ */
 
+/* 3.3.12: 历史加载指示——保留旧内容并置灰 + 顶部进度条，替代「先清空 → 白屏 → 再长回来」 */
+.msg-loading-bar {
+  display: none;
+  height: 2px;
+  margin: 0 16px;
+  border-radius: 1px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: msg-load-pulse 1.1s ease-in-out infinite;
+}
+@keyframes msg-load-pulse {
+  0% { opacity: 0.3; }
+  50% { opacity: 1; }
+  100% { opacity: 0.3; }
+}
+.messages-list.is-loading {
+  opacity: 0.55;
+  transition: opacity 0.12s ease;
+}
+
 .messages-list {
   flex: 1;
   overflow-y: auto;
