@@ -61,11 +61,15 @@ async function openChat(userId, name) {
   document.querySelectorAll('.conversation-item').forEach(el => el.classList.remove('active'));
   document.querySelector(`[data-user-id="${userId}"]`)?.classList.add('active');
 
-  await ensureConversation(userId);
+  const myPeer = userId;
+  await ensureConversation(myPeer);
+  // 3.3.12: 守卫——await 期间用户可能已切到别的联系人。
+  // 不校验会导致 A 的会话 ID 被拿去加载、并写进 B 的面板（串会话渲染）。
+  if (STATE.currentPeerId !== myPeer) return;
   if (STATE.currentConversationId) {
     await loadMessages(STATE.currentConversationId);
     // Mark conversation as read
-    if (typeof ReadReceipts !== 'undefined') {
+    if (typeof ReadReceipts !== 'undefined' && STATE.currentPeerId === myPeer) {
       setTimeout(() => ReadReceipts.markConversationAsRead(), 800);
     }
   }
@@ -95,17 +99,37 @@ async function ensureConversation(userId) {
 // v3: 使用 conversationId 加载消息（v2 用的是 peerId）
 async function loadMessages(conversationId) {
   const list = document.getElementById('messagesList');
-  list.innerHTML = '<div class="date-divider"><span>Today</span></div>';
+  const _t0 = (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  // 3.3.12: 切会话时作废旧请求——abort 旧 fetch，且用 ac 身份比对丢弃迟到响应。
+  if (STATE._msgAbort) { try { STATE._msgAbort.abort(); } catch (_) {} }
+  const ac = new AbortController();
+  STATE._msgAbort = ac;
+  // 3.3.12: 不再先清空。旧内容置灰 + 顶部 loading 条，渲染完成后一次性替换，
+  // 消除「切走再切回 → 白屏 → 等解密跑完才长回来」的观感。
+  const loader = document.getElementById('msgLoadingBar');
+  if (loader) loader.style.display = 'block';
+  list.classList.add('is-loading');
+  const frag = document.createDocumentFragment();
+  const divider = document.createElement('div');
+  divider.className = 'date-divider';
+  divider.innerHTML = '<span>Today</span>';
+  frag.appendChild(divider);
+  // 3.3.13: 目标容器显式传入（frag），不再用全局可变量做渲染目标。
+  // 若用全局目标，两个并发加载会互相覆盖，导致 A 的循环往 B 的 fragment 里写（本身也是一类串会话）。
+  const _append = (sent, text, ts, enc, label, id) => appendMessage(sent, text, ts, enc, label, id, frag);
   try {
     const token = localStorage.getItem('fk_token');
     const res = await fetch(`${API_BASE}/conversations/${conversationId}/messages?limit=50`, {
-      headers: { Authorization: `Bearer ${token}` }
+      headers: { Authorization: `Bearer ${token}` },
+      signal: ac.signal
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
+    // 守卫：响应回来时已经不是这个请求 / 不是这个会话 → 整批丢弃
+    if (STATE._msgAbort !== ac || STATE.currentConversationId !== conversationId) return;
     const msgs = data.messages || [];
     msgs.sort((a, b) => a.createdAt - b.createdAt);
-    for (const m of msgs) {
+    for (const m of msgs) {      if (STATE._msgAbort !== ac || STATE.currentConversationId !== conversationId) return;
       const isSent = m.senderUserId === localStorage.getItem('fk_uid');
       let text;
 
@@ -116,7 +140,7 @@ async function loadMessages(conversationId) {
         const _hid = m.id || m._id;
         let _cached = null;
         if (_hid) { try { _cached = localStorage.getItem('fibemate_pt_' + _hid); } catch (e) {} }
-        appendMessage(false, _cached || '🔒 历史消息（旧会话，无法解密）', m.createdAt, true, '', _hid);
+        _append(false, _cached || '🔒 历史消息（旧会话，无法解密）', m.createdAt, true, '', _hid);
         continue;
       }
       
@@ -169,7 +193,7 @@ async function loadMessages(conversationId) {
                 continue;
               }
             }
-            appendMessage(isSent, text, m.createdAt, true, 'SM4');
+            _append(isSent, text, m.createdAt, true, 'SM4');
             continue;
           }
           if (isSent) {
@@ -182,7 +206,7 @@ async function loadMessages(conversationId) {
             const failedKey = 'fibemate_df_' + mid;
             if (mid && localStorage.getItem(failedKey)) {
               // 之前已解密失败：不再重试，但仍渲染失败占位（与下方 catch 分支一致）
-              appendMessage(false, '⚠️ 解密失败', m.createdAt, true);
+              _append(false, '⚠️ 解密失败', m.createdAt, true);
               continue;
             }
             text = await Crypto.decrypt(m.senderUserId, envelope);
@@ -222,16 +246,28 @@ async function loadMessages(conversationId) {
       
       // 标记加密消息（v2 envelope 或 encryptedContent）
       const isEncrypted = !!(m.envelope || m.encryptedContent);
-      appendMessage(isSent, text || '[Unable to decrypt]', m.createdAt, isEncrypted, '', m.id || m._id);
+      _append(isSent, text || '[Unable to decrypt]', m.createdAt, isEncrypted, '', m.id || m._id);
     }
+    // 守卫通过：一次性替换，避免逐条往可见列表里长（闪动 + 交错渲染）
+    list.replaceChildren(frag);
+    list.scrollTop = list.scrollHeight;
+    if (typeof console !== 'undefined') console.debug('[Messages v3] rendered', conversationId, (data.messages || []).length, Math.round(((typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now()) - _t0) + 'ms');
   } catch (err) {
+    if (err && err.name === 'AbortError') return;   // 切会话主动取消，静默
     console.error('[Messages v3] Load failed:', err);
+  } finally {
+    if (STATE._msgAbort === ac) {
+      list.classList.remove('is-loading');
+      const bar = document.getElementById('msgLoadingBar');
+      if (bar) bar.style.display = 'none';
+    }
   }
-  document.getElementById('messageInput').focus();
+  if (STATE.currentConversationId === conversationId) document.getElementById('messageInput').focus();
 }
 
-function appendMessage(sent, text, timestamp, isEncrypted = false, encryptionLabel = '', msgId = '') {
-  const list = document.getElementById('messagesList');
+function appendMessage(sent, text, timestamp, isEncrypted = false, encryptionLabel = '', msgId = '', target = null) {
+  // 3.3.13: target 由调用方显式给出；历史加载传 DocumentFragment，实时消息不传（走 #messagesList）。
+  const list = target || document.getElementById('messagesList');
   // 3.3.12: 同一条消息可能被离线批次和历史加载各渲染一次，靠 messageId 去重；
   // 顺带把 id 写进 dataset，已读回执靠它认消息（旧实现从未设置，回执永远是空数组）。
   // 用 dataset 遍历比较，不拼 CSS 选择器：messageId 由发送方给出，含引号会让 selector 抛错。
@@ -250,7 +286,8 @@ function appendMessage(sent, text, timestamp, isEncrypted = false, encryptionLab
   }
   msg.innerHTML = `<div class="msg-bubble">${escapeHtml(text)}${badges}</div><div class="msg-time">${time}</div>`;
   list.appendChild(msg);
-  list.scrollTop = list.scrollHeight;
+  // fragment 没有滚动位置，仅真实列表滚动到底
+  if (list.scrollHeight !== undefined && list.id === 'messagesList') list.scrollTop = list.scrollHeight;
 
   // Track sent messages for read receipts
   if (sent && typeof ReadReceipts !== 'undefined') {
