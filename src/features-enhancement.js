@@ -105,7 +105,11 @@ const messageRetraction = new MessageRetraction();
 
 class ThemeManager {
   constructor() {
-    this.currentTheme = localStorage.getItem('fk_theme') || 'dark';
+    // settings.js persists fk_setting_theme; the floating toggle used fk_theme.
+    // Prefer the settings value so one launch cannot override the other.
+    this.currentTheme = localStorage.getItem('fk_setting_theme')
+      || localStorage.getItem('fk_theme')
+      || 'dark';
     this.applyTheme(this.currentTheme);
   }
 
@@ -114,21 +118,34 @@ class ThemeManager {
     this.applyTheme(newTheme);
     this.currentTheme = newTheme;
     localStorage.setItem('fk_theme', newTheme);
+    localStorage.setItem('fk_setting_theme', newTheme);
   }
 
   applyTheme(theme) {
     const root = document.documentElement;
     if (theme === 'light') {
+      root.setAttribute('data-theme', 'light');
       root.style.setProperty('--bg-primary', '#f5f5f7');
+      root.style.setProperty('--bg-secondary', '#f0f0f2');
+      root.style.setProperty('--bg-tertiary', '#e8e8ec');
+      root.style.setProperty('--bg-input', '#ffffff');
       root.style.setProperty('--bg-card', '#ffffff');
       root.style.setProperty('--text-primary', '#1a1a1a');
-      root.style.setProperty('--text-secondary', '#666666');
-      root.style.setProperty('--border-color', '#e0e0e0');
+      root.style.setProperty('--text-secondary', '#55555f');
+      root.style.setProperty('--text-muted', '#777781');
+      root.style.setProperty('--border-subtle', '#d8d8de');
+      root.style.setProperty('--border-color', '#d8d8de');
     } else {
+      root.removeAttribute('data-theme');
       root.style.setProperty('--bg-primary', '#0A0A0F');
+      root.style.setProperty('--bg-secondary', '#13131A');
+      root.style.setProperty('--bg-tertiary', '#1E1E26');
+      root.style.setProperty('--bg-input', '#1E1E26');
       root.style.setProperty('--bg-card', '#13131A');
       root.style.setProperty('--text-primary', '#ffffff');
       root.style.setProperty('--text-secondary', '#a0a0b0');
+      root.style.setProperty('--text-muted', '#55555F');
+      root.style.setProperty('--border-subtle', '#2A2A32');
       root.style.setProperty('--border-color', '#2a2a3a');
     }
   }

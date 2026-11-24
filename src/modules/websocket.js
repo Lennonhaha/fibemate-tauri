@@ -49,6 +49,39 @@ function _sendReadReceipt(messageId) {
   _wsSend({ type: 'read_receipt', messageId });
 }
 
+// 3.3.14: real-time messages from a peer whose chat is not open still have to
+// advance the ratchet and leave plaintext behind. Otherwise switching back
+// hits loadMessages(), which intentionally refuses to decrypt received
+// history, and the message is shown as “旧会话，无法解密”. Decrypting only the
+// active peer also means the sender sees no progress until the user returns.
+async function _cacheInactiveRealTimeMessage(msg, Crypto) {
+  const mid = msg.messageId || msg.id;
+  if (!mid || !Crypto || !Crypto.decrypt) return;
+  if (msg.messageType === 'voice') return; // voice renderer needs the active view
+  let wire = null;
+  if (msg.envelope) {
+    try { wire = JSON.parse(msg.envelope); } catch (e) { return; }
+    // The global X3DH block above already consumed initMessage. Decrypt only
+    // the actual payload; re-running receiveSession here would double-apply it.
+    if (wire && wire.initMessage) wire = wire.message;
+  } else if (msg.encryptedContent) {
+    wire = msg.encryptedContent;
+  }
+  if (!wire || typeof wire !== 'object') return;
+  try {
+    const text = await Crypto.decrypt(msg.from, wire);
+    if (typeof text === 'string') {
+      localStorage.setItem('fibemate_pt_' + mid, text);
+      _noteLastSeen(msg.from, msg.createdAt);
+      console.log('[WS v11] cached inactive message', mid);
+    }
+  } catch (e) {
+    // Do not surface a toast while another conversation is focused; the
+    // sender can retry and the message remains available in history.
+    console.warn('[WS v11] inactive decrypt failed');
+  }
+}
+
 async function _handleOfflineBatch(list) {
   const Crypto = (typeof MessageCryptoV2 !== 'undefined') ? MessageCryptoV2 : MessageCrypto;
   const myUid = localStorage.getItem('fk_uid');
@@ -395,6 +428,14 @@ function connectWebSocket() {
 
           appendMessage(false, text || '[Unable to decrypt]', msg.createdAt || Date.now(), true, '', msg.messageId || msg.id);
         } else if (msg.type === 'new_message') {
+          // 3.3.14: keep the receive ratchet moving even when another chat is open.
+          // loadMessages() deliberately does not decrypt received history, so
+          // without this cache the message reappears as “旧会话，无法解密”.
+          try {
+            await _cacheInactiveRealTimeMessage(msg, Crypto);
+          } catch (cacheErr) {
+            console.warn('[WS v11] inactive cache failed:', cacheErr && cacheErr.message ? cacheErr.message : cacheErr);
+          }
           showToast(`New message from ${msg.from}`, 'info');
           loadConversations();
         } else if (msg.type === 'key_exchange_response') {
