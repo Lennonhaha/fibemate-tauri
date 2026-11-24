@@ -54,13 +54,22 @@ class El {
   get textContent() { return this._text; }
   set textContent(v) { this._text = String(v); }
   get scrollHeight() { return this.children.length; }
-  appendChild(n) { this.children.push(n); return n; }
+  appendChild(n) { n.parentNode = this; this.children.push(n); return n; }
+  remove() {
+    if (this.parentNode) {
+      this.parentNode.children = this.parentNode.children.filter((c) => c !== this);
+      this.parentNode = null;
+    }
+  }
   replaceChildren(n) { this.children = n && n.children ? [...n.children] : []; this._html = ''; }
   querySelectorAll(sel) {
     const cls = sel.replace(/^\./, '');
     return this.children.filter((c) => c.classList && c.classList.contains(cls));
   }
-  querySelector() { return null; }
+  querySelector(sel) {
+    const cls = String(sel).replace(/^\./, '');
+    return this.children.find((c) => c.classList && c.classList.contains(cls)) || null;
+  }
   focus() {}
 }
 
@@ -157,6 +166,7 @@ vm.runInContext(`(function(){ ${code}
   this.openChat = openChat;
   this.ensureConversation = ensureConversation;
   this.loadMessages = loadMessages;
+  this.appendMessage = appendMessage;
 })()`, sandbox);
 
 const { openChat } = sandbox;
@@ -219,6 +229,14 @@ function check(name, fn) {
     assert.ok(text().includes('无法打开会话'), text());
     assert.ok(!text().includes('PT-cid-A-OLD'), text());
     assert.equal(list.dataset.conversationId, '');
+  });
+
+  // S4: a live message arriving after the error placeholder must replace it,
+  // otherwise the UI says “无法打开会话” while rendering messages underneath.
+  sandbox.appendMessage(false, 'LIVE-AFTER-ERROR', Date.now(), false, '', 'live-1');
+  check('S4 live message removes stale unavailable placeholder', () => {
+    assert.ok(text().includes('LIVE-AFTER-ERROR'), text());
+    assert.ok(!text().includes('无法打开会话'), text());
   });
 
   for (const r of results) console.log(`${r[0]} ${r[1]}${r[2] ? ' :: ' + r[2] : ''}`);

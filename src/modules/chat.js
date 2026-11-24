@@ -328,6 +328,16 @@ async function loadMessages(conversationId) {
 function appendMessage(sent, text, timestamp, isEncrypted = false, encryptionLabel = '', msgId = '', target = null) {
   // 3.3.13: target 由调用方显式给出；历史加载传 DocumentFragment，实时消息不传（走 #messagesList）。
   const list = target || document.getElementById('messagesList');
+  // A live message may arrive while the panel is showing “正在加载/无法打开”.
+  // If we simply append, the stale placeholder stays above the message and the
+  // UI claims the conversation is unavailable while rendering its content.
+  if (list.id === 'messagesList') {
+    const placeholder = list.querySelector('.chat-placeholder');
+    if (placeholder) placeholder.remove();
+    if (list.dataset && STATE.currentConversationId) {
+      list.dataset.conversationId = STATE.currentConversationId;
+    }
+  }
   // 3.3.12: 同一条消息可能被离线批次和历史加载各渲染一次，靠 messageId 去重；
   // 顺带把 id 写进 dataset，已读回执靠它认消息（旧实现从未设置，回执永远是空数组）。
   // 用 dataset 遍历比较，不拼 CSS 选择器：messageId 由发送方给出，含引号会让 selector 抛错。
