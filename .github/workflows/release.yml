@@ -113,16 +113,9 @@ jobs:
   release-check:
     permissions:
       id-token: write   # keyless cosign sign-blob（checksums）
+    if: ${{ vars.RELEASE_TRAIN_FROZEN != 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - name: Enforce release-train freeze switch
-        env:
-          RELEASE_TRAIN_FROZEN: ${{ vars.RELEASE_TRAIN_FROZEN }}
-        run: |
-          if [ "${RELEASE_TRAIN_FROZEN}" = "true" ]; then
-            echo "::error::RELEASE_TRAIN_FROZEN=true; release blocked"
-            exit 1
-          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.target || github.sha }}
@@ -204,15 +197,6 @@ jobs:
     needs: release-check
     runs-on: windows-latest
     steps:
-      - name: Enforce release-train freeze switch
-        shell: bash
-        env:
-          RELEASE_TRAIN_FROZEN: ${{ vars.RELEASE_TRAIN_FROZEN }}
-        run: |
-          if [ "${RELEASE_TRAIN_FROZEN}" = "true" ]; then
-            echo "::error::RELEASE_TRAIN_FROZEN=true; release blocked"
-            exit 1
-          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.target || github.sha }}
@@ -257,14 +241,6 @@ jobs:
     needs: [release-check, build-windows]
     runs-on: ubuntu-latest
     steps:
-      - name: Enforce release-train freeze switch
-        env:
-          RELEASE_TRAIN_FROZEN: ${{ vars.RELEASE_TRAIN_FROZEN }}
-        run: |
-          if [ "${RELEASE_TRAIN_FROZEN}" = "true" ]; then
-            echo "::error::RELEASE_TRAIN_FROZEN=true; release blocked"
-            exit 1
-          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.target || github.sha }}
