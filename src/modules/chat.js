@@ -275,7 +275,7 @@ async function loadMessages(conversationId) {
             text = await Crypto.decrypt(m.senderUserId, envelope);
             // null = duplicate / replay → silently skip this message
             if (text === null) {
-              console.debug('[Messages v5] Skipping duplicate message:', mid);
+              console.debug('[Messages v5] Skipping duplicate message');
               continue;
             }
           }

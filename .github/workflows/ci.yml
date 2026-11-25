@@ -117,6 +117,31 @@ jobs:
         run: |
           node scripts/test-pq-availability.cjs
 
+  log-hygiene:
+    name: Log hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Install Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 18
+
+      # The full scan locks message identifiers; the diff scan is broader and
+      # only looks at lines added by the PR, so legacy logs do not have to be
+      # rewritten before the gate can catch a new regression.
+      - name: Reject user-controlled values in console calls
+        run: |
+          node scripts/check-log-injection.cjs --self-test
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            node scripts/check-log-injection.cjs --diff-base "origin/${{ github.base_ref }}"
+          else
+            node scripts/check-log-injection.cjs
+          fi
+
   bench:
     name: Perf regression gate (criterion)
     # Timing gates are only meaningful on a single consistent runner to avoid

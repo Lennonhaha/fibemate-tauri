@@ -103,7 +103,7 @@ async function storeOfflineMessage(recipientId, encryptedContent, options = {}) 
   try {
     if (typeof privacyAPI !== 'undefined') {
       const response = await privacyAPI.storeOfflineMessage(recipientId, encryptedContent, options);
-      console.log('[Offline] Message stored:', response.messageId);
+      console.log('[Offline] Message stored');
       return response;
     }
   } catch (err) {
@@ -131,7 +131,7 @@ async function retrieveOfflineMessages() {
         try {
           await privacyAPI.markOfflineMessageDelivered(msg.messageId);
         } catch (err) {
-          console.warn('[Offline] Failed to mark delivered:', msg.messageId);
+          console.warn('[Offline] Failed to mark delivered');
         }
       }
       

@@ -89,7 +89,7 @@ const routes = {
     if (message.burnAfterRead) {
       setTimeout(() => {
         storage.burnMessages.delete(messageId);
-        console.log(`[Mock] Burn message ${messageId} auto-deleted`);
+        console.log('[Mock] Burn message auto-deleted');
       }, message.burnTimeout * 1000);
     }
     
