@@ -93,6 +93,23 @@ period. Do not add a fake manifest or claim that publishing a draft is a
 percentage rollout. The only rollout-shaped guarantee here is
 **draft → manual promote → public**, plus the workflow freeze switch.
 
+## Known unverified item
+
+`release.yml`'s `workflow_call` build path has **not** been exercised end to end.
+The 2026-11-25 verification covered only the workflow syntax (actionlint), the
+`release-train.prepare` resolution with `dry_run=true`, and the freeze-guard
+negative tests. The reusable call skipped the actual build.
+
+The first real stable/nightly run after unfreeze must confirm:
+
+- `tag`, `target`, `channel`, `prerelease`, `draft`, and `skip_version_gate`
+  arrive at the reusable workflow as intended;
+- artifact upload/download names and the `publish` paths still match the
+  standalone tag-push path;
+- the created tag and release point at the intended commit.
+
+Until then, do not describe the reusable call path as verified.
+
 ## Test the switch without publishing
 
 1. Set `RELEASE_TRAIN_FROZEN=false`.
@@ -103,3 +120,7 @@ percentage rollout. The only rollout-shaped guarantee here is
 5. Leave it `true` until the freeze is explicitly lifted.
 
 No client code, version, tag, or installer is changed by this process.
+
+> 2026-11-25 note: five freeze/dry-run negative tests have already been run.
+> Do not re-run any release workflow while the freeze is active; it only adds
+> red runs and does not increase confidence.
