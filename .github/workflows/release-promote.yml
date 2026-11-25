@@ -1,7 +1,7 @@
 # Promote a draft stable release to public.
 #
 # The stable lane of release-train.yml creates a draft release. This workflow is
-# the manual promotion gate: it refuses to run while RELEASE_TRAIN_FROZEN=true,
+# the manual promotion gate: it is skipped while RELEASE_TRAIN_FROZEN=true,
 # requires a typed confirmation, and only accepts a release that is still draft.
 # It does not implement percentage rollout; see docs/RELEASE-TRAIN.md.
 
@@ -24,18 +24,10 @@ permissions:
 
 jobs:
   promote:
+    if: ${{ vars.RELEASE_TRAIN_FROZEN != 'true' }}
     runs-on: ubuntu-latest
     environment: stable-release
     steps:
-      - name: Enforce release-train freeze switch
-        env:
-          RELEASE_TRAIN_FROZEN: ${{ vars.RELEASE_TRAIN_FROZEN }}
-        run: |
-          if [ "${RELEASE_TRAIN_FROZEN}" = "true" ]; then
-            echo "::error::RELEASE_TRAIN_FROZEN=true; promotion blocked"
-            exit 1
-          fi
-
       - name: Validate promotion input
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
