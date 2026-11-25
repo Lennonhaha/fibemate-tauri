@@ -17,6 +17,9 @@ function refreshConversations() {
 async function loadConversations() {
   const list = document.getElementById('conversationList');
   const empty = document.getElementById('emptyState');
+  // Chat view has no list container. Refreshing from a WebSocket message must be a
+  // no-op there, not a console error on every arriving message.
+  if (!list) return;
   try {
     const token = localStorage.getItem('fk_token');
     const controller = new AbortController();
