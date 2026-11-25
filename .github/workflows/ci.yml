@@ -47,6 +47,12 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
+      # The v3.3.15 build shipped a 2FA setup button that threw on first click and a
+      # conversation list that never showed the unread badge. Both are static JS bugs
+      # that no Rust test can see and that a human only finds after installing a build.
+      - name: Client DOM smoke (2FA setup, conversation badge)
+        run: node scripts/test-client-dom.cjs
+
       - name: Rust format check
         working-directory: src-tauri
         run: cargo fmt --all -- --check

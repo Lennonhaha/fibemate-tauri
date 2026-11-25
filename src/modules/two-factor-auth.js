@@ -393,10 +393,15 @@ const TwoFactorAuth = (() => {
     setupPhase = true;
     const modal = _create2FAModal();
 
+    // The overlay has to be in the document BEFORE step 1 renders: step 1 looked its
+    // nodes up with document.getElementById(), and a detached subtree is invisible to
+    // that call. It threw "Cannot set properties of null (setting 'textContent')" and
+    // left setupPhase=true with no modal on screen. Unreachable while enrolment was
+    // disabled, which is why it survived unnoticed until the button came back.
+    document.body.appendChild(modal.overlay);
+
     // Step 1: 生成密钥 + QR码
     _renderSetupStep1(modal);
-
-    document.body.appendChild(modal.overlay);
   }
 
   function _renderSetupStep1(modal) {
@@ -426,13 +431,17 @@ const TwoFactorAuth = (() => {
     const newSecret = _generateBase32Secret();
     secretKey = newSecret;
 
-    document.getElementById('twofaSecretDisplay').textContent = _formatSecretKey(newSecret);
+    // Scope every lookup to this modal's own subtree. Mounting the overlay first is
+    // what makes document-wide lookups work, but scoping is what keeps two open flows
+    // from fighting over one id.
+    const secretEl = body.querySelector('#twofaSecretDisplay');
+    if (secretEl) secretEl.textContent = _formatSecretKey(newSecret);
 
     // 生成 QR 码（使用简单的 SVG 方式，避免外部依赖）
-    _generateQRCode(newSecret, username);
+    _generateQRCode(newSecret, username, body);
 
-    document.getElementById('btn2FACancel')?.addEventListener('click', () => _closeModal(modal));
-    document.getElementById('btn2FANext')?.addEventListener('click', () => _renderSetupStep2(modal));
+    body.querySelector('#btn2FACancel')?.addEventListener('click', () => _closeModal(modal));
+    body.querySelector('#btn2FANext')?.addEventListener('click', () => _renderSetupStep2(modal));
   }
 
   function _renderSetupStep2(modal) {
@@ -801,8 +810,8 @@ const TwoFactorAuth = (() => {
   }
 
   // ── QR 码生成（纯JS，无外部依赖） ──
-  function _generateQRCode(secret, username) {
-    const canvas = document.getElementById('twofaQRCanvas');
+  function _generateQRCode(secret, username, scope) {
+    const canvas = (scope || document).querySelector('#twofaQRCanvas');
     if (!canvas) return;
 
     const otpauth = `otpauth://totp/FIBEMATE:${username}?secret=${secret}&issuer=FIBEMATE&algorithm=SHA1&digits=6&period=30`;

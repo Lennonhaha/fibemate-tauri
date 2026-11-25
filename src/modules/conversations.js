@@ -1,9 +1,24 @@
 // ================================================
 // Conversations  — v3 适配后端格式 { conversations: [{ id, otherUser, ... }] }
 // ================================================
+// One guarded door for "the list is stale, refetch it". Callers are event handlers
+// (websocket messages, send paths) where a throw would be swallowed by the enclosing
+// try/catch and the badge would just never move; a missing element must not be able
+// to stop the rest of the handler either.
+async function refreshConversations() {
+  try {
+    await loadConversations();
+  } catch (e) {
+    console.warn('[Conversations] refresh failed; keeping the previous list');
+  }
+}
+
 async function loadConversations() {
   const list = document.getElementById('conversationList');
   const empty = document.getElementById('emptyState');
+  // Chat view has no list container. Refreshing from a WebSocket message must be a
+  // no-op there, not a console error on every arriving message.
+  if (!list) return;
   try {
     const token = localStorage.getItem('fk_token');
     const controller = new AbortController();
