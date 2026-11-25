@@ -32,7 +32,7 @@ const TwoFactorAuth = (() => {
   // flips. The server refuses /api/auth/2fa/enable with 403 for the same
   // reason; this flag keeps the button from inviting users into that refusal.
   // Turning 2FA off stays available for anyone already in that state.
-  const ENROLMENT_AVAILABLE = false;
+  const ENROLMENT_AVAILABLE = true;
   const ENROLMENT_UNAVAILABLE_HINT = 'Temporarily unavailable: device identity binding is not complete.';
 
   let is2FAEnabled = false;
