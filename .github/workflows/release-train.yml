@@ -1,0 +1,162 @@
+# FIBEMATE (tauri) release train — nightly + biweekly stable.
+#
+# What this workflow does:
+#   - nightly: one prerelease per day from main, tag nightly-YYYYMMDD-<sha>;
+#   - stable: one draft release per even ISO week, tag v<package.version>;
+#   - both lanes call release.yml, so the installers, checksums, signatures and
+#     provenance are produced by the same path as a tag push;
+#   - a repository variable RELEASE_TRAIN_FROZEN=true blocks every release job.
+#
+# What this workflow deliberately does not do:
+#   - no percentage rollout (5% / 50% / 100%) — that needs an updater,
+#     telemetry and a server-side rollout config in the client;
+#   - no remote client kill switch — the freeze switch stops publishing, it
+#     does not reach installed clients.
+#   See docs/RELEASE-TRAIN.md for the boundary.
+
+name: Release train
+
+on:
+  schedule:
+    # Nightly lane (03:00 UTC).
+    - cron: '0 3 * * *'
+    # Stable candidate lane (04:00 UTC on Mondays); the prepare job only
+    # proceeds on even ISO weeks, which makes this biweekly.
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'Release channel'
+        required: true
+        default: nightly
+        type: choice
+        options:
+          - nightly
+          - stable
+      confirm:
+        description: 'Stable only: type RELEASE'
+        required: false
+        type: string
+      dry_run:
+        description: 'Resolve only; do not invoke the Release workflow'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-train-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.resolve.outputs.skip }}
+      channel: ${{ steps.resolve.outputs.channel }}
+      tag: ${{ steps.resolve.outputs.tag }}
+      sha: ${{ steps.resolve.outputs.sha }}
+      prerelease: ${{ steps.resolve.outputs.prerelease }}
+      draft: ${{ steps.resolve.outputs.draft }}
+      skip_version_gate: ${{ steps.resolve.outputs.skip_version_gate }}
+    steps:
+      - name: Enforce release-train freeze switch
+        env:
+          RELEASE_TRAIN_FROZEN: ${{ vars.RELEASE_TRAIN_FROZEN }}
+        run: |
+          if [ "${RELEASE_TRAIN_FROZEN}" = "true" ]; then
+            echo "::error::RELEASE_TRAIN_FROZEN=true; release blocked"
+            exit 1
+          fi
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve channel, tag, and target
+        id: resolve
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
+          INPUT_CHANNEL: ${{ inputs.channel }}
+          INPUT_CONFIRM: ${{ inputs.confirm }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            CHANNEL="$INPUT_CHANNEL"
+          elif [ "$SCHEDULE" = "0 3 * * *" ]; then
+            CHANNEL="nightly"
+          else
+            CHANNEL="stable"
+          fi
+
+          # Stable is manual only, or the even-week scheduled lane.
+          if [ "$CHANNEL" = "stable" ]; then
+            if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ "$INPUT_CONFIRM" != "RELEASE" ]; then
+              echo "::error::stable dispatch requires confirm=RELEASE"
+              exit 1
+            fi
+            if [ "$EVENT_NAME" = "schedule" ]; then
+              WEEK=$(date -u +%V)
+              if [ $((10#$WEEK % 2)) -ne 0 ]; then
+                echo "skip=true" >> "$GITHUB_OUTPUT"
+                echo "ISO week $WEEK is odd; skipping the biweekly stable lane"
+                exit 0
+              fi
+            fi
+          fi
+
+          SHA=$(git rev-parse HEAD)
+          if [ "$CHANNEL" = "nightly" ]; then
+            TAG="nightly-$(date -u +%Y%m%d)-${SHA::7}"
+            PRERELEASE=true
+            DRAFT=false
+            SKIP_VERSION_GATE=true
+          else
+            VERSION=$(node -e "process.stdout.write(require('./package.json').version)")
+            TAG="v${VERSION}"
+            PRERELEASE=false
+            DRAFT=true
+            SKIP_VERSION_GATE=false
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "channel=$CHANNEL" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$PRERELEASE" >> "$GITHUB_OUTPUT"
+          echo "draft=$DRAFT" >> "$GITHUB_OUTPUT"
+          echo "skip_version_gate=$SKIP_VERSION_GATE" >> "$GITHUB_OUTPUT"
+          echo "resolved channel=$CHANNEL tag=$TAG sha=$SHA"
+
+          if [ "$INPUT_DRY_RUN" = "true" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "dry run: not invoking the Release workflow"
+            exit 0
+          fi
+
+          if gh release view "$TAG" >/dev/null 2>&1 || git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "tag or release $TAG already exists; skipping (bump the version for a new stable)"
+          fi
+
+  release:
+    needs: prepare
+    if: ${{ needs.prepare.outputs.skip != 'true' }}
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
+      target: ${{ needs.prepare.outputs.sha }}
+      channel: ${{ needs.prepare.outputs.channel }}
+      prerelease: ${{ needs.prepare.outputs.prerelease == 'true' }}
+      draft: ${{ needs.prepare.outputs.draft == 'true' }}
+      skip_version_gate: ${{ needs.prepare.outputs.skip_version_gate == 'true' }}
+    secrets: inherit

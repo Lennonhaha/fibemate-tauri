@@ -15,7 +15,8 @@
 #   [G] 修 Export provenance：gh attestation download 无 -D/--output-dir → 去掉 `-D att`，
 #       bundle 落在 CWD（sha256-<digest>.jsonl），用 `ls -t sha256*.jsonl | head -1` 取新产出。
 #   [F] `workflow_dispatch` 手动触发时 GITHUB_REF_NAME 是分支名而非 tag → 版本门禁会误 FAIL。
-#       可选修法：给该 step 加 `if: github.ref_type == 'tag'`，或 dispatch 时走单独校验分支。
+#       已修：dispatch/release-train 传入 tag/target；nightly 用 skip_version_gate=true。
+#       tag push 路径保持 --verify-tag 不变。
 #
 # 背景（2026-10-10 实测）：原 release.yml 在 v3.3.3 / v3.3.4 / v3.3.5 / v3.3.6
 # 四个 tag 上 4/4 全部失败 —— 根因 "Generate SHA256 manifest" exit 123：
@@ -36,12 +37,75 @@ permissions:
 
 on:
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag/name (required for dispatch)'
+        required: false
+        type: string
+      target:
+        description: 'Commit SHA to build; defaults to the dispatch ref'
+        required: false
+        type: string
+      channel:
+        description: 'Release channel'
+        required: false
+        default: stable
+        type: choice
+        options: [stable, nightly]
+      prerelease:
+        description: 'Mark the GitHub Release as a prerelease'
+        required: false
+        default: false
+        type: boolean
+      draft:
+        description: 'Create the GitHub Release as a draft'
+        required: false
+        default: false
+        type: boolean
+      skip_version_gate:
+        description: 'Skip package/tag equality (nightly only)'
+        required: false
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Release tag/name'
+        required: true
+        type: string
+      target:
+        description: 'Commit SHA to build'
+        required: true
+        type: string
+      channel:
+        description: 'Release channel'
+        required: false
+        default: stable
+        type: string
+      prerelease:
+        description: 'Mark the GitHub Release as a prerelease'
+        required: false
+        default: false
+        type: boolean
+      draft:
+        description: 'Create the GitHub Release as a draft'
+        required: false
+        default: false
+        type: boolean
+      skip_version_gate:
+        description: 'Skip package/tag equality (nightly only)'
+        required: false
+        default: false
+        type: boolean
   push:
     tags:
       - 'v*'
 
 env:
   CARGO_TERM_COLOR: always
+  RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+  RELEASE_TARGET: ${{ inputs.target || github.sha }}
+  RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
 
 jobs:
 
@@ -51,7 +115,17 @@ jobs:
       id-token: write   # keyless cosign sign-blob（checksums）
     runs-on: ubuntu-latest
     steps:
+      - name: Enforce release-train freeze switch
+        env:
+          RELEASE_TRAIN_FROZEN: ${{ vars.RELEASE_TRAIN_FROZEN }}
+        run: |
+          if [ "${RELEASE_TRAIN_FROZEN}" = "true" ]; then
+            echo "::error::RELEASE_TRAIN_FROZEN=true; release blocked"
+            exit 1
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.target || github.sha }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
@@ -71,8 +145,9 @@ jobs:
 
       # [C] tag / 版本号一致性门禁（5 文件 6 处）
       - name: Verify version fields match the tag
+        if: ${{ inputs.skip_version_gate != true }}
         run: |
-          TAG="${GITHUB_REF_NAME#v}"
+          TAG="${RELEASE_TAG#v}"
           PKG=$(node -e "process.stdout.write(require('./package.json').version)")
           CONF=$(node -e "process.stdout.write(require('./src-tauri/tauri.conf.json').version)")
           CARGO=$(grep -m1 '^version' src-tauri/Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
@@ -129,7 +204,18 @@ jobs:
     needs: release-check
     runs-on: windows-latest
     steps:
+      - name: Enforce release-train freeze switch
+        shell: bash
+        env:
+          RELEASE_TRAIN_FROZEN: ${{ vars.RELEASE_TRAIN_FROZEN }}
+        run: |
+          if [ "${RELEASE_TRAIN_FROZEN}" = "true" ]; then
+            echo "::error::RELEASE_TRAIN_FROZEN=true; release blocked"
+            exit 1
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.target || github.sha }}
 
       - name: Setup Node
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -171,7 +257,17 @@ jobs:
     needs: [release-check, build-windows]
     runs-on: ubuntu-latest
     steps:
+      - name: Enforce release-train freeze switch
+        env:
+          RELEASE_TRAIN_FROZEN: ${{ vars.RELEASE_TRAIN_FROZEN }}
+        run: |
+          if [ "${RELEASE_TRAIN_FROZEN}" = "true" ]; then
+            echo "::error::RELEASE_TRAIN_FROZEN=true; release blocked"
+            exit 1
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ inputs.target || github.sha }}
 
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
@@ -225,7 +321,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "$GITHUB_REF_NAME" rel/* \
-            --title "FIBEMATE $GITHUB_REF_NAME" \
-            --generate-notes \
-            --verify-tag
+          set -euo pipefail
+          args=("$RELEASE_TAG" rel/* --title "FIBEMATE $RELEASE_TAG" --generate-notes)
+          if [ "${{ inputs.prerelease }}" = "true" ]; then
+            args+=(--prerelease)
+          fi
+          if [ "${{ inputs.draft }}" = "true" ]; then
+            args+=(--draft)
+          fi
+          if [ "${{ github.event_name }}" = "push" ]; then
+            args+=(--verify-tag)
+          else
+            args+=(--target "$RELEASE_TARGET")
+          fi
+          gh release create "${args[@]}"
