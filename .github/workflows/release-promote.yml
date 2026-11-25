@@ -1,0 +1,59 @@
+# Promote a draft stable release to public.
+#
+# The stable lane of release-train.yml creates a draft release. This workflow is
+# the manual promotion gate: it refuses to run while RELEASE_TRAIN_FROZEN=true,
+# requires a typed confirmation, and only accepts a release that is still draft.
+# It does not implement percentage rollout; see docs/RELEASE-TRAIN.md.
+
+name: Promote release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Draft release tag to publish (for example v3.3.14)'
+        required: true
+        type: string
+      confirm:
+        description: 'Type PROMOTE to publish the draft'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    environment: stable-release
+    steps:
+      - name: Enforce release-train freeze switch
+        env:
+          RELEASE_TRAIN_FROZEN: ${{ vars.RELEASE_TRAIN_FROZEN }}
+        run: |
+          if [ "${RELEASE_TRAIN_FROZEN}" = "true" ]; then
+            echo "::error::RELEASE_TRAIN_FROZEN=true; promotion blocked"
+            exit 1
+          fi
+
+      - name: Validate promotion input
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: |
+          set -euo pipefail
+          [ -n "$TAG" ] || { echo "::error::tag is required"; exit 1; }
+          [ "$CONFIRM" = "PROMOTE" ] || { echo "::error::confirm must be PROMOTE"; exit 1; }
+          IS_DRAFT=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
+          [ "$IS_DRAFT" = "true" ] || { echo "::error::$TAG is not a draft release"; exit 1; }
+          echo "promoting draft release $TAG"
+
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,isPrerelease,url --jq '{isDraft,isPrerelease,url}'
