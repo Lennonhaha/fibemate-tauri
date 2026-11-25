@@ -69,6 +69,16 @@ We welcome contributions in these areas (see Roadmap in README):
 - No minification in source
 - JSDoc comments for public functions
 
+### Logging
+
+Never put values from `msg.*`, `e.*`, `err.*`, `error.*`, or `data.*` into a
+console call. Log injection is a CodeQL finding, and sanitising an ID still
+leaves the log entry dependent on a user-controlled value.
+
+Allowed in log calls: literal strings, numeric counters, and local loop
+indexes. Run `node scripts/check-log-injection.cjs` before pushing; the CI
+`log-hygiene` job runs the same check on added lines.
+
 ## Architecture Notes
 
 - **JS frontend** never touches plaintext private keys — only opaque `keyId` strings

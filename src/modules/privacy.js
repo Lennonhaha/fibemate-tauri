@@ -155,7 +155,7 @@ async function sendBurnMessage(text, timeout = 30) {
     
     // Show in UI
     appendBurnMessage(true, text, Date.now(), timeout, burnData.messageId);
-    console.log('[Burn] Message sent:', response?.messageId || burnData.messageId);
+    console.log('[Burn] Message sent');
   } catch (err) {
     showToast('Failed: ' + err.message, 'error');
     console.error('[Burn] Send failed:', err);
@@ -221,7 +221,7 @@ async function burnMessage(messageId, msgElement) {
   try {
     if (typeof privacyAPI !== 'undefined') {
       await privacyAPI.markBurnMessageRead(messageId);
-      console.log('[Burn] Backend notified:', messageId);
+      console.log('[Burn] Backend notified');
     }
   } catch (err) {
     console.warn('[Burn] Backend notification failed:', err);
