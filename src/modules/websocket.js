@@ -346,6 +346,7 @@ function connectWebSocket() {
                 }
                 console.log('[WS v2.4] GM SM2+SM4+SM3 message decrypted');
                 appendMessage(false, text, msg.createdAt || Date.now(), true, 'SM4');
+                if (typeof refreshConversations === 'function') refreshConversations();
                 return;
               }
               
@@ -427,6 +428,9 @@ function connectWebSocket() {
           }
 
           appendMessage(false, text || '[Unable to decrypt]', msg.createdAt || Date.now(), true, '', msg.messageId || msg.id);
+          // The open chat used to skip the list refresh entirely: the bubble appeared
+          // but the row kept its old preview and badge until the next navigation.
+          if (typeof refreshConversations === 'function') refreshConversations();
         } else if (msg.type === 'new_message') {
           // 3.3.14: keep the receive ratchet moving even when another chat is open.
           // loadMessages() deliberately does not decrypt received history, so
@@ -436,8 +440,15 @@ function connectWebSocket() {
           } catch (_) {
             console.warn('[WS v11] inactive cache failed');
           }
-          showToast(`New message from ${msg.from}`, 'info');
-          loadConversations();
+          // A toast is decoration; the list is the message. Keep the toast, but never let
+          // it stand between an arriving message and the row that shows it.
+          try {
+            showToast(`New message from ${msg.from}`, 'info');
+          } catch (_) {
+            console.warn('[WS] toast failed; refreshing the list anyway');
+          }
+          if (typeof refreshConversations === 'function') refreshConversations();
+          else loadConversations();
         } else if (msg.type === 'key_exchange_response') {
           // Alice 收到 Bob 的 x3dh_accept_rust → receiveSession (sets peer DR key)
           const Crypto = typeof MessageCryptoV2 !== 'undefined' ? MessageCryptoV2 : MessageCrypto;

@@ -13,6 +13,17 @@ All notable changes to this project are documented here.
 ### Changed
 - `release.yml` 写权限下沉到需要的 job（keyless 签名所需 `id-token: write` 保留在 `release-check`）（#29）
 
+## [3.3.16] - 2026-11-26
+
+### Fixed
+
+- 设置页点 `Enable 2FA` 直接抛 `Cannot set properties of null (setting 'textContent')`：安装向导在浮层挂载到文档之前就去查 `#twofaSecretDisplay`，取到 null 后赋值中断，弹窗不出现、`setupPhase` 永久停在 true。现改为先挂载再渲染，并把查询收窄到弹窗自身子树。3.3.15 才把这个路径放出来，所以缺陷一直藏着。
+- 会话列表不刷新：收发消息后不再只有气泡更新，列表行的预览、时间与未读角标会同步重取。此前"正在聊天"的接收分支与发送分支都不触发列表刷新。
+
+### Added
+
+- `scripts/test-client-dom.cjs`：用最小 DOM 桩把真实模块跑起来，点击 2FA 入口、断言安装向导渲染出密钥，并断言未读角标出现在会话行上；已在 CI 每个平台腿里执行。
+
 ## [3.3.15] - 2026-11-26
 
 ### Fixed

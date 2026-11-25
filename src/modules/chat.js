@@ -554,6 +554,7 @@ async function sendMessage() {
         ...payload
       });
       console.log('[Send v4] Message sent via WebSocket');
+      if (typeof refreshConversations === 'function') refreshConversations();
       return;
     }
 
@@ -564,6 +565,7 @@ async function sendMessage() {
     });
     if (!msgRes.ok) throw new Error(`HTTP ${msgRes.status}`);
     console.log('[Send v4] Message sent via REST API');
+    if (typeof refreshConversations === 'function') refreshConversations();
   } catch (err) {
     showToast('Failed to send: ' + err.message, 'error');
     console.error('[Send v4] Error:', err);

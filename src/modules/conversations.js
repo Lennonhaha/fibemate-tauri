@@ -1,6 +1,19 @@
 // ================================================
 // Conversations  — v3 适配后端格式 { conversations: [{ id, otherUser, ... }] }
 // ================================================
+// One guarded door for "the list is stale, refetch it". Callers are event handlers
+// (websocket messages, send paths) where a throw would be swallowed by the enclosing
+// try/catch and the badge would just never move; a missing element must not be able
+// to stop the rest of the handler either.
+function refreshConversations() {
+  try {
+    const p = loadConversations();
+    if (p && typeof p.catch === 'function') p.catch(() => {});
+  } catch (e) {
+    console.warn('[Conversations] refresh failed; keeping the previous list');
+  }
+}
+
 async function loadConversations() {
   const list = document.getElementById('conversationList');
   const empty = document.getElementById('emptyState');

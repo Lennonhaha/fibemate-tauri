@@ -1,6 +1,6 @@
 {
   "name": "fibemate-tauri",
-  "version": "3.3.15",
+  "version": "3.3.16",
   "description": "FIBEMATE - Post-Quantum Secure Messaging Desktop App (Tauri)",
   "private": true,
   "license": "GPL-3.0-only",
@@ -9,7 +9,8 @@
     "dev": "tauri dev",
     "build": "tauri build",
     "e2e": "node scripts/e2e/run-tests.js",
-    "test:pq-availability": "node scripts/test-pq-availability.cjs"
+    "test:pq-availability": "node scripts/test-pq-availability.cjs",
+    "test:client": "node scripts/test-client-dom.cjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"
