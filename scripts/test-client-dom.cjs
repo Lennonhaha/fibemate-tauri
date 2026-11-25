@@ -97,13 +97,18 @@ class El {
 }
 
 function parseInto(root, html) {
-  const tagRe = /<(\/?)([a-zA-Z][\w-]*)((?:\s+[^\s/>=]+(?:\s*=\s*"[^"]*"|\s*=\s*'[^']*'|\s*=\s*[^\s>]+)?)*)\s*(\/?)>/g;
+  // Linear tag scan. The previous "attribute soup" regex nested a repetition
+  // inside another repetition, which is exponential on crafted input; CodeQL
+  // was right to flag it even though this file only parses our own markup.
+  const tagRe = /<(\/?)([a-zA-Z][\w-]*)([^>]*)>/g;
   const stack = [root];
   const voidTags = new Set(['input', 'img', 'br', 'hr', 'meta', 'link', 'source', 'path', 'circle', 'line', 'rect', 'polyline', 'polygon', 'use', 'stop']);
   let m;
   while ((m = tagRe.exec(html))) {
-    const [, closing, tag, attrText, selfClose] = m;
+    const [, closing, tag, rawAttrText] = m;
     if (closing) { if (stack.length > 1) stack.pop(); continue; }
+    const selfClose = rawAttrText.trimEnd().endsWith('/');
+    const attrText = selfClose ? rawAttrText.trimEnd().slice(0, -1) : rawAttrText;
     const el = new El(tag);
     const attrRe = /([^\s=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
     let a;

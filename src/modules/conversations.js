@@ -5,10 +5,9 @@
 // (websocket messages, send paths) where a throw would be swallowed by the enclosing
 // try/catch and the badge would just never move; a missing element must not be able
 // to stop the rest of the handler either.
-function refreshConversations() {
+async function refreshConversations() {
   try {
-    const p = loadConversations();
-    if (p && typeof p.catch === 'function') p.catch(() => {});
+    await loadConversations();
   } catch (e) {
     console.warn('[Conversations] refresh failed; keeping the previous list');
   }
