@@ -485,16 +485,12 @@ async function sendMessage() {
     
     // v5: 前向保密加密 — 优先使用 MessageCryptoV2（完整X3DH + Double Ratchet）
     let payload;
-    let isEncrypted = false;
-    let encLabel = '';
     
     // Phase 2.4: GM 国密加密路径
     const mode = window.CURRENT_ENCRYPTION_MODE || localStorage.getItem('fk_encryption_mode') || 'aes-gcm';
     if (mode === 'sm2-sm4-sm3' && window.encryptWithGM) {
       try {
         const gmEnvelope = await window.encryptWithGM.encrypt(STATE.currentPeerId, text);
-        isEncrypted = true;
-        encLabel = 'SM4';
         payload = {
           conversationId: conversationId,
           envelope: JSON.stringify(gmEnvelope),
@@ -522,8 +518,6 @@ async function sendMessage() {
       if (typeof Crypto !== 'undefined') {
         try {
           const envelope = await Crypto.encrypt(peer, text);
-          isEncrypted = true;
-          encLabel = 'AES';
           // 若有 pending initialMessage（首次 X3DH），附加到 envelope，让 Bob 能 establish 会话
           const wireEnvelope = STATE.pendingInitMessage
             ? { initMessage: STATE.pendingInitMessage, message: envelope }
