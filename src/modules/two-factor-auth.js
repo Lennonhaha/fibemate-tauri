@@ -26,6 +26,15 @@ const TwoFactorAuth = (() => {
   };
 
   // ── 状态 ──
+  // Enrolment is closed until the login flow can carry device identity.
+  // /api/auth/2fa/verify-login returns tokens with deviceId:'', so an account
+  // that enables 2FA stops acking messages: readBy stays empty and isRead never
+  // flips. The server refuses /api/auth/2fa/enable with 403 for the same
+  // reason; this flag keeps the button from inviting users into that refusal.
+  // Turning 2FA off stays available for anyone already in that state.
+  const ENROLMENT_AVAILABLE = false;
+  const ENROLMENT_UNAVAILABLE_HINT = 'Temporarily unavailable: device identity binding is not complete.';
+
   let is2FAEnabled = false;
   let secretKey = null;
   let setupPhase = false; // 设置阶段（验证中）
@@ -323,11 +332,13 @@ const TwoFactorAuth = (() => {
           <div class="twofa-card-desc">
             ${is2FAEnabled
               ? 'Your account is protected with two-factor authentication. You\'ll need your authenticator app when logging in.'
-              : 'Add an extra layer of security to your account. When enabled, you\'ll need both your password and an authenticator code to log in.'}
+              : (ENROLMENT_AVAILABLE
+                ? 'Add an extra layer of security to your account. When enabled, you\'ll need both your password and an authenticator code to log in.'
+                : ENROLMENT_UNAVAILABLE_HINT)}
           </div>
           <div class="twofa-actions" style="margin-top:12px">
-            <button class="${is2FAEnabled ? 'twofa-btn-disable' : 'twofa-btn-enable'}" id="btnToggle2FA">
-              ${is2FAEnabled ? 'Disable 2FA' : 'Enable 2FA'}
+            <button class="${is2FAEnabled ? 'twofa-btn-disable' : 'twofa-btn-enable'}" id="btnToggle2FA"${(!is2FAEnabled && !ENROLMENT_AVAILABLE) ? ' disabled title="' + ENROLMENT_UNAVAILABLE_HINT + '"' : ''}>
+              ${is2FAEnabled ? 'Disable 2FA' : (ENROLMENT_AVAILABLE ? 'Enable 2FA' : 'Enable 2FA (coming soon)')}
             </button>
           </div>
         </div>
@@ -338,7 +349,7 @@ const TwoFactorAuth = (() => {
       document.getElementById('btnToggle2FA')?.addEventListener('click', () => {
         if (is2FAEnabled) {
           _showDisableFlow();
-        } else {
+        } else if (ENROLMENT_AVAILABLE) {
           _showSetupFlow();
         }
       });
@@ -358,13 +369,22 @@ const TwoFactorAuth = (() => {
 
     if (btn) {
       btn.className = is2FAEnabled ? 'twofa-btn-disable' : 'twofa-btn-enable';
-      btn.textContent = is2FAEnabled ? 'Disable 2FA' : 'Enable 2FA';
+      btn.textContent = is2FAEnabled ? 'Disable 2FA' : (ENROLMENT_AVAILABLE ? 'Enable 2FA' : 'Enable 2FA (coming soon)');
+      if (!is2FAEnabled && !ENROLMENT_AVAILABLE) {
+        btn.disabled = true;
+        btn.title = ENROLMENT_UNAVAILABLE_HINT;
+      } else {
+        btn.disabled = false;
+        btn.removeAttribute('title');
+      }
     }
 
     if (card) {
       card.textContent = is2FAEnabled
         ? 'Your account is protected with two-factor authentication. You\'ll need your authenticator app when logging in.'
-        : 'Add an extra layer of security to your account. When enabled, you\'ll need both your password and an authenticator code to log in.';
+        : (ENROLMENT_AVAILABLE
+          ? 'Add an extra layer of security to your account. When enabled, you\'ll need both your password and an authenticator code to log in.'
+          : ENROLMENT_UNAVAILABLE_HINT);
     }
   }
 
