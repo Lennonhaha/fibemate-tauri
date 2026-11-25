@@ -13,6 +13,13 @@ All notable changes to this project are documented here.
 ### Changed
 - `release.yml` 写权限下沉到需要的 job（keyless 签名所需 `id-token: write` 保留在 `release-check`）（#29）
 
+## [3.3.15] - 2026-11-26
+
+### Fixed
+
+- 开启 2FA 的账号登录后不再丢失设备标识：服务端 `verify-login` 沿用密码步校验过的 `deviceId`，写入 JWT 与刷新令牌，已读回执与未读状态恢复正常（fibemate#707）。
+- 恢复设置页的 2FA 启用入口；已启用 2FA 的账号仍可正常关闭。
+
 ## [3.3.14] - 2026-11-24
 
 ### Fixed
