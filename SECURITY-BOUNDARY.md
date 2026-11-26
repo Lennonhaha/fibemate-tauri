@@ -191,83 +191,73 @@ grep -n "fs:allow-read\|clipboard-manager:allow-read-text" src-tauri/capabilitie
 If any of those numbers change, this document is stale — update it in the same PR that changes the
 boundary, rather than afterwards.
 
-## 9. Protocol version pinning and downgrade boundary (2026-11-25)
+## 9. Protocol version pinning and downgrade boundary (2026-11-25; invariants implemented 2026-11-26)
 
-This section separates what the shipped client **does today** from the invariant it
-should enforce. The target invariants are not implemented yet; the current facts
-remain the security boundary until a code change lands with tests.
+This section separates what the shipped client enforces from what it cannot
+control: a peer running an older build.
 
-### 9.1 Current facts (verifiable)
+### 9.1 Enforced facts (verifiable)
 
-- The message envelope is v3 only. `DR_VERSION = 3` and
-  `DR_PROTOCOL = 'double-ratchet-x25519'` are defined in
-  `src/tauri-message-crypto-adapter.js:34-35`. `decrypt()` rejects v1/v2 with
-  `Unsupported protocol version` (`:597-606`), and `receiveInit()` rejects a
-  legacy init and asks the peer to upgrade (`:372-377`).
-- Version detection checks only `version === 3 && messageJson`
-  (`src/tauri-message-crypto-adapter.js:81-86`). It does **not** require
-  `protocol === 'double-ratchet-x25519'`; a v3-shaped object with a different
-  protocol string is accepted by the detector.
-- The Rust session file has its own version, `SESSION_FILE_VERSION = "2"`
-  (`src-tauri/src/double_ratchet.rs:690`). A file with a different version is
-  discarded and a re-handshake is required (`:727-733`). This is a storage
-  version, not the wire protocol version.
-- Hybrid pre-key bundles carry a first-byte version: `0x01` classical X25519,
-  `0x02` X25519 + ML-KEM-768; any other byte is rejected
-  (`src-tauri/src/pq/hybrid.rs:191-213`).
-- Hybrid is advertised inside the pre-key bundle as `_hybridBundleHex` /
-  `hybridBundleHex`. If the peer bundle has no hybrid field,
-  `initiateHybridSession()` logs "falling back to classical X3DH" and calls the
-  classical path (`src/tauri-message-crypto-adapter.js:879-882`). This is a real
-  downgrade path.
-- Protocol switching is also explicit in the session handler: a stored hybrid
-  session that receives a classical init is rebuilt as classical ("adopt peer
-  protocol", `:443-445,483-485`), and a stored classical session that receives a
-  hybrid init is rebuilt as hybrid (`:989-1032`). The code currently favours
-  interoperability over refusing a downgrade.
-- `src/p2p-core.js:9` has its own `PROTOCOL_VERSION = 2` for the P2P/GM layer.
-  That is a different layer from the X25519 Double Ratchet envelope and must not
-  be used as evidence about the envelope version.
+- The message envelope is v3 only. `_detectVersion()` requires **both**
+  `version === 3` and `protocol === 'double-ratchet-x25519'`; a v3-shaped object
+  with a missing or different protocol string returns `-3` and `decrypt()`
+  throws `Protocol mismatch`.
+- Handshake messages are pinned the same way: `receiveSession()` checks
+  `version`/`protocol` for `x3dh_init_rust`, `hybrid_init_rust` and both accept
+  types before any key material is used.
+- Hybrid capability is sticky per peer. The adapter persists
+  `fibemate_hybrid_seen_<uid>` and also treats a stored session with
+  `hybrid: true` as a marker. Once set:
+  - `initiateSession()` refuses to start a classical handshake;
+  - `initiateHybridSession()` refuses a bundle that omits the hybrid field;
+  - `receiveSession()` refuses a classical init instead of rebuilding the stored
+    hybrid session as classical.
+- The hybrid bundle version byte must be `0x01` (classical X25519) or `0x02`
+  (X25519 + ML-KEM-768). The adapter rejects any other byte before calling Rust,
+  and `src-tauri/src/pq/hybrid.rs` rejects it again.
+- `SESSION_FILE_VERSION = "2"` remains a storage version. A mismatch discards the
+  session and forces a re-handshake; it is not treated as wire compatibility.
+- v1/v2 envelopes and init messages remain rejected; no JS P-256 fallback is
+  loaded.
 
-### 9.2 Target invariants (not implemented)
+Not covered by the pin: a peer that has never advertised hybrid is treated as
+classical-only (capability absence, not a downgrade), and a peer running an older
+build can still fall back on its own side. The client cannot force a remote
+implementation to refuse a downgrade.
 
-These are the properties to implement after the client freeze is lifted, with
-negative tests that must fail before the fix and pass after it:
+### 9.2 Invariants and their negative tests
 
-1. **Exact envelope pin.** Accept only `version === 3` **and**
-   `protocol === 'double-ratchet-x25519'`; reject a mismatch, including a v3
-   object with an unknown protocol string.
-2. **Sticky hybrid capability.** Once a peer has advertised hybrid, a later
-   bundle or init that omits hybrid must be rejected as a downgrade. Do not fall
-   back to classical X3DH and do not rebuild a stored hybrid session as
-   classical.
-3. **No silent negotiation.** An unsupported version or an unknown bundle
-   version byte must fail closed. Compatibility code may migrate stored data,
-   but must not downgrade a live handshake.
-4. **Storage version is not wire version.** `SESSION_FILE_VERSION` mismatch must
-   continue to discard stale sessions and force a re-handshake; a storage
-   migration must never be presented as protocol compatibility.
-5. **Legacy rejection remains.** v1/v2 init and envelopes stay rejected; no JS
-   P-256 fallback is loaded.
+`scripts/test-downgrade-invariants.cjs` runs in CI. Each check fails against the
+pre-fix adapter and passes only when the invariant is enforced:
+
+1. **Exact envelope pin** — `9.2-1a` foreign protocol, `9.2-1b` missing protocol,
+   `9.2-1d` pinned init; `9.2-1c` keeps the exact match working.
+2. **Sticky hybrid capability** — `9.2-2b` seen-hybrid peer cannot go classical,
+   `9.2-2c` hybrid-less bundle refused, `9.2-2d` stored hybrid not rebuilt as
+   classical; `9.2-2a` still allows a peer that never advertised hybrid.
+3. **No silent negotiation** — `9.2-3` unknown bundle version byte fails closed.
+4. **Storage version is not wire version** — unchanged Rust behaviour:
+   `src-tauri/src/double_ratchet.rs` still discards a session file whose `v`
+   differs from `SESSION_FILE_VERSION` and forces a re-handshake; no migration is
+   presented as wire compatibility.
+5. **Legacy rejection remains** — `9.2-5` v1/v2 envelopes stay rejected.
 
 ### 9.3 Boundary statement
 
-The current client is **not** downgrade-resistant in the hybrid/classical
- dimension. It accepts a v3-shaped envelope without checking the protocol string,
- and it silently falls back from hybrid to classical when the peer bundle lacks
-the hybrid field. The target invariants above are a plan, not a claim about the
-shipped build.
+For the hybrid/classical dimension the client now **refuses** a downgrade it can
+observe: a mismatched protocol string is rejected, a peer that advertised hybrid
+cannot later be negotiated down, and an unknown bundle version fails closed.
 
-Until those invariants land, do not describe the desktop client as having
-"protocol downgrade protection" or "pinned protocol negotiation". The accurate
-statement is: v1/v2 envelopes are rejected, storage versions are checked, and
-the hybrid-to-classical fallback remains an open security gap.
+The statement is scoped to this build on both ends. It does not claim that a peer
+running an older build refuses downgrades, and it does not turn capability
+absence into a failure: a peer that never advertised hybrid still connects with
+classical X3DH.
 
-Verification anchors for the current facts:
+Verification anchors:
 
-```bash
-grep -n 'DR_VERSION\|DR_PROTOCOL\|function _detectVersion' src/tauri-message-crypto-adapter.js
-grep -n 'SESSION_FILE_VERSION\|file.v != SESSION_FILE_VERSION' src-tauri/src/double_ratchet.rs
-grep -n '0x01\|0x02\|Unknown bundle version' src-tauri/src/pq/hybrid.rs
-grep -n 'falling back to classical\|adopt peer protocol' src/tauri-message-crypto-adapter.js
-```
+~~~bash
+grep -nE 'function _detectVersion|Protocol mismatch|_hasSeenHybrid|Unknown hybrid bundle version' src/tauri-message-crypto-adapter.js
+grep -n 'SESSION_FILE_VERSION' src-tauri/src/double_ratchet.rs
+grep -nE 'Unknown bundle version|Unknown encapsulation version' src-tauri/src/pq/hybrid.rs
+node scripts/test-downgrade-invariants.cjs
+~~~

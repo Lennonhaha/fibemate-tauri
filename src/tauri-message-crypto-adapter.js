@@ -68,6 +68,38 @@
 
   // ── Helpers ──────────────────────────────────────────────────
 
+  // §9.2 invariant 2 (sticky hybrid): once a peer has advertised hybrid we
+  // never fall back to classical for that peer, even if the next bundle or
+  // init omits the hybrid field. Persisted per account, because the session
+  // map entry can be replaced or cleared by a re-handshake.
+  const HYBRID_SEEN_KEY = () => 'fibemate_hybrid_seen_' + (localStorage.getItem('fk_uid') || 'default');
+
+  function _markHybridSeen(peerId) {
+    try {
+      const raw = localStorage.getItem(HYBRID_SEEN_KEY());
+      // Stored as an array, not as an object keyed by peerId: the peer id is
+      // remote input, and a dynamic property write would be prototype pollution.
+      const parsed = raw ? JSON.parse(raw) : [];
+      const seen = Array.isArray(parsed) ? parsed : [];
+      if (seen.includes(peerId)) return;
+      seen.push(peerId);
+      localStorage.setItem(HYBRID_SEEN_KEY(), JSON.stringify(seen));
+    } catch (e) { /* marker is best-effort; the session map hybrid flag still applies */ }
+  }
+
+  function _hasSeenHybrid(peerId) {
+    const session = _sessionMap.get(peerId);
+    if (session && session.hybrid === true) return true;
+    try {
+      const raw = localStorage.getItem(HYBRID_SEEN_KEY());
+      if (!raw) return false;
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed)) return parsed.includes(peerId);
+      // Read-only compatibility with the object shape from earlier builds.
+      return !!parsed && Object.prototype.hasOwnProperty.call(parsed, peerId) && parsed[peerId] === true;
+    } catch (e) { return false; }
+  }
+
   function _getRatchetBridge() {
     return window.RatchetBridge || window.FIBEMATE_DR;
   }
@@ -80,7 +112,13 @@
    */
   function _detectVersion(envelope) {
     if (!envelope || typeof envelope !== 'object') return 0;
-    if (envelope.version === 3 && envelope.messageJson) return 3;
+    // §9.2 invariant 1: a v3 envelope must carry the exact protocol string.
+    // -3 means "claims v3 but the protocol pin does not match" so decrypt()
+    // can say that instead of reporting a generic unsupported version.
+    if (envelope.version === 3) {
+      return (envelope.protocol === DR_PROTOCOL && typeof envelope.messageJson === 'string' && envelope.messageJson)
+        ? 3 : -3;
+    }
     if (envelope.version === 2 && envelope.envelope) return 2;
     if (envelope.ciphertext && envelope.nonce) return 1;
     return 0;
@@ -252,6 +290,10 @@
      */
     async initiateSession(peerId, bundle) {
       if (!_initialized) await this.init();
+      // §9.2 invariant 2: no classical handshake once the peer advertised hybrid.
+      if (_hasSeenHybrid(peerId)) {
+        throw new Error(`[DR Adapter] Refusing classical handshake with ${peerId}: peer previously advertised hybrid (downgrade)`);
+      }
       const bridge = _getRatchetBridge();
       if (!bridge) {
         throw new Error('[DR Adapter] Rust DR backend not available — Tauri required');
@@ -357,6 +399,9 @@
       // the existing session.  MUST be checked BEFORE version check, since
       // both accept types carry version:3.
       if (initMessage.type === 'x3dh_accept_rust' || initMessage.type === 'hybrid_accept_rust') {
+        if (initMessage.version !== DR_VERSION || initMessage.protocol !== DR_PROTOCOL) {
+          throw new Error(`Protocol mismatch: accept from ${peerId} declares version ${initMessage.version} protocol '${initMessage.protocol || ''}'; expected ${DR_VERSION}/${DR_PROTOCOL}`);
+        }
         return this._receiveAcceptRust(peerId, initMessage);
       }
 
@@ -365,11 +410,18 @@
       // carries hybridEnc + drPublicKey (no X3DH fields), so treating it as
       // a classical x3dh init would break the handshake.
       if (initMessage.type === 'hybrid_init_rust') {
+        if (initMessage.version !== DR_VERSION || initMessage.protocol !== DR_PROTOCOL) {
+          throw new Error(`Protocol mismatch: hybrid init from ${peerId} declares version ${initMessage.version} protocol '${initMessage.protocol || ''}'; expected ${DR_VERSION}/${DR_PROTOCOL}`);
+        }
         return this.receiveHybridSession(peerId, initMessage);
       }
 
       // Detect protocol version
       if (initMessage.type === 'x3dh_init_rust' || initMessage.version === 3) {
+        // §9.2 invariant 1: the init carries the same pin as an envelope.
+        if (initMessage.version !== DR_VERSION || initMessage.protocol !== DR_PROTOCOL) {
+          throw new Error(`Protocol mismatch: init from ${peerId} declares version ${initMessage.version} protocol '${initMessage.protocol || ''}'; expected ${DR_VERSION}/${DR_PROTOCOL}`);
+        }
         return this._receiveRustSession(peerId, initMessage);
       }
 
@@ -480,8 +532,10 @@
       }
       const myId = await bridge.getIdentityForUser(currentUserId);
 
-      if (existing && existing.sessionId && existing.hybrid === true) {
-        console.log('[DR Adapter] Protocol mismatch: stored=hybrid, init=classical -> rebuilding classical (adopt peer protocol)');
+      // §9.2 invariant 2: a stored hybrid session must never be rebuilt as
+      // classical. Interop is not a reason to accept a downgrade.
+      if (existing && existing.hybrid === true) {
+        throw new Error(`[DR Adapter] Downgrade refused: stored session with ${peerId} is hybrid, but a classical init arrived`);
       }
       // Parse initiator's keys (hex strings)
       const peerIdentityPkHex = initMessage.identityKey;
@@ -593,6 +647,12 @@
     async decrypt(peerId, envelope) {
       if (!_initialized) await this.init();
       const version = _detectVersion(envelope);
+
+      // §9.2 invariant 1: reject a v3-shaped envelope whose protocol string is
+      // missing or different, before it reaches the ratchet.
+      if (version === -3) {
+        throw new Error(`Protocol mismatch: a version 3 envelope must declare protocol '${DR_PROTOCOL}'`);
+      }
 
       if (version === DR_VERSION) {
         // Rust DR v3
@@ -878,9 +938,22 @@
 
       const peerHybridHex = bundle && (bundle._hybridBundleHex || bundle.hybridBundleHex);
       if (!peerHybridHex) {
+        // §9.2 invariant 2: a missing hybrid field is a downgrade for a peer
+        // that has already advertised hybrid; otherwise classical is allowed.
+        if (_hasSeenHybrid(peerId)) {
+          throw new Error(`[DR Adapter] Refusing classical fallback for ${peerId}: peer previously advertised hybrid (downgrade)`);
+        }
         console.log('[DR Adapter] Peer has no hybrid bundle — falling back to classical X3DH');
         return this.initiateSession(peerId, bundle);
       }
+
+      // §9.2 invariant 3: unknown bundle version bytes fail closed here, before
+      // any key material reaches Rust (which rejects them as well).
+      const bundleVersion = Number.parseInt(String(peerHybridHex).slice(0, 2), 16);
+      if (bundleVersion !== 0x01 && bundleVersion !== 0x02) {
+        throw new Error(`[DR Adapter] Unknown hybrid bundle version '${String(peerHybridHex).slice(0, 2)}' for ${peerId}; refusing`);
+      }
+      _markHybridSeen(peerId);
 
       const currentUserId = localStorage.getItem('fk_uid') || 'default';
       if (currentUserId !== _currentUserId) {
@@ -1002,6 +1075,7 @@
               _saveSessionMap();
             } catch (e) { /* ignore */ }
           }
+          _markHybridSeen(peerId);
           console.log('[DR Adapter] Reusing existing hybrid session for ' + encodeURIComponent(JSON.stringify(peerId)));
           const ourSendKey = await bridge.getSendKey(existing.sessionId);
           return {
@@ -1039,6 +1113,7 @@
       const peerIdentityPkHexHybrid = aliceInit.identityKey || null;
       if (!peerIdentityPkHexHybrid) console.warn('[DR Adapter] hybrid_init missing identityKey — binding degraded for ' + encodeURIComponent(JSON.stringify(peerId)));
       const dr = await bridge.acceptHybridSession(peerId, cached.keyId, aliceInit.hybridEnc, { ourIdentityId: myId, peerIdentityPkHex: peerIdentityPkHexHybrid });
+      _markHybridSeen(peerId);
 
       if (aliceInit.drPublicKey) {
         await bridge.setPeerKey(dr.sessionId, aliceInit.drPublicKey);
