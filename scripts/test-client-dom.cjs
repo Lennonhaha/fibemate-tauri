@@ -96,30 +96,97 @@ class El {
   querySelector(sel) { return this.querySelectorAll(sel)[0] || null; }
 }
 
+function parseAttributes(text) {
+  // Linear scan. The obvious attribute regex nests a quantified group whose
+  // branches can each match a quote run, which CodeQL flags as exponential
+  // backtracking - and it only takes one hostile fixture to hang the gate.
+  const out = [];
+  let i = 0;
+  const n = text.length;
+  const isSpace = (c) => c === ' ' || c === '\t' || c === '\n' || c === '\r';
+  while (i < n) {
+    while (i < n && isSpace(text[i])) i++;
+    if (i >= n) break;
+    const nameStart = i;
+    while (i < n && !isSpace(text[i]) && text[i] !== '=' && text[i] !== '>' && text[i] !== '/') i++;
+    const name = text.slice(nameStart, i);
+    if (!name) { i += 1; continue; }
+    while (i < n && isSpace(text[i])) i++;
+    let value = '';
+    if (text[i] === '=') {
+      i += 1;
+      while (i < n && isSpace(text[i])) i++;
+      const quote = text[i];
+      if (quote === '"' || quote === "'") {
+        i += 1;
+        const valueStart = i;
+        while (i < n && text[i] !== quote) i++;
+        value = text.slice(valueStart, i);
+        if (i < n) i += 1;
+      } else {
+        const valueStart = i;
+        while (i < n && !isSpace(text[i]) && text[i] !== '>') i++;
+        value = text.slice(valueStart, i);
+      }
+    }
+    out.push([name, value]);
+  }
+  return out;
+}
+
 function parseInto(root, html) {
-  // Linear tag scan. The previous "attribute soup" regex nested a repetition
-  // inside another repetition, which is exponential on crafted input; CodeQL
-  // was right to flag it even though this file only parses our own markup.
-  const tagRe = /<(\/?)([a-zA-Z][\w-]*)([^>]*)>/g;
-  const stack = [root];
   const voidTags = new Set(['input', 'img', 'br', 'hr', 'meta', 'link', 'source', 'path', 'circle', 'line', 'rect', 'polyline', 'polygon', 'use', 'stop']);
-  let m;
-  while ((m = tagRe.exec(html))) {
-    const [, closing, tag, rawAttrText] = m;
-    if (closing) { if (stack.length > 1) stack.pop(); continue; }
-    const selfClose = rawAttrText.trimEnd().endsWith('/');
-    const attrText = selfClose ? rawAttrText.trimEnd().slice(0, -1) : rawAttrText;
+  const stack = [root];
+  const n = html.length;
+  let i = 0;
+  while (i < n) {
+    const lt = html.indexOf('<', i);
+    if (lt < 0) break;
+    if (html.startsWith('<!--', lt)) {
+      const close = html.indexOf('-->', lt + 4);
+      i = close < 0 ? n : close + 3;
+      continue;
+    }
+    let j = lt + 1;
+    let closing = false;
+    if (html[j] === '/') { closing = true; j += 1; }
+    const nameStart = j;
+    while (j < n && /[\w-]/.test(html[j])) j++;
+    const tag = html.slice(nameStart, j);
+    if (!tag) { i = lt + 1; continue; }
+    // Find the end of this tag, ignoring ">" inside a quoted value.
+    let k = j;
+    let quote = null;
+    let end = -1;
+    while (k < n) {
+      const c = html[k];
+      if (quote) {
+        if (c === quote) quote = null;
+      } else if (c === '"' || c === "'") {
+        quote = c;
+      } else if (c === '>') {
+        end = k;
+        break;
+      }
+      k += 1;
+    }
+    if (end < 0) break;
+    if (closing) {
+      if (stack.length > 1) stack.pop();
+      i = end + 1;
+      continue;
+    }
+    const rawAttrs = html.slice(j, end);
+    const selfClose = /\/\s*$/.test(rawAttrs);
+    const attrText = selfClose ? rawAttrs.replace(/\/\s*$/, '') : rawAttrs;
     const el = new El(tag);
-    const attrRe = /([^\s=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+)))?/g;
-    let a;
-    while ((a = attrRe.exec(attrText || ''))) {
-      const key = a[1];
-      const val = a[2] !== undefined ? a[2] : a[3] !== undefined ? a[3] : a[4] !== undefined ? a[4] : '';
+    for (const [key, val] of parseAttributes(attrText)) {
       el.setAttribute(key, val);
-      if (key.startsWith('data-')) el.dataset[key.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = val;
+      if (key.indexOf('data-') === 0) el.dataset[key.slice(5).replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = val;
     }
     stack[stack.length - 1].appendChild(el);
     if (!selfClose && !voidTags.has(tag.toLowerCase())) stack.push(el);
+    i = end + 1;
   }
 }
 
