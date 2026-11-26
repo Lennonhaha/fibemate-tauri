@@ -343,12 +343,26 @@ function bindEvents() {
   });
 }
 
-// v3: 登出使用 fk_* 键名
+// v3: 登出使用 fk_* 键名；账号态清理由 logout-cleanup.js 负责（可单测）
 function doLogout() {
   if (confirm('Logout and return to login screen?')) {
-    ['fk_token','fk_uid','fk_uname','fk_privkey_jwk','fk_pubkey_hex','fk_zk_secrets'].forEach(k => localStorage.removeItem(k));
     if (STATE.ws) STATE.ws.close();
-    window.location.href = 'index.html';
+
+    const purge = window.FIBEMATE_LOGOUT;
+    const leave = () => { window.location.href = 'index.html'; };
+    if (!purge) {
+      // Fail closed: never leave the session behind just because the helper
+      // did not load. Remove the credentials directly.
+      ['fk_token', 'fk_refresh_token', 'fk_uid', 'fk_uname'].forEach(k => localStorage.removeItem(k));
+      leave();
+      return;
+    }
+
+    const removed = purge.purgeLocal(localStorage);
+    console.log('[Logout] cleared ' + removed.length + ' account-scoped keys');
+    // Vault blobs live in IndexedDB; metadata alone would orphan them. The
+    // helper resolves even when deletion is blocked, so logout cannot hang.
+    purge.purgeIndexedDB(window.indexedDB).then(leave, leave);
   }
 }
 
