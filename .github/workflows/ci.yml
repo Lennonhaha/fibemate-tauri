@@ -53,6 +53,10 @@ jobs:
       - name: Client DOM smoke (2FA setup, conversation badge)
         run: node scripts/test-client-dom.cjs
 
+      # SECURITY-BOUNDARY.md §9.2: these tests fail against the pre-fix adapter.
+      - name: Protocol downgrade invariants (§9.2)
+        run: node scripts/test-downgrade-invariants.cjs
+
       - name: Rust format check
         working-directory: src-tauri
         run: cargo fmt --all -- --check
