@@ -753,11 +753,21 @@ const TwoFactorAuth = (() => {
       const qr = qrcode(0, 'M');
       qr.addData(otpauth);
       qr.make();
-      const dataUrl = qr.createDataURL(4, 4);
+      // Integer module size, then set the CSS size to the natural size. Letting CSS
+      // stretch the bitmap to a fixed 200px gives modules 3 or 4 px wide depending on
+      // where they land, which is exactly the kind of resampling that makes a strict
+      // decoder give up. cell = floor(200 / (modules + quiet zone)) keeps it crisp.
+      const modules = qr.getModuleCount();
+      const quietZone = 4;
+      const cell = Math.max(3, Math.min(8, Math.floor(200 / (modules + quietZone * 2))));
+      const dataUrl = qr.createDataURL(cell, quietZone);
       const img = new Image();
       img.onload = () => {
         canvas.width = img.naturalWidth || img.width;
         canvas.height = img.naturalHeight || img.height;
+        // Match the layout size to the bitmap: no resampling, no fractional modules.
+        canvas.style.width = canvas.width + 'px';
+        canvas.style.height = canvas.height + 'px';
         const ctx = canvas.getContext('2d');
         ctx.imageSmoothingEnabled = false;
         ctx.fillStyle = '#ffffff';
