@@ -112,12 +112,15 @@ const TwoFactorAuth = (() => {
       }
 
       .twofa-qr-canvas {
+        display: block;
         width: 200px;
         height: 200px;
+        box-sizing: content-box;
         background: white;
         border-radius: 8px;
         padding: 8px;
         margin-bottom: 12px;
+        image-rendering: pixelated;
       }
 
       .twofa-secret-key {
@@ -437,7 +440,7 @@ const TwoFactorAuth = (() => {
     const secretEl = body.querySelector('#twofaSecretDisplay');
     if (secretEl) secretEl.textContent = _formatSecretKey(newSecret);
 
-    // 生成 QR 码（使用简单的 SVG 方式，避免外部依赖）
+    // Render the otpauth URI as a real QR code.
     _generateQRCode(newSecret, username, body);
 
     body.querySelector('#btn2FACancel')?.addEventListener('click', () => _closeModal(modal));
@@ -808,57 +811,54 @@ const TwoFactorAuth = (() => {
     }
     return bytes;
   }
-
-  // ── QR 码生成（纯JS，无外部依赖） ──
+  // ── QR code generation (vendored qrcode-generator, MIT) ──
   function _generateQRCode(secret, username, scope) {
     const canvas = (scope || document).querySelector('#twofaQRCanvas');
     if (!canvas) return;
 
-    const otpauth = `otpauth://totp/FIBEMATE:${username}?secret=${secret}&issuer=FIBEMATE&algorithm=SHA1&digits=6&period=30`;
+    const otpauth = `otpauth://totp/FIBEMATE:${encodeURIComponent(username)}?secret=${encodeURIComponent(secret)}&issuer=FIBEMATE&algorithm=SHA1&digits=6&period=30`;
 
-    // 简单的 QR 替代：显示文字信息 + 可点击链接
-    const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, 200, 200);
-
-    // 使用 Canvas 绘制简化二维码图案（视觉占位）
-    ctx.fillStyle = '#0A0A0F';
-    const size = 6;
-    const data = secret + username;
-    for (let y = 0; y < 32; y++) {
-      for (let x = 0; x < 32; x++) {
-        // 基于数据生成伪随机模式
-        const charCode = data.charCodeAt((x + y * 32) % data.length);
-        if ((charCode + x * 7 + y * 13) % 3 !== 0) {
-          ctx.fillRect(10 + x * (size + 1), 10 + y * (size + 1), size, size);
-        }
-      }
+    // A real QR encoder, not a decorative pattern. qrcode-generator is vendored
+    // under src/vendor (MIT); qrcode_UTF8.js extends it so non-ASCII usernames
+    // are encoded as UTF-8 bytes.
+    if (typeof qrcode !== 'function') {
+      canvas.title = otpauth;
+      console.error('[2FA] qrcode-generator is not loaded; the QR cannot be drawn');
+      return;
     }
 
-    // 定位标记
-    _drawFinderPattern(ctx, 10, 10);
-    _drawFinderPattern(ctx, 10 + 21 * (size + 1), 10);
-    _drawFinderPattern(ctx, 10, 10 + 21 * (size + 1));
+    try {
+      const qr = qrcode(0, 'M');
+      qr.addData(otpauth);
+      qr.make();
+      const dataUrl = qr.createDataURL(4, 4);
+      const img = new Image();
+      img.onload = () => {
+        canvas.width = img.naturalWidth || img.width;
+        canvas.height = img.naturalHeight || img.height;
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = false;
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, 0, 0);
+      };
+      img.onerror = () => {
+        canvas.title = otpauth;
+        console.error('[2FA] QR image failed to render');
+      };
+      img.src = dataUrl;
+    } catch (e) {
+      canvas.title = otpauth;
+      console.error('[2FA] QR generation failed:', e);
+    }
 
-    // 提示用户可以手动输入密钥
     canvas.title = otpauth;
     canvas.style.cursor = 'pointer';
-    canvas.addEventListener('click', () => {
+    canvas.onclick = () => {
       navigator.clipboard.writeText(otpauth).then(() => {
         showToast('OTP URI 已复制', 'success');
       });
-    });
-  }
-
-  function _drawFinderPattern(ctx, x, y) {
-    const s = 7;
-    const u = 7; // 1模块 = 7px for finder
-    ctx.fillStyle = '#0A0A0F';
-    ctx.fillRect(x, y, s * u, s * u);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillRect(x + u, y + u, 5 * u, 5 * u);
-    ctx.fillStyle = '#0A0A0F';
-    ctx.fillRect(x + 2 * u, y + 2 * u, 3 * u, 3 * u);
+    };
   }
 
   // ── 恢复码生成 ──
