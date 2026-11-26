@@ -119,9 +119,8 @@ async function sendBurnMessage(text, timeout = 30) {
     }
     
     // Use Privacy API Client if available, fallback to direct fetch
-    let response;
     if (typeof privacyAPI !== 'undefined') {
-      response = await privacyAPI.sendBurnMessage(
+      await privacyAPI.sendBurnMessage(
         STATE.currentConversationId,
         JSON.stringify(envelope),
         timeout,
@@ -149,7 +148,7 @@ async function sendBurnMessage(text, timeout = 30) {
           body: JSON.stringify(payload)
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        response = await res.json();
+        await res.json();
       }
     }
     
