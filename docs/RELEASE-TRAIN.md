@@ -80,10 +80,15 @@ gh workflow run release-promote.yml \
 ```
 
 The promote workflow refuses to run when the freeze switch is on, requires the
-literal confirmation, and checks that the release is still a draft before
-publishing. The optional `stable-release` environment can be given required
-reviewers in repository settings; without that setting the workflow is still a
-manual, typed gate.
+literal confirmation, checks that the release is still a draft, and refuses a
+draft whose `targetCommitish` is not the current `main` head (#118). The last
+check exists because a draft is a snapshot: it keeps verifying against the commit
+it was built from while `main` moves on, so promoting a stale draft publishes code
+that does not contain the reviewed tree. The gate prints `STALE_DRAFT` with both
+commits and tells you to rebuild; re-run `release-train.yml` on the current `main`
+instead of promoting the old artifact set. The optional `stable-release`
+environment can be given required reviewers in repository settings; without that
+setting the workflow is still a manual, typed gate.
 
 ## Manual nightly and stable dispatch
 

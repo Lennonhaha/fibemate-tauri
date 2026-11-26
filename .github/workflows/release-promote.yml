@@ -2,7 +2,8 @@
 #
 # The stable lane of release-train.yml creates a draft release. This workflow is
 # the manual promotion gate: it is skipped while RELEASE_TRAIN_FROZEN=true,
-# requires a typed confirmation, and only accepts a release that is still draft.
+# requires a typed confirmation, only accepts a release that is still draft, and
+# refuses a draft built from anything other than the current main head (#118).
 # It does not implement percentage rollout; see docs/RELEASE-TRAIN.md.
 
 name: Promote release
@@ -37,14 +38,21 @@ jobs:
           set -euo pipefail
           [ -n "$TAG" ] || { echo "::error::tag is required"; exit 1; }
           [ "$CONFIRM" = "PROMOTE" ] || { echo "::error::confirm must be PROMOTE"; exit 1; }
-          IS_DRAFT=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json isDraft --jq .isDraft)
-          [ "$IS_DRAFT" = "true" ] || { echo "::error::$TAG is not a draft release"; exit 1; }
-          echo "promoting draft release $TAG"
+          echo "promotion requested for $TAG"
+
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Refuse a draft that predates main (#118)
+        id: baseline
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: node scripts/check-draft-baseline.cjs --tag "$TAG"
 
       - name: Publish draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ steps.baseline.outputs.tag }}
         run: |
           set -euo pipefail
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --prerelease=false --latest

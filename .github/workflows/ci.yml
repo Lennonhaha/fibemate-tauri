@@ -57,6 +57,11 @@ jobs:
       - name: Protocol downgrade invariants (§9.2)
         run: node scripts/test-downgrade-invariants.cjs
 
+      # #118: the promote gate must refuse a stale draft, so its own decision table is
+      # tested on every PR rather than only at promotion time.
+      - name: Draft baseline gate self-test (#118)
+        run: node scripts/check-draft-baseline.cjs --self-test
+
       - name: Rust format check
         working-directory: src-tauri
         run: cargo fmt --all -- --check
