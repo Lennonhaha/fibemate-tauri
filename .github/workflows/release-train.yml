@@ -47,9 +47,7 @@ on:
         type: boolean
 
 permissions:
-  contents: write
-  id-token: write
-  attestations: write
+  contents: read   # writes live on the release job that needs them
 
 concurrency:
   group: release-train-${{ github.ref }}
@@ -143,6 +141,10 @@ jobs:
           fi
 
   release:
+    permissions:
+      contents: write      # release.yml creates the draft Release
+      id-token: write      # keyless cosign
+      attestations: write  # build provenance
     needs: prepare
     # Frozen: allow the stable draft build, block anything that publishes.
     if: ${{ needs.prepare.result == 'success' && needs.prepare.outputs.skip != 'true' && (needs.prepare.outputs.draft == 'true' || vars.RELEASE_TRAIN_FROZEN != 'true') }}

@@ -21,10 +21,12 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read   # publishing is the promote job's own grant
 
 jobs:
   promote:
+    permissions:
+      contents: write   # flip the draft to published
     if: ${{ vars.RELEASE_TRAIN_FROZEN != 'true' }}
     runs-on: ubuntu-latest
     environment: stable-release
