@@ -25,18 +25,22 @@ already exists, the prepare job skips rather than rebuilds it.
 
 ## Freeze switch
 
-`RELEASE_TRAIN_FROZEN` is a repository variable. When it is `true`, every
-release job carries `if: ${{ vars.RELEASE_TRAIN_FROZEN != 'true' }}`, so the run
-ends as **skipped** (grey), not failed:
+`RELEASE_TRAIN_FROZEN` is a repository variable. When it is `true`, the train
+stops **publishing**: the nightly lane is skipped (a nightly tag is a
+prerelease publication) and `release-promote.yml` is skipped. A stable candidate
+may still be built as a **draft**: the freeze switch blocks publish/promote, not
+draft builds, and a draft may exist while the train is frozen without being
+released.
+
+A frozen publish job ends as **skipped** (grey), not failed:
 
 ```text
-Release train     skipped
-Promote release   skipped
+Release train (nightly)   skipped
+Promote release           skipped
 ```
 
-A frozen run starts no job: nothing is built, tagged, signed, or published. The
-switch deliberately does not use `exit 1` any more - a daily schedule that goes
-red every night is indistinguishable from a real release failure, and an
+The switch deliberately does not use `exit 1` any more - a daily schedule that
+goes red every night is indistinguishable from a real release failure, and an
 intentional freeze must not look like an incident.
 
 Status semantics for operators and for the nightly digest:
@@ -56,8 +60,9 @@ gh variable set RELEASE_TRAIN_FROZEN --repo Lennonhaha/fibemate-tauri --body tru
 gh variable get RELEASE_TRAIN_FROZEN --repo Lennonhaha/fibemate-tauri
 ```
 
-This blocks `release.yml` (including tag pushes), `release-train.yml`, and
-`release-promote.yml`. It does **not** reach an installed client: there is no
+This blocks `release.yml` for published channels (nightly and tag pushes), the
+nightly lane of `release-train.yml`, and `release-promote.yml`. A stable draft
+build is still allowed. It does **not** reach an installed client: there is no
 remote-config polling in the app. It is a publishing kill switch, not a client
 kill switch.
 
