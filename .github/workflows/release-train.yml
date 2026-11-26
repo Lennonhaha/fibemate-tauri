@@ -5,8 +5,10 @@
 #   - stable: one draft release per even ISO week, tag v<package.version>;
 #   - both lanes call release.yml, so the installers, checksums, signatures and
 #     provenance are produced by the same path as a tag push;
-#   - a repository variable RELEASE_TRAIN_FROZEN=true skips every release job;
-#     a frozen run ends as `skipped` (grey), never as a failure.
+#   - a repository variable RELEASE_TRAIN_FROZEN=true blocks publication:
+#     nightly prereleases and stable promotion are skipped, while a stable
+#     candidate may still be built as a draft. A frozen publish job ends as
+#     `skipped` (grey), never as a failure.
 #
 # What this workflow deliberately does not do:
 #   - no percentage rollout (5% / 50% / 100%) — that needs an updater,
@@ -55,7 +57,6 @@ concurrency:
 
 jobs:
   prepare:
-    if: ${{ vars.RELEASE_TRAIN_FROZEN != 'true' }}
     runs-on: ubuntu-latest
     outputs:
       skip: ${{ steps.resolve.outputs.skip }}
@@ -143,7 +144,8 @@ jobs:
 
   release:
     needs: prepare
-    if: ${{ needs.prepare.result == 'success' && needs.prepare.outputs.skip != 'true' }}
+    # Frozen: allow the stable draft build, block anything that publishes.
+    if: ${{ needs.prepare.result == 'success' && needs.prepare.outputs.skip != 'true' && (needs.prepare.outputs.draft == 'true' || vars.RELEASE_TRAIN_FROZEN != 'true') }}
     uses: ./.github/workflows/release.yml
     with:
       tag: ${{ needs.prepare.outputs.tag }}

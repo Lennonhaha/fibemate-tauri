@@ -1,0 +1,53 @@
+name: do-not-merge-guard
+
+# A label is not a gate. This workflow turns `do-not-merge` into a status check
+# while the label is present, and fails the record if such a PR was merged
+# anyway (the #103 lesson, 2026-11-25: the label was still on the PR when it
+# merged, and nothing failed).
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled, closed]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  guard:
+    name: do-not-merge
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Refuse a PR that still carries do-not-merge
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          set -euo pipefail
+          norm="$(printf '%s' "$LABELS" | tr '[:upper:]' '[:lower:]')"
+          case "$norm" in
+            *'"do-not-merge"'*)
+              echo "::error::This PR carries the do-not-merge label. Remove it before merging."
+              exit 1
+              ;;
+          esac
+          echo "No do-not-merge label."
+
+  audit:
+    name: do-not-merge-audit
+    if: github.event.action == 'closed' && github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail when a merged PR carried do-not-merge
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          norm="$(printf '%s' "$LABELS" | tr '[:upper:]' '[:lower:]')"
+          case "$norm" in
+            *'"do-not-merge"'*)
+              echo "::error::PR #${NUMBER} was merged while carrying do-not-merge."
+              exit 1
+              ;;
+          esac
+          echo "No do-not-merge label at merge time."
