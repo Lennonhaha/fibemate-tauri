@@ -171,6 +171,7 @@ touching the long-term identity.
 
 - Rust 1.85+
 - Node.js 18+
+- `rustfmt` 与 `clippy` 组件（CI 会跑 `cargo fmt --check` 与 `cargo clippy`）
 - Windows 10+ (macOS/Linux support planned)
 
 ### Build & Run
