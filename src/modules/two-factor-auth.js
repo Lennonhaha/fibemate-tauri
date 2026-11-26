@@ -5,8 +5,8 @@
  * 功能：
  * - TOTP 设置/启用/禁用
  * - 二维码生成（扫码绑定 Authenticator App）
- * - 验证码校验
- * - 恢复码生成（一次性备用码）
+ * - 验证码校验（服务端 RFC 6238）
+ * - 恢复码由服务端生成
  * - 登录流程 2FA 验证步骤
  *
  * @version 1.0.0
@@ -15,16 +15,6 @@
  */
 
 const TwoFactorAuth = (() => {
-  // ── TOTP 配置 ──
-  const TOTP_CONFIG = {
-    algorithm: 'SHA-1',   // RFC 6238 标准
-    digits: 6,
-    period: 30,           // 30秒步长
-    window: 1,            // 允许前后1个时间窗口
-    recoveryCodeCount: 8, // 8个恢复码
-    recoveryCodeLength: 8 // 每个码8字符
-  };
-
   // ── 状态 ──
   // Enrolment is closed until the login flow can carry device identity.
   // /api/auth/2fa/verify-login returns tokens with deviceId:'', so an account
@@ -36,7 +26,6 @@ const TwoFactorAuth = (() => {
   const ENROLMENT_UNAVAILABLE_HINT = 'Temporarily unavailable: device identity binding is not complete.';
 
   let is2FAEnabled = false;
-  let secretKey = null;
   let setupPhase = false; // 设置阶段（验证中）
 
   // ── 初始化 ──
@@ -303,7 +292,6 @@ const TwoFactorAuth = (() => {
       if (res.ok) {
         const data = await res.json();
         is2FAEnabled = data.enabled || false;
-        secretKey = data.secret || null;
         _updateSettingsUI();
       }
     } catch (e) {
@@ -407,7 +395,7 @@ const TwoFactorAuth = (() => {
     _renderSetupStep1(modal);
   }
 
-  function _renderSetupStep1(modal) {
+  async function _renderSetupStep1(modal) {
     const body = modal.bodyEl;
     body.innerHTML = `
       <div class="twofa-steps">
@@ -429,21 +417,49 @@ const TwoFactorAuth = (() => {
       </div>
     `;
 
-    // 生成 TOTP 密钥
-    const username = localStorage.getItem('fk_uname') || 'user';
-    const newSecret = _generateBase32Secret();
-    secretKey = newSecret;
-
-    // Scope every lookup to this modal's own subtree. Mounting the overlay first is
-    // what makes document-wide lookups work, but scoping is what keeps two open flows
-    // from fighting over one id.
-    const secretEl = body.querySelector('#twofaSecretDisplay');
-    if (secretEl) secretEl.textContent = _formatSecretKey(newSecret);
-
-    // Render the otpauth URI as a real QR code.
-    _generateQRCode(newSecret, username, body);
-
     body.querySelector('#btn2FACancel')?.addEventListener('click', () => _closeModal(modal));
+
+    const username = localStorage.getItem('fk_uname') || 'user';
+
+    // The secret comes from the server. POST /auth/2fa/enable stores it against
+    // the account and returns the same secret behind the QR. Generating it in the
+    // renderer made the scanned QR and the stored secret two different values:
+    // the code from the app could never match, and confirm-enable was never called.
+    let secret, uri;
+    try {
+      const token = localStorage.getItem('fk_token');
+      const res = await fetch(`${API_BASE}/auth/2fa/enable`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({})
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = data.error === 'E_2FA_DEVICE_IDENTITY_PENDING'
+          ? '设备身份尚未就绪，请稍后重试'
+          : (data.error || '无法开始 2FA 设置');
+        showToast(msg, 'error');
+        _closeModal(modal);
+        return;
+      }
+      secret = data.secret;
+      uri = data.uri;
+      if (!secret) {
+        showToast('服务器未返回 2FA 密钥', 'error');
+        _closeModal(modal);
+        return;
+      }
+    } catch (e) {
+      showToast('无法连接服务器，2FA 设置未开始', 'error');
+      _closeModal(modal);
+      return;
+    }
+
+    const secretEl = body.querySelector('#twofaSecretDisplay');
+    if (secretEl) secretEl.textContent = _formatSecretKey(secret);
+
+    _generateQRCode(secret, username, body, uri);
+
     body.querySelector('#btn2FANext')?.addEventListener('click', () => _renderSetupStep2(modal));
   }
 
@@ -529,33 +545,21 @@ const TwoFactorAuth = (() => {
 
     try {
       const token = localStorage.getItem('fk_token');
-      const res = await fetch(`${API_BASE}/auth/2fa/enable`, {
+      const res = await fetch(`${API_BASE}/auth/2fa/confirm-enable`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ secret: secretKey, code })
+        body: JSON.stringify({ code })
       });
+      const data = await res.json().catch(() => ({}));
 
       if (res.ok) {
-        const data = await res.json();
         is2FAEnabled = true;
-        _renderSetupStep3(modal, data.recoveryCodes || _generateRecoveryCodes());
+        _renderSetupStep3(modal, data.recoveryCodes || []);
       } else {
-        // 本地校验兜底
-        if (_verifyTOTP(code, secretKey)) {
-          is2FAEnabled = true;
-          _renderSetupStep3(modal, _generateRecoveryCodes());
-        } else {
-          showToast('验证码错误，请重试', 'error');
-        }
+        showToast(data.error || '验证码错误，请重试', 'error');
       }
     } catch (e) {
-      // 后端不支持时本地校验
-      if (_verifyTOTP(code, secretKey)) {
-        is2FAEnabled = true;
-        _renderSetupStep3(modal, _generateRecoveryCodes());
-      } else {
-        showToast('验证码错误', 'error');
-      }
+      showToast('无法连接服务器，2FA 未启用', 'error');
     }
   }
 
@@ -650,7 +654,6 @@ const TwoFactorAuth = (() => {
         });
         if (res.ok) {
           is2FAEnabled = false;
-          secretKey = null;
           _closeModal(modal);
           _updateSettingsUI();
           showToast('2FA 已禁用', 'info');
@@ -658,16 +661,7 @@ const TwoFactorAuth = (() => {
           showToast('验证码错误', 'error');
         }
       } catch (e) {
-        // 本地校验兜底
-        if (_verifyTOTP(code, secretKey)) {
-          is2FAEnabled = false;
-          secretKey = null;
-          _closeModal(modal);
-          _updateSettingsUI();
-          showToast('2FA 已禁用', 'info');
-        } else {
-          showToast('验证码错误', 'error');
-        }
+        showToast('无法连接服务器，2FA 未禁用', 'error');
       }
     });
 
@@ -675,7 +669,7 @@ const TwoFactorAuth = (() => {
   }
 
   // ── 登录时2FA验证（供登录流程调用） ──
-  function showLogin2FA(username, onVerified) {
+  function showLogin2FA(username, ticket, onVerified) {
     const modal = _create2FAModal('twofa-login-modal');
     const body = modal.bodyEl;
 
@@ -721,7 +715,7 @@ const TwoFactorAuth = (() => {
         const res = await fetch(`${API_BASE}/auth/2fa/verify-login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, code })
+          body: JSON.stringify({ ticket, code })
         });
         if (res.ok) {
           _closeModal(modal);
@@ -737,86 +731,14 @@ const TwoFactorAuth = (() => {
     document.body.appendChild(modal.overlay);
   }
 
-  // ── TOTP 核心算法 ──
-  function _generateBase32Secret() {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; // Base32
-    let secret = '';
-    const array = new Uint8Array(20);
-    crypto.getRandomValues(array);
-    for (let i = 0; i < 16; i++) {
-      secret += chars[array[i] % chars.length];
-    }
-    return secret;
-  }
-
-  function _verifyTOTP(code, secret) {
-    const counter = Math.floor(Date.now() / 1000 / TOTP_CONFIG.period);
-    // 检查当前和前后窗口
-    for (let i = -TOTP_CONFIG.window; i <= TOTP_CONFIG.window; i++) {
-      const expectedCode = _generateTOTP(secret, counter + i);
-      if (code === expectedCode) return true;
-    }
-    return false;
-  }
-
-  function _generateTOTP(secret, counter) {
-    // HMAC-based TOTP 简化实现
-    // 生产环境应使用后端验证，此处为前端演示/离线兜底
-    const key = _base32Decode(secret);
-    const counterBytes = _intToBytes(counter);
-
-    // 使用 Web Crypto API 进行 HMAC-SHA1
-    // 注意：这是异步的，简化版使用同步近似
-    // 实际应使用 SubtleCrypto
-    return _hotpTruncate(key, counterBytes);
-  }
-
-  // 简化的 HOTP 截断（同步近似，精度有限）
-  function _hotpTruncate(key, counter) {
-    let hash = 0;
-    for (let i = 0; i < key.length; i++) {
-      hash = ((hash << 5) - hash + key[i]) | 0;
-    }
-    for (let i = 0; i < counter.length; i++) {
-      hash = ((hash << 5) - hash + counter[i]) | 0;
-    }
-    const offset = Math.abs(hash) & 0x0F;
-    const binary = ((hash >> (offset * 2)) & 0x7FFFFFFF);
-    const otp = binary % Math.pow(10, TOTP_CONFIG.digits);
-    return String(otp).padStart(TOTP_CONFIG.digits, '0');
-  }
-
-  function _base32Decode(str) {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
-    const lookup = {};
-    for (let i = 0; i < chars.length; i++) lookup[chars[i]] = i;
-
-    let bits = '';
-    for (const c of str) {
-      if (c in lookup) bits += lookup[c].toString(2).padStart(5, '0');
-    }
-
-    const bytes = new Uint8Array(Math.floor(bits.length / 8));
-    for (let i = 0; i < bytes.length; i++) {
-      bytes[i] = parseInt(bits.substr(i * 8, 8), 2);
-    }
-    return bytes;
-  }
-
-  function _intToBytes(num) {
-    const bytes = new Uint8Array(8);
-    for (let i = 7; i >= 0; i--) {
-      bytes[i] = num & 0xFF;
-      num = num >> 8;
-    }
-    return bytes;
-  }
   // ── QR code generation (vendored qrcode-generator, MIT) ──
-  function _generateQRCode(secret, username, scope) {
+  function _generateQRCode(secret, username, scope, uri) {
     const canvas = (scope || document).querySelector('#twofaQRCanvas');
     if (!canvas) return;
 
-    const otpauth = `otpauth://totp/FIBEMATE:${encodeURIComponent(username)}?secret=${encodeURIComponent(secret)}&issuer=FIBEMATE&algorithm=SHA1&digits=6&period=30`;
+    // Prefer the URI the server built and stored; fall back to the same fields
+    // only if an older server did not return one.
+    const otpauth = uri || `otpauth://totp/FIBEMATE:${encodeURIComponent(username)}?secret=${encodeURIComponent(secret)}&issuer=FIBEMATE&algorithm=SHA1&digits=6&period=30`;
 
     // A real QR encoder, not a decorative pattern. qrcode-generator is vendored
     // under src/vendor (MIT); qrcode_UTF8.js extends it so non-ASCII usernames
@@ -861,22 +783,6 @@ const TwoFactorAuth = (() => {
     };
   }
 
-  // ── 恢复码生成 ──
-  function _generateRecoveryCodes() {
-    const codes = [];
-    const chars = '0123456789ABCDEF';
-    for (let i = 0; i < TOTP_CONFIG.recoveryCodeCount; i++) {
-      let code = '';
-      for (let j = 0; j < TOTP_CONFIG.recoveryCodeLength; j++) {
-        const arr = new Uint8Array(1);
-        crypto.getRandomValues(arr);
-        code += chars[arr[0] % chars.length];
-      }
-      codes.push(code);
-    }
-    return codes;
-  }
-
   // ── 工具函数 ──
   function _getOTPValue() {
     const digits = document.querySelectorAll('.twofa-code-digit');
@@ -918,7 +824,6 @@ const TwoFactorAuth = (() => {
   return {
     init,
     showLogin2FA,
-    isEnabled: () => is2FAEnabled,
-    verifyCode: _verifyTOTP
+    isEnabled: () => is2FAEnabled
   };
 })();
