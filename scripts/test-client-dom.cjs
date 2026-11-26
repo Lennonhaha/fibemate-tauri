@@ -252,9 +252,38 @@ function loadModule(sandbox, file, exportExpr) {
 }
 
 // ──────────────────────────────────────────────────────────────── checks ──
-check('2FA setup flow opens without throwing and renders the secret', async () => {
+const TEST_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
+
+function twoFaSandbox(doc, calls, confirmPayload = { enabled: true, recoveryCodes: ['AAAAAAAA'] }) {
+  return makeSandbox(doc, {
+    fetch: async (url, opts = {}) => {
+      const u = String(url);
+      calls.push({ url: u, opts });
+      if (u.endsWith('/auth/2fa/status')) {
+        return { ok: true, status: 200, json: async () => ({ enabled: false }) };
+      }
+      if (u.endsWith('/auth/2fa/enable')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            secret: TEST_SECRET,
+            uri: 'otpauth://totp/FIBEMATE:alice?secret=' + TEST_SECRET + '&issuer=FIBEMATE&algorithm=SHA1&digits=6&period=30',
+          }),
+        };
+      }
+      if (u.endsWith('/auth/2fa/confirm-enable')) {
+        return { ok: true, status: 200, json: async () => confirmPayload };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    },
+  });
+}
+
+check('2FA setup flow opens without throwing and renders the server secret', async () => {
   const doc = makeDocument();
-  const sandbox = makeSandbox(doc);
+  const calls = [];
+  const sandbox = twoFaSandbox(doc, calls);
   // main.html ships this container; _addSettingsSection returns early without it.
   const sections = doc.createElement('div');
   sections.id = 'settingsSections';
@@ -271,11 +300,42 @@ check('2FA setup flow opens without throwing and renders the secret', async () =
   assert(btn, 'Enable 2FA button missing');
 
   btn.click(); // this threw "Cannot set properties of null" before the fix
+  await wait(50); // step 1 now waits for POST /auth/2fa/enable
 
   const secret = doc.getElementById('twofaSecretDisplay');
   assert(secret, 'secret display missing from the mounted modal');
   assert(secret.textContent && secret.textContent !== 'Loading...', 'secret was never written; textContent=' + JSON.stringify(secret.textContent));
-  assert(/^[A-Z2-7]{4}( [A-Z2-7]{4})*$/.test(secret.textContent), 'secret does not look like a formatted base32 key: ' + secret.textContent);
+  assert(secret.textContent.replace(/ /g, '') === TEST_SECRET, 'secret is not the value returned by the server: ' + secret.textContent);
+  assert(calls.some((c) => c.url.endsWith('/auth/2fa/enable')), 'POST /auth/2fa/enable was not called');
+});
+
+check('2FA confirm posts the code to confirm-enable, never the secret', async () => {
+  const doc = makeDocument();
+  const calls = [];
+  const sandbox = twoFaSandbox(doc, calls);
+  const sections = doc.createElement('div');
+  sections.id = 'settingsSections';
+  doc.body.appendChild(sections);
+
+  const TwoFactorAuth = loadModule(sandbox, 'modules/two-factor-auth.js', 'TwoFactorAuth');
+  TwoFactorAuth.init();
+  await wait(600);
+  doc.getElementById('btnToggle2FA').click();
+  await wait(50);
+
+  doc.getElementById('btn2FANext').click();
+  const digits = doc.querySelectorAll('.twofa-code-digit');
+  '123456'.split('').forEach((d, i) => { if (digits[i]) digits[i].value = d; });
+  doc.getElementById('btn2FAVerify').click();
+  await wait(50);
+
+  const confirm = calls.filter((c) => c.url.endsWith('/auth/2fa/confirm-enable'));
+  assert(confirm.length === 1, 'expected exactly one confirm-enable call, got ' + confirm.length);
+  const body = JSON.parse(confirm[0].opts.body);
+  assert(body.code === '123456', 'code was not forwarded: ' + confirm[0].opts.body);
+  assert(!('secret' in body), 'the secret must not be sent back in the confirm request');
+  const setupPosts = calls.filter((c) => c.url.endsWith('/auth/2fa/enable') && c.opts.method === 'POST');
+  assert(setupPosts.length === 1, 'expected one enable POST (step 1), got ' + setupPosts.length);
 });
 
 check('one setup modal per click (no duplicate overlay)', async () => {
