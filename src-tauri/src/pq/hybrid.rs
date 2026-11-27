@@ -231,7 +231,11 @@ pub struct HybridSharedSecret {
 
 impl HybridSharedSecret {
     pub fn as_bytes_32(&self) -> [u8; 32] {
-        self.secret[..32].try_into().unwrap()
+        // Copy, don't try_into().unwrap(): the length is a compile-time constant,
+        // so a panic path here would only ever be dead weight in the binary.
+        let mut out = [0u8; 32];
+        out.copy_from_slice(&self.secret[..32]);
+        out
     }
     pub fn as_bytes_64(&self) -> [u8; 64] {
         self.secret
