@@ -233,8 +233,11 @@ pub fn hybrid_accept(
             x_sk_bytes.len()
         ));
     }
-    let x_sk =
-        x25519_dalek::StaticSecret::from(<[u8; 32]>::try_from(x_sk_bytes.as_slice()).unwrap());
+    // Length was checked above; copy explicitly so a future refactor cannot turn a
+    // malformed IPC payload into a panic in the command handler.
+    let mut x_sk_arr = [0u8; 32];
+    x_sk_arr.copy_from_slice(&x_sk_bytes);
+    let x_sk = x25519_dalek::StaticSecret::from(x_sk_arr);
     x_sk_bytes.zeroize();
 
     let secret = match (enc.mode, enc.mlkem_ciphertext) {
@@ -259,10 +262,12 @@ pub fn hybrid_accept(
                     m_sk_bytes.len()
                 ));
             }
-            let m_sk = <[u8; MLKEM768_SK_SIZE]>::try_from(m_sk_bytes.as_slice()).unwrap();
+            let mut m_sk = [0u8; MLKEM768_SK_SIZE];
+            m_sk.copy_from_slice(&m_sk_bytes);
             m_sk_bytes.zeroize();
             let mlkem_ss = crate::pq::mlkem768_decapsulate_bytes(&m_sk, &ct)
                 .map_err(|e| format!("ML-KEM decapsulation failed: {e}"))?;
+            m_sk.zeroize();
 
             // X25519 half
             let their_pk = x25519_dalek::PublicKey::from(enc.x25519_public);
