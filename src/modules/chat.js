@@ -123,28 +123,54 @@ async function openChat(userId, name) {
 }
 
 // v3: 新增 — 获取或创建对话，得到 conversationId
+// Conversation ids are stable per peer. Cache them so a rate-limited or offline
+// find-or-create cannot turn an already-known conversation into a blocker.
+const CONVERSATION_CACHE = (typeof window !== 'undefined' && window.__fkConvCache) || new Map();
+if (typeof window !== 'undefined') window.__fkConvCache = CONVERSATION_CACHE;
+
 async function ensureConversation(userId) {
+  if (CONVERSATION_CACHE.has(userId)) return CONVERSATION_CACHE.get(userId);
+  STATE._convInflight = STATE._convInflight || new Map();
+  if (STATE._convInflight.has(userId)) return STATE._convInflight.get(userId);
+
   const token = localStorage.getItem('fk_token');
-  try {
-    const res = await fetch(`${API_BASE}/conversations/find-or-create`, {
+  const request = (async () => {
+    const attempt = () => fetch(`${API_BASE}/conversations/find-or-create`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
       body: JSON.stringify({ userId: userId })
     });
-    if (res.ok) {
-      const data = await res.json();
-      // 3.3.13: 只有仍然停留在该联系人时才写全局 conversationId。
-      // 否则 A 的迟到 find-or-create 响应会覆盖 B 的会话 ID。
-      if (STATE.currentPeerId === userId) STATE.currentConversationId = data.conversationId;
-      console.log('[Chat v3] Conversation ID:', data.conversationId);
-      return data.conversationId;
+    try {
+      let res = await attempt();
+      // 5r/m at the edge: two clicks plus a reconnect already trips it. One short
+      // retry covers a UI action; anything longer is the user's decision, not a
+      // silent loop. The conversation id is stable, so a cached hit skips this.
+      if (res.status === 429) {
+        const retryAfter = Number(res.headers.get('Retry-After')) * 1000 || 1200;
+        await new Promise((r) => setTimeout(r, Math.min(retryAfter, 2000)));
+        res = await attempt();
+      }
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.conversationId) CONVERSATION_CACHE.set(userId, data.conversationId);
+        if (STATE.currentPeerId === userId) STATE.currentConversationId = data.conversationId;
+        console.log('[Chat v3] Conversation ID:', data.conversationId);
+        return data.conversationId;
+      }
+      let detail = '';
+      try { detail = (await res.text()).slice(0, 120); } catch (_) {}
+      console.error('[Chat v3] Failed to create conversation:', res.status, detail);
+      return null;
+    } catch (err) {
+      console.error('[Chat v3] Error:', err);
+      return null;
+    } finally {
+      STATE._convInflight.delete(userId);
     }
-    console.error('[Chat v3] Failed to create conversation:', res.status);
-    return null;
-  } catch (err) {
-    console.error('[Chat v3] Error:', err);
-    return null;
-  }
+  })();
+
+  STATE._convInflight.set(userId, request);
+  return request;
 }
 
 // v3: 使用 conversationId 加载消息（v2 用的是 peerId）

@@ -80,7 +80,12 @@ class El {
   focus() {}
   getContext() {
     const noop = () => {};
-    return { fillStyle: '', fillRect: noop, fillText: noop, drawImage: noop, beginPath: noop, moveTo: noop, lineTo: noop, stroke: noop, clearRect: noop, scale: noop, save: noop, restore: noop, translate: noop, rotate: noop };
+    const self = this;
+    return { fillStyle: '', imageSmoothingEnabled: true,
+      // Counted so a test can prove the QR was painted rather than merely mounted.
+      fillRect: () => { self._fillRects = (self._fillRects || 0) + 1; },
+      fillText: noop, drawImage: (img) => { self._drawImageCalls = (self._drawImageCalls || 0) + 1; },
+      beginPath: noop, moveTo: noop, lineTo: noop, stroke: noop, clearRect: noop, scale: noop, save: noop, restore: noop, translate: noop, rotate: noop };
   }
   *walk() { for (const c of this.children) { yield c; yield* c.walk(); } }
   querySelectorAll(sel) {
@@ -256,6 +261,15 @@ const TEST_SECRET = 'JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP';
 
 function twoFaSandbox(doc, calls, confirmPayload = { enabled: true, recoveryCodes: ['AAAAAAAA'] }) {
   return makeSandbox(doc, {
+    // Minimal stand-in for the vendored encoder. isDark is deterministic so the
+    // test can assert a non-trivial number of modules was painted. The real bug
+    // (2026-11-27) was createDataURL returning "[object Object]", which no test
+    // that only checks "canvas exists" could catch.
+    qrcode: () => ({
+      addData() {}, make() {}, getModuleCount() { return 21; },
+      isDark(r, c) { return (r * 7 + c * 3) % 4 < 2; },
+      createDataURL() { throw new Error('createDataURL is broken in the vendored build; draw modules directly'); },
+    }),
     fetch: async (url, opts = {}) => {
       const u = String(url);
       calls.push({ url: u, opts });
@@ -307,6 +321,13 @@ check('2FA setup flow opens without throwing and renders the server secret', asy
   assert(secret.textContent && secret.textContent !== 'Loading...', 'secret was never written; textContent=' + JSON.stringify(secret.textContent));
   assert(secret.textContent.replace(/ /g, '') === TEST_SECRET, 'secret is not the value returned by the server: ' + secret.textContent);
   assert(calls.some((c) => c.url.endsWith('/auth/2fa/enable')), 'POST /auth/2fa/enable was not called');
+
+  const canvas = doc.getElementById('twofaQRCanvas');
+  assert(canvas, 'QR canvas missing from the modal');
+  assert(canvas.dataset.qrDrawn === '21', 'QR was not drawn (dataset.qrDrawn=' + canvas.dataset.qrDrawn + ')');
+  assert((canvas._fillRects || 0) > 200, 'QR canvas was never painted: fillRect calls=' + (canvas._fillRects || 0));
+  assert(canvas.width === (21 + 8) * Math.max(3, Math.min(8, Math.floor(200 / (21 + 8)))), 'QR canvas size does not match integer modules: ' + canvas.width);
+  assert(!canvas._drawImageCalls, 'QR still goes through an Image/data URL, the path that failed in WebView2');
 });
 
 check('2FA confirm posts the code to confirm-enable, never the secret', async () => {
