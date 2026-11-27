@@ -753,34 +753,38 @@ const TwoFactorAuth = (() => {
       const qr = qrcode(0, 'M');
       qr.addData(otpauth);
       qr.make();
-      // Integer module size, then set the CSS size to the natural size. Letting CSS
-      // stretch the bitmap to a fixed 200px gives modules 3 or 4 px wide depending on
-      // where they land, which is exactly the kind of resampling that makes a strict
-      // decoder give up. cell = floor(200 / (modules + quiet zone)) keeps it crisp.
+
+      // Draw the modules straight onto the canvas. Do NOT go through
+      // qr.createDataURL(): the vendored build returns
+      // "data:image/gif;base64,[object Object]" because its base64 helper returns
+      // an object, and WebView2 rejects that URL with net::ERR_INVALID_URL. The
+      // result was a white box in the 3.3.16 installer while the DOM harness,
+      // which never loads the image, stayed green.
       const modules = qr.getModuleCount();
       const quietZone = 4;
       const cell = Math.max(3, Math.min(8, Math.floor(200 / (modules + quietZone * 2))));
-      const dataUrl = qr.createDataURL(cell, quietZone);
-      const img = new Image();
-      img.onload = () => {
-        canvas.width = img.naturalWidth || img.width;
-        canvas.height = img.naturalHeight || img.height;
-        // Match the layout size to the bitmap: no resampling, no fractional modules.
-        canvas.style.width = canvas.width + 'px';
-        canvas.style.height = canvas.height + 'px';
-        const ctx = canvas.getContext('2d');
-        ctx.imageSmoothingEnabled = false;
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, canvas.width, canvas.height);
-        ctx.drawImage(img, 0, 0);
-      };
-      img.onerror = () => {
-        canvas.title = otpauth;
-        console.error('[2FA] QR image failed to render');
-      };
-      img.src = dataUrl;
+      const size = (modules + quietZone * 2) * cell;
+      canvas.width = size;
+      canvas.height = size;
+      canvas.style.width = size + 'px';
+      canvas.style.height = size + 'px';
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('2D canvas context unavailable');
+      ctx.imageSmoothingEnabled = false;
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, 0, size, size);
+      ctx.fillStyle = '#000000';
+      for (let row = 0; row < modules; row++) {
+        for (let col = 0; col < modules; col++) {
+          if (qr.isDark(row, col)) {
+            ctx.fillRect((col + quietZone) * cell, (row + quietZone) * cell, cell, cell);
+          }
+        }
+      }
+      canvas.dataset.qrDrawn = String(modules);
     } catch (e) {
       canvas.title = otpauth;
+      canvas.dataset.qrDrawn = 'error';
       console.error('[2FA] QR generation failed:', e);
     }
 
