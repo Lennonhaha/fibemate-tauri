@@ -154,12 +154,10 @@ async function ensureConversation(userId) {
         const data = await res.json();
         if (data && data.conversationId) CONVERSATION_CACHE.set(userId, data.conversationId);
         if (STATE.currentPeerId === userId) STATE.currentConversationId = data.conversationId;
-        console.log('[Chat v3] Conversation ID:', data.conversationId);
+        console.log('[Chat v3] Conversation resolved');
         return data.conversationId;
       }
-      let detail = '';
-      try { detail = (await res.text()).slice(0, 120); } catch (_) {}
-      console.error('[Chat v3] Failed to create conversation:', res.status, detail);
+      console.error('[Chat v3] Failed to create conversation, HTTP status', res.status);
       return null;
     } catch (err) {
       console.error('[Chat v3] Error:', err);
