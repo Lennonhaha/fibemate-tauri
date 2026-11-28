@@ -520,6 +520,27 @@ check('the 2FA login dialog is visible and wired on a page without .modal-overla
   assert(cancelled === 0, 'unexpected cancel callback');
 });
 
+check('a hostile username reaches the 2FA login prompt as text, not markup', async () => {
+  // Alert #291 (js/xss-through-dom): showLogin2FA interpolated username straight
+  // into body.innerHTML. The shim parses innerHTML for real, so an injected tag
+  // becomes a node here - which is what makes this a gate and not a grep.
+  const doc = makeDocument();
+  const calls = [];
+  const sandbox = twoFaSandbox(doc, calls);
+  const TwoFactorAuth = loadModule(sandbox, 'modules/two-factor-auth.js', 'TwoFactorAuth');
+
+  const hostile = '<img src=x onerror="globalThis.__pwned=1">';
+  TwoFactorAuth.showLogin2FA(hostile, 'TICKET', () => {}, () => {});
+
+  const nameEl = doc.getElementById('twofaLoginUsername');
+  assert(nameEl, 'the login prompt has no username slot');
+  assert(nameEl.textContent === hostile, 'username is not shown verbatim as text: ' + JSON.stringify(nameEl.textContent));
+
+  const imgs = Array.from(doc.body.walk()).filter((el) => el.tagName === 'IMG');
+  assert(imgs.length === 0, 'username created an <img> element: XSS through innerHTML (alert #291)');
+  assert(!doc.body.innerHTML.includes('onerror'), 'the payload is still present in the markup');
+});
+
 (async () => {
   for (const [name, fn] of checks) {
     try {
