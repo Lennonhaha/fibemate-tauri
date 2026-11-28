@@ -467,6 +467,59 @@ check('the Disable dialog can actually be cancelled and confirmed', async () => 
   assert(doc.querySelectorAll('.modal-overlay').length === 0, 'modal stayed open after a successful disable');
 });
 
+check('the 2FA login dialog is visible and wired on a page without .modal-overlay CSS', async () => {
+  const doc = makeDocument();
+  const calls = [];
+  const sandbox = makeSandbox(doc, {
+    fetch: async (url, opts = {}) => {
+      const u = String(url);
+      calls.push({ url: u, opts });
+      if (u.endsWith('/auth/2fa/verify-login')) {
+        return { ok: true, status: 200, json: async () => ({ token: 'tok', userId: 'u1' }) };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    },
+  });
+
+  const TwoFactorAuth = loadModule(sandbox, 'modules/two-factor-auth.js', 'TwoFactorAuth');
+  let verified = null;
+  let cancelled = 0;
+  TwoFactorAuth.showLogin2FA('009', 'TICKET', (payload) => { verified = payload; }, () => { cancelled += 1; });
+
+  // 3.3.19 shipped this dialog unwired and unstyled: index.html does not load the
+  // stylesheet that defines .modal-overlay, so the overlay rendered as a
+  // transparent block at the bottom of the document, and both buttons were looked
+  // up with document.getElementById() before the subtree was attached. The user
+  // only saw the login button frozen on "processing".
+  const overlays = doc.querySelectorAll('.modal-overlay');
+  assert(overlays.length === 1, 'login modal did not open, overlays=' + overlays.length);
+  const overlay = overlays[0];
+  assert(overlay.style.position === 'fixed', 'overlay is not fixed-position (would render off-screen): ' + overlay.style.position);
+  assert(overlay.style.background && overlay.style.background !== '', 'overlay has no background: it would be invisible');
+
+  const cancel = doc.getElementById('btn2FACancelLogin');
+  assert(cancel, 'Cancel button missing from the login dialog');
+  assert(cancel.listeners.click && cancel.listeners.click.length, 'Cancel has no click handler - the dialog cannot be dismissed');
+  const verify = doc.getElementById('btn2FAVerifyLogin');
+  assert(verify, 'Verify button missing from the login dialog');
+  assert(verify.listeners.click && verify.listeners.click.length, 'Verify has no click handler - entering a code does nothing');
+
+  const digits = doc.querySelectorAll('.twofa-code-digit');
+  assert(digits.length === 6, 'expected 6 code inputs, got ' + digits.length);
+  '123456'.split('').forEach((d, i) => { digits[i].value = d; });
+  verify.click();
+  await wait(60);
+
+  const posts = calls.filter((c) => c.url.endsWith('/auth/2fa/verify-login'));
+  assert(posts.length === 1, 'expected one verify-login request, got ' + posts.length);
+  const body = JSON.parse(posts[0].opts.body);
+  assert(body.ticket === 'TICKET', 'ticket was not forwarded: ' + posts[0].opts.body);
+  assert(body.code === '123456', 'code was not forwarded: ' + posts[0].opts.body);
+  assert(verified && verified.token === 'tok', 'onVerified was not called with the session');
+  assert(doc.querySelectorAll('.modal-overlay').length === 0, 'dialog stayed open after a successful verification');
+  assert(cancelled === 0, 'unexpected cancel callback');
+});
+
 (async () => {
   for (const [name, fn] of checks) {
     try {

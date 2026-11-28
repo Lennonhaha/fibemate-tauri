@@ -13,6 +13,23 @@ All notable changes to this project are documented here.
 ### Changed
 - `release.yml` 写权限下沉到需要的 job（keyless 签名所需 `id-token: write` 保留在 `release-check`）（#29）
 
+## [3.3.20] - 2026-11-28
+
+### Fixed
+
+- Signing in to an account with 2FA looked like a hang. The login page (index.html)
+  does not load the stylesheet that defines `.modal-overlay`, and the dialog only
+  carried the class, so it rendered as a transparent block at the bottom of the
+  document. The code dialog also wired Cancel and Verify with
+  `document.getElementById()` before its subtree was attached, so neither button
+  had a handler. The overlay is now attached first, every lookup stays scoped to
+  the panel, and the overlay carries its own fixed-position/backdrop styles so it
+  no longer depends on page CSS. The login button no longer sits on
+  "processing" with nothing on screen.
+- `scripts/test-client-dom.cjs` covers the login dialog: it must be visible
+  (fixed position, non-empty background), both buttons must have handlers, and a
+  submitted code must reach `/auth/2fa/verify-login` with the ticket.
+
 ## [3.3.19] - 2026-11-28
 
 ### Fixed

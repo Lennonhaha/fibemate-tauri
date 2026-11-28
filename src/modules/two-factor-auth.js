@@ -717,6 +717,10 @@ const TwoFactorAuth = (() => {
     };
 
     const body = modal.bodyEl;
+    // Attach first, wire second — the same mistake the Disable dialog made in
+    // 3.3.18: getElementById() cannot see a detached subtree, so both buttons
+    // shipped without handlers and the dialog was a dead end.
+    document.body.appendChild(modal.overlay);
     body.innerHTML = `
       <div class="twofa-login-title">Two-Factor Auth</div>
       <div class="twofa-login-desc">Enter the 6-digit code from your authenticator app for ${username}</div>
@@ -802,7 +806,6 @@ const TwoFactorAuth = (() => {
       }
     });
 
-    document.body.appendChild(modal.overlay);
   }
 
   function _generateQRCode(secret, username, scope, uri) {
@@ -886,10 +889,32 @@ const TwoFactorAuth = (() => {
     if (!document.getElementById('twofactor-auth-styles')) _injectStyles();
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay twofa-login-modal';
+    // The login page (index.html) does not load the stylesheet that defines
+    // .modal-overlay, and _injectStyles() only covers the .twofa-* rules. Relying
+    // on the page CSS put the dialog at the bottom of the document with a
+    // transparent background: the user saw the login button stuck on
+    // "处理中..." and nothing else (3.3.19 report, 2026-11-28).
+    overlay.style.position = 'fixed';
+    overlay.style.top = '0';
+    overlay.style.left = '0';
+    overlay.style.right = '0';
+    overlay.style.bottom = '0';
     overlay.style.display = 'flex';
+    overlay.style.alignItems = 'center';
+    overlay.style.justifyContent = 'center';
+    overlay.style.background = 'rgba(0, 0, 0, 0.72)';
+    overlay.style.zIndex = '2147483000';
 
     const modal = document.createElement('div');
     modal.className = `modal ${extraClass}`.trim();
+    modal.style.width = 'min(420px, 92vw)';
+    modal.style.maxHeight = '90vh';
+    modal.style.overflow = 'auto';
+    modal.style.background = 'var(--bg-card, #15181e)';
+    modal.style.color = 'var(--text-primary, #e8eaed)';
+    modal.style.borderRadius = '14px';
+    modal.style.padding = '20px';
+    modal.style.boxShadow = '0 24px 60px rgba(0, 0, 0, 0.55)';
 
     const body = document.createElement('div');
     body.className = 'twofa-setup-panel';
