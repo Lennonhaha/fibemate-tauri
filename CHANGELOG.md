@@ -13,6 +13,28 @@ All notable changes to this project are documented here.
 ### Changed
 - `release.yml` 写权限下沉到需要的 job（keyless 签名所需 `id-token: write` 保留在 `release-check`）（#29）
 
+## [3.3.18] - 2026-11-28
+
+### Fixed
+
+- 开启 2FA 后退出或重启会永久锁死：服务端对已启用 2FA 的账号返回 200 `{twoFARequired:true,ticket}`（不带 token），客户端只判断 `data.token` 就抛 "Login failed"，而 `showLogin2FA` 全仓没有任何调用点、登录页也没加载 2FA 模块。现在 `index.html` 加载 `modules/two-factor-auth.js`，`doLogin` 收到 `twoFARequired` 后用 ticket 换取 token 并写入会话，支持取消与恢复码，401/429 分别提示（#125）。
+- 2FA 设置流程加防御：整体包 try/catch，渲染异常就关闭遮罩并提示，不再留下整窗空白与卡死的 `setupPhase`；`confirm-enable` 返回 409 视为已启用并直接展示恢复码；恢复码为空时给出说明而不是空网格。
+- 登录页缺少 `API_BASE` / `showToast` 时的兜底：新增 `apiBase()`（回退 `localStorage.fk_api_url` 与 `https://fibemate.net/api`）与 `toast()` 包装，此前直接引用会抛 ReferenceError。
+
+### Added
+
+- `scripts/test-login-2fa.cjs`：5 个用例覆盖 2FA 交接、取消、模块缺失、普通登录、密码错误透传。
+- `ui-dom` job 增加 2FA 登录交接一步，防止再次出现"模块存在但没接线"。
+
+## [3.3.17] - 2026-11-27
+
+### Fixed
+
+- 2FA 二维码白框：vendored qrcode 的 `createDataURL()` 返回 `data:image/gif;base64,[object Object]`，WebView2 报 `net::ERR_INVALID_URL`，画布全白。改为按模块 `isDark()` + `fillRect` 直接绘制整数格，DOM 测试断言 `canvas.dataset.qrDrawn`、`fillRect` 调用数大于 200、且不出现 `drawImage`。
+- 打开会话偶发 "Failed to create conversation"：`/api/conversations/find-or-create` 撞上 nginx `limit_req`（5r/m、burst=2）返回 429，客户端把非 2xx 一律当致命错误；现在会话 id 走模块级缓存、并发请求去重、429 时按 Retry-After 最多重试一次。服务端同步放宽为 30r/m、burst=10（fibemate#751）。
+- 登出清理不彻底：现在清除 refresh token、会话与账号缓存、vault 元数据，并删除 IndexedDB `fibemate_vault`；保留设备身份、偏好、`fibemate_secure_keys`（已用账号密码加密，且是唯一本地副本）。
+- 日志不再打印会话 id 与服务端响应正文，避免用户可控数据进入日志（Log hygiene 门禁）。
+
 ## [3.3.16] - 2026-11-26
 
 ### Fixed
