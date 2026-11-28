@@ -15,6 +15,22 @@
  */
 
 const TwoFactorAuth = (() => {
+  // main.js defines API_BASE as a script-level const, which the login page does
+  // not load. Resolve it defensively so the 2FA modal also works from index.html.
+  function apiBase() {
+    try {
+      if (typeof API_BASE === 'string' && API_BASE) return API_BASE;
+    } catch (e) { /* TDZ in another script: fall through */ }
+    return localStorage.getItem('fk_api_url') || 'https://fibemate.net/api';
+  }
+
+  // showToast is also defined by main.js only.
+  function toast(msg, type) {
+    if (typeof showToast === 'function') {
+      try { return showToast(msg, type); } catch (e) { /* ignore */ }
+    }
+    console.warn('[2FA] ' + msg);
+  }
   // ── 状态 ──
   // Enrolment is closed until the login flow can carry device identity.
   // /api/auth/2fa/verify-login returns tokens with deviceId:'', so an account
@@ -286,7 +302,7 @@ const TwoFactorAuth = (() => {
   async function _check2FAStatus() {
     try {
       const token = localStorage.getItem('fk_token');
-      const res = await fetch(`${API_BASE}/auth/2fa/status`, {
+      const res = await fetch(`${apiBase()}/auth/2fa/status`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (res.ok) {
@@ -383,6 +399,10 @@ const TwoFactorAuth = (() => {
   async function _showSetupFlow() {
     setupPhase = true;
     const modal = _create2FAModal();
+    // A thrown render used to leave an empty overlay covering the whole window:
+    // the user saw a blank screen and the button did nothing afterwards because
+    // setupPhase stayed true.
+    try {
 
     // The overlay has to be in the document BEFORE step 1 renders: step 1 looked its
     // nodes up with document.getElementById(), and a detached subtree is invisible to
@@ -392,7 +412,12 @@ const TwoFactorAuth = (() => {
     document.body.appendChild(modal.overlay);
 
     // Step 1: 生成密钥 + QR码
-    _renderSetupStep1(modal);
+      await _renderSetupStep1(modal);
+    } catch (e) {
+      console.error('[2FA] setup flow failed:', e);
+      _closeModal(modal);
+      toast('Could not start 2FA setup: ' + (e && e.message ? e.message : 'unknown error'), 'error');
+    }
   }
 
   async function _renderSetupStep1(modal) {
@@ -428,7 +453,7 @@ const TwoFactorAuth = (() => {
     let secret, uri;
     try {
       const token = localStorage.getItem('fk_token');
-      const res = await fetch(`${API_BASE}/auth/2fa/enable`, {
+      const res = await fetch(`${apiBase()}/auth/2fa/enable`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({})
@@ -438,19 +463,19 @@ const TwoFactorAuth = (() => {
         const msg = data.error === 'E_2FA_DEVICE_IDENTITY_PENDING'
           ? '设备身份尚未就绪，请稍后重试'
           : (data.error || '无法开始 2FA 设置');
-        showToast(msg, 'error');
+        toast(msg, 'error');
         _closeModal(modal);
         return;
       }
       secret = data.secret;
       uri = data.uri;
       if (!secret) {
-        showToast('服务器未返回 2FA 密钥', 'error');
+        toast('服务器未返回 2FA 密钥', 'error');
         _closeModal(modal);
         return;
       }
     } catch (e) {
-      showToast('无法连接服务器，2FA 设置未开始', 'error');
+      toast('无法连接服务器，2FA 设置未开始', 'error');
       _closeModal(modal);
       return;
     }
@@ -539,13 +564,13 @@ const TwoFactorAuth = (() => {
   async function _verifyAndEnable(modal) {
     const code = _getOTPValue();
     if (code.length !== 6) {
-      showToast('请输入6位验证码', 'error');
+      toast('Enter all six digits.', 'error');
       return;
     }
 
     try {
       const token = localStorage.getItem('fk_token');
-      const res = await fetch(`${API_BASE}/auth/2fa/confirm-enable`, {
+      const res = await fetch(`${apiBase()}/auth/2fa/confirm-enable`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ code })
@@ -554,18 +579,24 @@ const TwoFactorAuth = (() => {
 
       if (res.ok) {
         is2FAEnabled = true;
-        _renderSetupStep3(modal, data.recoveryCodes || []);
+        _renderSetupStep3(modal, Array.isArray(data.recoveryCodes) ? data.recoveryCodes : []);
+      } else if (res.status === 409) {
+        is2FAEnabled = true;
+        toast('Two-factor authentication is already enabled on this account.', 'info');
+        _renderSetupStep3(modal, []);
       } else {
-        showToast(data.error || '验证码错误，请重试', 'error');
+        toast(data.error || ('Could not enable 2FA (HTTP ' + res.status + ').'), 'error');
       }
     } catch (e) {
-      showToast('无法连接服务器，2FA 未启用', 'error');
+      toast('Could not reach the server to enable 2FA.', 'error');
     }
   }
 
   function _renderSetupStep3(modal, recoveryCodes) {
     const body = modal.bodyEl;
-    const codesHTML = recoveryCodes.map(c => `<div class="twofa-recovery-code">${c}</div>`).join('');
+    const codesHTML = recoveryCodes.length
+      ? recoveryCodes.map(c => `<div class="twofa-recovery-code">${c}</div>`).join('')
+      : '<div class="twofa-login-desc">Recovery codes were already issued for this account. Disable and re-enable 2FA to generate a new set.</div>';
 
     body.innerHTML = `
       <div class="twofa-steps">
@@ -586,14 +617,14 @@ const TwoFactorAuth = (() => {
 
     document.getElementById('btn2FACopyCodes')?.addEventListener('click', () => {
       navigator.clipboard.writeText(recoveryCodes.join('\n')).then(() => {
-        showToast('恢复码已复制', 'success');
+        toast('恢复码已复制', 'success');
       });
     });
 
     document.getElementById('btn2FADone')?.addEventListener('click', () => {
       _closeModal(modal);
       _updateSettingsUI();
-      showToast('2FA 已启用', 'success');
+      toast('2FA 已启用', 'success');
     });
   }
 
@@ -647,7 +678,7 @@ const TwoFactorAuth = (() => {
       const code = _getOTPValue();
       try {
         const token = localStorage.getItem('fk_token');
-        const res = await fetch(`${API_BASE}/auth/2fa/disable`, {
+        const res = await fetch(`${apiBase()}/auth/2fa/disable`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
           body: JSON.stringify({ code })
@@ -656,12 +687,12 @@ const TwoFactorAuth = (() => {
           is2FAEnabled = false;
           _closeModal(modal);
           _updateSettingsUI();
-          showToast('2FA 已禁用', 'info');
+          toast('2FA 已禁用', 'info');
         } else {
-          showToast('验证码错误', 'error');
+          toast('验证码错误', 'error');
         }
       } catch (e) {
-        showToast('无法连接服务器，2FA 未禁用', 'error');
+        toast('无法连接服务器，2FA 未禁用', 'error');
       }
     });
 
@@ -669,14 +700,20 @@ const TwoFactorAuth = (() => {
   }
 
   // ── 登录时2FA验证（供登录流程调用） ──
-  function showLogin2FA(username, ticket, onVerified) {
+  function showLogin2FA(username, ticket, onVerified, onCancelled) {
     const modal = _create2FAModal('twofa-login-modal');
-    const body = modal.bodyEl;
+    let settled = false;
+    const cancel = () => {
+      if (settled) return;
+      settled = true;
+      _closeModal(modal);
+      if (typeof onCancelled === 'function') onCancelled();
+    };
 
+    const body = modal.bodyEl;
     body.innerHTML = `
-      <div class="twofa-login-icon">🔐</div>
       <div class="twofa-login-title">Two-Factor Auth</div>
-      <div class="twofa-login-desc">Enter the code from your authenticator app for ${username}</div>
+      <div class="twofa-login-desc">Enter the 6-digit code from your authenticator app for ${username}</div>
       <div class="twofa-code-input" id="twofaLoginCodeInput">
         <input type="text" class="twofa-code-digit" maxlength="1" data-index="0" inputmode="numeric">
         <input type="text" class="twofa-code-digit" maxlength="1" data-index="1" inputmode="numeric">
@@ -704,34 +741,64 @@ const TwoFactorAuth = (() => {
       input.addEventListener('keydown', (e) => {
         if (e.key === 'Backspace' && !e.target.value && i > 0) digits[i - 1].focus();
       });
+      input.addEventListener('paste', (e) => {
+        e.preventDefault();
+        const pasted = (e.clipboardData || window.clipboardData).getData('text').replace(/[^0-9]/g, '');
+        for (let j = 0; j < Math.min(pasted.length, 6); j++) {
+          if (digits[j]) digits[j].value = pasted[j];
+        }
+        if (pasted.length >= 6) digits[digits.length - 1]?.focus();
+      });
     });
 
     digits[0]?.focus();
 
-    document.getElementById('btn2FACancelLogin')?.addEventListener('click', () => _closeModal(modal));
+    document.getElementById('btn2FACancelLogin')?.addEventListener('click', cancel);
+    modal.overlay.addEventListener('click', (e) => { if (e.target === modal.overlay) cancel(); });
+
+    document.getElementById('btn2FAUseRecovery')?.addEventListener('click', (e) => {
+      e.preventDefault();
+      const host = document.getElementById('twofaLoginCodeInput');
+      if (!host) return;
+      host.innerHTML = '<input type="text" id="twofaLoginRecovery" placeholder="XXXX-XXXX" autocomplete="one-time-code" style="width:100%;padding:10px;border-radius:8px;border:1px solid var(--border-subtle);background:var(--bg-input);color:var(--text-primary);text-align:center;letter-spacing:2px">';
+      document.getElementById('twofaLoginRecovery')?.focus();
+    });
+
     document.getElementById('btn2FAVerifyLogin')?.addEventListener('click', async () => {
-      const code = _getOTPValue();
+      const recoveryEl = document.getElementById('twofaLoginRecovery');
+      const recoveryCode = recoveryEl && recoveryEl.value ? recoveryEl.value.trim().toUpperCase() : '';
+      const code = recoveryCode ? '' : _getOTPValue();
+      if (!recoveryCode && code.length !== 6) {
+        toast('Enter all six digits, or use a recovery code.', 'error');
+        return;
+      }
       try {
-        const res = await fetch(`${API_BASE}/auth/2fa/verify-login`, {
+        const res = await fetch(`${apiBase()}/auth/2fa/verify-login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ticket, code })
+          body: JSON.stringify(recoveryCode ? { ticket, recoveryCode } : { ticket, code })
         });
         if (res.ok) {
+          settled = true;
           _closeModal(modal);
           if (onVerified) onVerified(await res.json());
+        } else if (res.status === 429) {
+          toast('Too many codes tried. Sign in again for a new ticket.', 'error');
+          cancel();
+        } else if (res.status === 401) {
+          toast('That code did not match. Wait for the next code and try again.', 'error');
         } else {
-          showToast('验证码错误', 'error');
+          toast('Two-factor verification failed (HTTP ' + res.status + '). Sign in again.', 'error');
+          cancel();
         }
       } catch (e) {
-        showToast('验证失败', 'error');
+        toast('Could not reach the server. Check the connection and try again.', 'error');
       }
     });
 
     document.body.appendChild(modal.overlay);
   }
 
-  // ── QR code generation (vendored qrcode-generator, MIT) ──
   function _generateQRCode(secret, username, scope, uri) {
     const canvas = (scope || document).querySelector('#twofaQRCanvas');
     if (!canvas) return;
@@ -792,7 +859,7 @@ const TwoFactorAuth = (() => {
     canvas.style.cursor = 'pointer';
     canvas.onclick = () => {
       navigator.clipboard.writeText(otpauth).then(() => {
-        showToast('OTP URI 已复制', 'success');
+        toast('OTP URI 已复制', 'success');
       });
     };
   }
@@ -808,6 +875,7 @@ const TwoFactorAuth = (() => {
   }
 
   function _create2FAModal(extraClass = '') {
+    if (!document.getElementById('twofactor-auth-styles')) _injectStyles();
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay twofa-login-modal';
     overlay.style.display = 'flex';

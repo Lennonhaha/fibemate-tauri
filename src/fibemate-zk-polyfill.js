@@ -46,6 +46,37 @@
         data = await res.json();
       }
 
+      // An account with 2FA gets no token: the server answers 200
+      // { twoFARequired: true, ticket }. Without this branch the client threw
+      // "Login failed" and the ticket died unused — the user was locked out.
+      if (data && data.twoFARequired) {
+        const twofa = (typeof TwoFactorAuth !== 'undefined') ? TwoFactorAuth : null;
+        if (!twofa || typeof twofa.showLogin2FA !== 'function') {
+          throw new Error('This account requires a two-factor code, but this build cannot ask for one. Install the latest FIBEMATE build.');
+        }
+        const verified = await new Promise((resolve, reject) => {
+          twofa.showLogin2FA(
+            username,
+            data.ticket,
+            (payload) => resolve(payload || {}),
+            () => reject(new Error('Login cancelled'))
+          );
+        });
+        if (!verified || !verified.token) {
+          throw new Error('Two-factor verification did not return a session. Sign in again.');
+        }
+        if (verified.deviceId) rememberDeviceId(username, verified.deviceId);
+        return {
+          success: true,
+          token: verified.token,
+          refreshToken: verified.refreshToken || null,
+          userId: verified.userId || verified.user_id,
+          displayName: verified.displayName || username,
+          publicKey: verified.publicKey || '',
+          deviceId: verified.deviceId || deviceId
+        };
+      }
+
       if (!data.success && !data.token) {
         throw new Error(data.error || data.message || 'Login failed');
       }
