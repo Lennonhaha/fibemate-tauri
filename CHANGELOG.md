@@ -13,6 +13,21 @@ All notable changes to this project are documented here.
 ### Changed
 - `release.yml` 写权限下沉到需要的 job（keyless 签名所需 `id-token: write` 保留在 `release-check`）（#29）
 
+## [3.3.19] - 2026-11-28
+
+### Fixed
+
+- The "Disable 2FA" dialog could not be dismissed. Both of its buttons were
+  looked up with `document.getElementById()` before the overlay had been
+  attached to the document, so the handlers silently bound to `null`: the
+  modal opened, Cancel did nothing, Disable did nothing, and the window looked
+  frozen behind a full-screen overlay. The overlay is now attached first and
+  every lookup stays scoped to the panel. Escape also closes a 2FA modal now,
+  so a missing handler can never trap the window again.
+- `test-client-dom.cjs` covers the flow end to end: the dialog must open,
+  Cancel must remove it, and Disable must post the code. Re-introducing the
+  3.3.18 ordering makes that test fail.
+
 ## [3.3.18] - 2026-11-28
 
 ### Fixed
