@@ -13,6 +13,21 @@ All notable changes to this project are documented here.
 ### Changed
 - `release.yml` 写权限下沉到需要的 job（keyless 签名所需 `id-token: write` 保留在 `release-check`）（#29）
 
+### Fixed
+- 2FA 登录的恢复码路径补上端到端证据（`d09fce3` 之后、2026-11-28 线上实测）：一次性账号开启 2FA 后，
+  只用恢复码提交 `{ ticket, recoveryCode }` 即可完成登录并拿到可用 token；**同一恢复码第二次使用被拒
+  （401 验证码或恢复码错误）**；未使用过的第二个恢复码仍可登录；TOTP 路径不受影响。10/10 通过。
+  对应的网页端（fibemate.net）在 `fibemate` #769 / `c6fdeaff` 补齐了第二因子步骤，桌面端此前已支持同一契约。
+
+### Security
+- 2FA 登录提示框把用户名直接拼进 `innerHTML`，构成存储型 DOM XSS（CodeQL `js/xss-through-dom`，alert #291，
+  high）。用户名与恢复码改为先渲染空节点、再用 `textContent` 写入；`otpauth://` URI 对用户名做
+  `encodeURIComponent`，避免其中的 `&` / `?` 破坏参数（`d09fce3`，#131）。同一段代码在官网侧同步修复
+  （`fibemate` #767 = `7ff3b897`），因为该仓库的扫描当时没有覆盖 `www/*.js`，告警数为 0 并不代表没有注入点。
+  `scripts/test-client-dom.cjs` 新增恶意用户名用例：必须按文本渲染、不得生成 `<img>` 节点、payload 不得出现在
+  markup 中；该用例在修复前的代码上失败（`the login prompt has no username slot`），修复后 8/8 通过。
+  已发布的桌面版（v3.3.14，2026-11-25）不含此修复，Release 页面已加醒目警告；下一次 nightly 起带上。
+
 ## [3.3.20] - 2026-11-28
 
 ### Fixed
