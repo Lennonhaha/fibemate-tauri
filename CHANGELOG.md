@@ -13,6 +13,16 @@ All notable changes to this project are documented here.
 ### Changed
 - `release.yml` 写权限下沉到需要的 job（keyless 签名所需 `id-token: write` 保留在 `release-check`）（#29）
 
+## [3.3.21] - 2026-11-28
+
+### Fixed
+- Device identity now lives outside the WebView2 profile: the per-account id is
+  mirrored into `device_identities.json` in the app data directory (next to the
+  encrypted key store) and restored at startup, so a reinstall no longer mints a
+  new id. That was the root cause of one device row per install and of `isRead`
+  staying false while orphan rows existed (fibemate-tauri#127).
+- The client logs once when it has to mint an id instead of doing it silently.
+
 ## [3.3.20] - 2026-11-28
 
 ### Fixed

@@ -1,6 +1,6 @@
 {
   "name": "fibemate-tauri",
-  "version": "3.3.20",
+  "version": "3.3.21",
   "description": "FIBEMATE - Post-Quantum Secure Messaging Desktop App (Tauri)",
   "private": true,
   "license": "GPL-3.0-only",

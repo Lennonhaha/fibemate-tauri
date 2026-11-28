@@ -243,5 +243,7 @@ jobs:
         run: node scripts/test-client-dom.cjs
       - name: Protocol downgrade invariants (SECURITY-BOUNDARY 9.2)
         run: node scripts/test-downgrade-invariants.cjs
+      - name: Device identity survives a wiped profile
+        run: node scripts/test-device-identity.cjs
       - name: 2FA login hand-off (ticket, cancel, missing module)
         run: node scripts/test-login-2fa.cjs

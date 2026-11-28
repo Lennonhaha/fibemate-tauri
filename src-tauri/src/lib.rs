@@ -4,6 +4,7 @@ mod audit;
 pub mod commands; // pub: allows src-tauri/tests/ integration tests to reference command fns
                   // pub: exposed for the `perf` criterion bench target (P2 performance
                   // regression). No runtime impact — symbols already exist in the lib.
+pub mod device_identity;
 pub mod double_ratchet;
 pub mod key_store;
 pub mod pq;
@@ -84,6 +85,10 @@ pub fn run() {
             get_version,
             get_platform,
             get_locale,
+            // Per-account device identity (survives WebView2 profile resets)
+            device_identity::device_identity_get,
+            device_identity::device_identity_all,
+            device_identity::device_identity_remember,
             // Post-Quantum KEM
             commands::kem::kem_keygen,
             commands::kem::kem_encapsulate,

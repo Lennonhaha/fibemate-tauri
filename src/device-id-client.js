@@ -95,5 +95,117 @@
     return remember(username, generate(), storage);
   }
 
-  return { DEVICE_ID_RE, keyFor, isValid, generate, read, remember, getOrCreate, reset };
+  // ---------------------------------------------------------------------
+  // Durable copy (fixes fibemate-tauri#127)
+  //
+  // localStorage lives inside the WebView2 profile and dies with it, so a
+  // reinstall used to mint a brand new device id and the server grew one more
+  // device row per install. The Rust side keeps the same mapping in the app
+  // data dir (device_identities.json), next to the encrypted key store, which
+  // survives uninstall/reinstall. Order of truth: localStorage -> Rust -> new.
+  // ---------------------------------------------------------------------
+
+  function invokeFn() {
+    const t = typeof window !== 'undefined' ? window : null;
+    if (!t) return null;
+    if (t.__TAURI__ && t.__TAURI__.core && typeof t.__TAURI__.core.invoke === 'function') {
+      return t.__TAURI__.core.invoke.bind(t.__TAURI__.core);
+    }
+    if (t.__TAURI_INTERNALS__ && typeof t.__TAURI_INTERNALS__.invoke === 'function') {
+      return t.__TAURI_INTERNALS__.invoke.bind(t.__TAURI_INTERNALS__);
+    }
+    return null;
+  }
+
+  /** Persist the id on disk. Best effort: a failure only costs a new row later. */
+  function persist(username, id, storage) {
+    const remember = rememberSafely(username, id, storage);
+    const invoke = invokeFn();
+    if (!invoke || !remember) return Promise.resolve(false);
+    return invoke('device_identity_remember', { account: normalizeUsername(username), deviceId: remember })
+      .then(() => true)
+      .catch((e) => {
+        if (typeof console !== 'undefined') console.warn('[device-id] could not persist identity:', e && e.message ? e.message : e);
+        return false;
+      });
+  }
+
+  function rememberSafely(username, id, storage) {
+    // remember() is the local mirror only; keep this name distinct so the
+    // durable write stays explicit at every call site.
+    return remember(username, id, storage);
+  }
+
+  /**
+   * Restore ids that the WebView2 profile lost. Runs on load, and is safe to
+   * call again. Returns the number of accounts recovered.
+   */
+  function hydrate(storage) {
+    const s = storageOf(storage);
+    const invoke = invokeFn();
+    if (!s || !invoke) return Promise.resolve(0);
+    return invoke('device_identity_all')
+      .then((map) => {
+        if (!map || typeof map !== 'object') return 0;
+        let restored = 0;
+        Object.keys(map).forEach((account) => {
+          const id = map[account];
+          if (!isValid(id)) return;
+          const had = read(account, s);
+          if (had) return;
+          remember(account, id, s);
+          restored += 1;
+        });
+        return restored;
+      })
+      .catch((e) => {
+        if (typeof console !== 'undefined') console.warn('[device-id] hydrate failed:', e && e.message ? e.message : e);
+        return 0;
+      });
+  }
+
+  function getOrCreatePersistent(username, storage) {
+    const s = storageOf(storage);
+    const existing = read(username, s);
+    if (existing) {
+      persist(username, existing, s);
+      return existing;
+    }
+    const fresh = remember(username, generate(), s);
+    if (fresh && typeof console !== 'undefined') {
+      console.info('[device-id] minted a new id for', normalizeUsername(username), '(no stored or persisted id)');
+    }
+    persist(username, fresh, s);
+    return fresh;
+  }
+
+  return {
+    DEVICE_ID_RE,
+    keyFor,
+    isValid,
+    generate,
+    read,
+    remember,
+    getOrCreate,
+    reset,
+    persist,
+    hydrate,
+    getOrCreatePersistent,
+  };
 });
+
+// Recover the ids the WebView2 profile may have dropped, as early as possible.
+(function autoHydrate() {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+  if (!window.FIBEMATE_DEVICE_ID) return;
+  const run = () => {
+    window.FIBEMATE_DEVICE_ID.hydrate().then((n) => {
+      if (n > 0 && typeof console !== 'undefined') console.info('[device-id] restored', n, 'device id(s) from disk');
+    });
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', run, { once: true });
+  } else {
+    run();
+  }
+})();
