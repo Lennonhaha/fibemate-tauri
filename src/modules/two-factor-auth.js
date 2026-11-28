@@ -595,7 +595,7 @@ const TwoFactorAuth = (() => {
   function _renderSetupStep3(modal, recoveryCodes) {
     const body = modal.bodyEl;
     const codesHTML = recoveryCodes.length
-      ? recoveryCodes.map(c => `<div class="twofa-recovery-code">${c}</div>`).join('')
+      ? recoveryCodes.map(c => '<div class="twofa-recovery-code"></div>').join('')
       : '<div class="twofa-login-desc">Recovery codes were already issued for this account. Disable and re-enable 2FA to generate a new set.</div>';
 
     body.innerHTML = `
@@ -614,6 +614,11 @@ const TwoFactorAuth = (() => {
         <button class="twofa-btn-enable" id="btn2FADone">Done</button>
       </div>
     `;
+    // Filled as text below: a recovery code is server-issued, but this sink
+    // must not depend on the server's idea of safe formatting.
+    body.querySelectorAll('.twofa-recovery-code').forEach((el, i) => {
+      el.textContent = String(recoveryCodes[i]);
+    });
 
     document.getElementById('btn2FACopyCodes')?.addEventListener('click', () => {
       navigator.clipboard.writeText(recoveryCodes.join('\n')).then(() => {
@@ -723,7 +728,7 @@ const TwoFactorAuth = (() => {
     document.body.appendChild(modal.overlay);
     body.innerHTML = `
       <div class="twofa-login-title">Two-Factor Auth</div>
-      <div class="twofa-login-desc">Enter the 6-digit code from your authenticator app for ${username}</div>
+      <div class="twofa-login-desc">Enter the 6-digit code from your authenticator app for <span id="twofaLoginUsername"></span></div>
       <div class="twofa-code-input" id="twofaLoginCodeInput">
         <input type="text" class="twofa-code-digit" maxlength="1" data-index="0" inputmode="numeric">
         <input type="text" class="twofa-code-digit" maxlength="1" data-index="1" inputmode="numeric">
@@ -740,6 +745,10 @@ const TwoFactorAuth = (() => {
         <button class="twofa-btn-enable" id="btn2FAVerifyLogin">Verify</button>
       </div>
     `;
+    // textContent, not the template: usernames are chosen by the account holder,
+    // and interpolating one into innerHTML is the DOM XSS this line used to be.
+    const loginNameEl = body.querySelector('#twofaLoginUsername');
+    if (loginNameEl) loginNameEl.textContent = String(username == null ? '' : username);
 
     const digits = body.querySelectorAll('.twofa-code-digit');
     digits.forEach((input, i) => {
