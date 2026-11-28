@@ -633,6 +633,14 @@ const TwoFactorAuth = (() => {
     const modal = _create2FAModal('twofa-login-modal');
     const body = modal.bodyEl;
 
+    // 3.3.18 shipped this in the wrong order: the buttons were looked up with
+    // document.getElementById() while the overlay was still detached, so both
+    // handlers attached to null. The dialog appeared, and neither Cancel nor
+    // Disable did anything - the window looked frozen behind it. Same trap as
+    // the setup flow (see _showSetupFlow); the overlay must be in the document
+    // first, and lookups stay scoped to the panel.
+    document.body.appendChild(modal.overlay);
+
     body.innerHTML = `
       <div class="twofa-login-icon">⚠️</div>
       <div class="twofa-login-title">Disable 2FA?</div>
@@ -673,9 +681,9 @@ const TwoFactorAuth = (() => {
 
     digits[0]?.focus();
 
-    document.getElementById('btn2FACancelDisable')?.addEventListener('click', () => _closeModal(modal));
-    document.getElementById('btn2FAConfirmDisable')?.addEventListener('click', async () => {
-      const code = _getOTPValue();
+    body.querySelector('#btn2FACancelDisable')?.addEventListener('click', () => _closeModal(modal));
+    body.querySelector('#btn2FAConfirmDisable')?.addEventListener('click', async () => {
+      const code = _getOTPValue(body);
       try {
         const token = localStorage.getItem('fk_token');
         const res = await fetch(`${apiBase()}/auth/2fa/disable`, {
@@ -695,8 +703,6 @@ const TwoFactorAuth = (() => {
         toast('无法连接服务器，2FA 未禁用', 'error');
       }
     });
-
-    document.body.appendChild(modal.overlay);
   }
 
   // ── 登录时2FA验证（供登录流程调用） ──
@@ -865,8 +871,10 @@ const TwoFactorAuth = (() => {
   }
 
   // ── 工具函数 ──
-  function _getOTPValue() {
-    const digits = document.querySelectorAll('.twofa-code-digit');
+  function _getOTPValue(scope) {
+    // Scoped lookup: two modals can exist for a moment (setup + disable), and a
+    // global querySelectorAll picks up whichever digits come first in the DOM.
+    const digits = (scope || document).querySelectorAll('.twofa-code-digit');
     return Array.from(digits).map(d => d.value).join('');
   }
 
@@ -894,11 +902,30 @@ const TwoFactorAuth = (() => {
       if (e.target === overlay) _closeModal({ overlay });
     });
 
+    // A blocking overlay with no close affordance is how 3.3.18 felt frozen.
+    // Escape is the escape hatch when a button handler is missing again.
+    if (typeof document.addEventListener === 'function') {
+      const onKey = (e) => {
+        if (e && e.key === 'Escape') {
+          if (typeof e.preventDefault === 'function') e.preventDefault();
+          _closeModal({ overlay });
+        }
+      };
+      overlay._escHandler = onKey;
+      document.addEventListener('keydown', onKey);
+    }
+
     return { overlay, bodyEl: body };
   }
 
   function _closeModal(modal) {
-    if (modal?.overlay) modal.overlay.remove();
+    if (modal?.overlay) {
+      if (modal.overlay._escHandler && typeof document.removeEventListener === 'function') {
+        document.removeEventListener('keydown', modal.overlay._escHandler);
+        modal.overlay._escHandler = null;
+      }
+      modal.overlay.remove();
+    }
     setupPhase = false;
   }
 

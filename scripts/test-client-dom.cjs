@@ -411,6 +411,62 @@ check('refreshConversations survives a missing list element instead of throwing'
   await wait(20);
 });
 
+check('the Disable dialog can actually be cancelled and confirmed', async () => {
+  const doc = makeDocument();
+  const calls = [];
+  const sandbox = makeSandbox(doc, {
+    fetch: async (url, opts = {}) => {
+      const u = String(url);
+      calls.push({ url: u, opts });
+      if (u.endsWith('/auth/2fa/status')) {
+        return { ok: true, status: 200, json: async () => ({ enabled: true }) };
+      }
+      if (u.endsWith('/auth/2fa/disable')) {
+        return { ok: true, status: 200, json: async () => ({ enabled: false }) };
+      }
+      return { ok: false, status: 404, json: async () => ({}) };
+    },
+  });
+  const sections = doc.createElement('div');
+  sections.id = 'settingsSections';
+  doc.body.appendChild(sections);
+  doc.localStorage?.setItem?.('fk_token', 'tok');
+
+  const TwoFactorAuth = loadModule(sandbox, 'modules/two-factor-auth.js', 'TwoFactorAuth');
+  TwoFactorAuth.init();
+  await wait(600);
+
+  const btn = doc.getElementById('btnToggle2FA');
+  assert(btn, 'Disable button missing (status should have been enabled)');
+  assert(btn.classList.contains('twofa-btn-disable'), 'button did not switch to the disable label: ' + btn.className);
+
+  // 3.3.18: this opened a modal whose Cancel and Disable buttons had no
+  // handlers, because both were looked up with document.getElementById()
+  // before the overlay was attached. The window looked frozen.
+  btn.click();
+  assert(doc.querySelectorAll('.modal-overlay').length === 1, 'disable modal did not open');
+
+  const cancel = doc.getElementById('btn2FACancelDisable');
+  assert(cancel, 'Cancel button missing from the disable modal');
+  assert(cancel.listeners && cancel.listeners.click && cancel.listeners.click.length, 'Cancel has no click handler - the modal cannot be dismissed');
+  cancel.click();
+  assert(doc.querySelectorAll('.modal-overlay').length === 0, 'Cancel did not close the disable modal');
+
+  btn.click();
+  const confirm = doc.getElementById('btn2FAConfirmDisable');
+  assert(confirm && confirm.listeners && confirm.listeners.click && confirm.listeners.click.length, 'Disable has no click handler - confirming does nothing');
+  const digits = doc.querySelectorAll('.twofa-code-digit');
+  '654321'.split('').forEach((d, i) => { if (digits[i]) digits[i].value = d; });
+  confirm.click();
+  await wait(50);
+
+  const posts = calls.filter((c) => c.url.endsWith('/auth/2fa/disable'));
+  assert(posts.length === 1, 'expected one disable request, got ' + posts.length);
+  assert(JSON.parse(posts[0].opts.body).code === '654321', 'code was not forwarded: ' + posts[0].opts.body);
+  await wait(20);
+  assert(doc.querySelectorAll('.modal-overlay').length === 0, 'modal stayed open after a successful disable');
+});
+
 (async () => {
   for (const [name, fn] of checks) {
     try {
